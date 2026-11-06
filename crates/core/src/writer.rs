@@ -312,12 +312,11 @@ struct MemoryArgs {
 }
 
 impl MemoryArgs {
-    /// Facts cite the exchange they came from.
+    /// Every memory cites the exchange it came from, so the doctor can check
+    /// its facts and re-interpret it from what was really said.
     fn draft(self, kind: MemoryType, level: Level, exchange: &[i64; 2]) -> MemoryDraft {
         let mut draft = MemoryDraft::new(kind, level, self.interpretation);
-        if !self.facts.is_empty() {
-            draft.source_turns = exchange.to_vec();
-        }
+        draft.source_turns = exchange.to_vec();
         draft.facts = self.facts;
         draft.valence = self.valence;
         draft.strength = self.strength;

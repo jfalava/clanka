@@ -11,6 +11,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 pub const MAX_CORE_VALUES: usize = 5;
+pub const MIN_DOCTOR_TOKEN: usize = 16;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Soul {
@@ -34,6 +35,9 @@ pub struct Traits {
     pub tired_at: f64,
     pub sleep_at: f64,
     pub pushback_window: u32,
+    /// A random string that, sent as a whole message, opens the doctor. It
+    /// lives in the frontmatter, which the model never sees.
+    pub doctor_token: String,
 }
 
 impl Soul {
@@ -76,6 +80,16 @@ impl Soul {
             hash,
         })
     }
+
+    /// Whether a message is the doctor token. Compared in constant time, so the
+    /// timing of a near miss reveals nothing.
+    pub fn is_doctor_token(&self, message: &str) -> bool {
+        let (a, b) = (
+            message.trim().as_bytes(),
+            self.traits.doctor_token.trim().as_bytes(),
+        );
+        a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    }
 }
 
 fn validate(t: &Traits) -> Result<()> {
@@ -104,6 +118,11 @@ fn validate(t: &Traits) -> Result<()> {
     }
     if t.recall_window == 0 {
         return Err(Error::Soul("recall_window must be at least 1".into()));
+    }
+    if t.doctor_token.trim().chars().count() < MIN_DOCTOR_TOKEN {
+        return Err(Error::Soul(format!(
+            "doctor_token must be at least {MIN_DOCTOR_TOKEN} characters; use e.g. `openssl rand -hex 16`"
+        )));
     }
     if t.pushback_window == 0 {
         return Err(Error::Soul("pushback_window must be at least 1".into()));

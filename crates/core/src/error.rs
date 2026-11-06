@@ -37,6 +37,10 @@ pub enum Error {
     EmbedderChanged { stored: String, current: String },
     #[error("memory writes are frozen by the doctor")]
     Frozen,
+    #[error("the doctor works only while writes are frozen; freeze first")]
+    NotFrozen,
+    #[error("this companion is archived and read-only")]
+    Archived,
     #[error("the persona changed; choose to continue, update or fork before writing")]
     PersonaUnresolved,
     #[error("session {0} has ended")]

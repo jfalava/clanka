@@ -349,21 +349,14 @@ impl Companion {
             params![session, id, seed.to_string(), magnitude, now],
         )?;
         let event = tx.last_insert_rowid();
-        tx.execute(
-            "UPDATE memories SET interpretation = ?1, updated_at = ?2 WHERE id = ?3",
-            params![interpretation, now, id],
-        )?;
-        tx.execute(
-            "INSERT INTO memory_versions (memory_id, interpretation, level, persona_hash, reason, drift_event_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'drift', ?5, ?6)",
-            params![id, interpretation, level, self.soul.hash, event, now],
-        )?;
-        // vec0 rows are replaced, not updated in place.
-        tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [id])?;
-        tx.execute(
-            "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?1, ?2)",
-            params![id, embedding],
-        )?;
+        let rewrite = Rewrite {
+            id,
+            interpretation,
+            embedding: &embedding,
+            reason: "drift",
+            drift_event: Some(event),
+        };
+        rewrite_interpretation(&tx, &rewrite, &self.soul.hash, now)?;
         let summary = json!({ "magnitude": magnitude, "drift_event": event });
         log(
             &tx,
@@ -400,22 +393,7 @@ impl Companion {
             )?
             .query_map([id], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
-        let restored: Option<i64> = tx
-            .query_row(
-                "SELECT id FROM memories WHERE superseded_by = ?1",
-                [id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(old) = restored {
-            tx.execute(
-                "UPDATE memories SET status = 'active', superseded_by = NULL, updated_at = ?1 WHERE id = ?2",
-                params![now, old],
-            )?;
-        }
-        // vec0 is a virtual table, so it isn't part of the foreign-key cascade.
-        tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [id])?;
-        tx.execute("DELETE FROM memories WHERE id = ?1", [id])?;
+        let restored = remove_memory(&tx, id, now)?;
         for turn in &own_turns {
             tx.execute("DELETE FROM turns WHERE id = ?1", [turn])?;
         }
@@ -496,6 +474,64 @@ impl Companion {
             })?;
         Ok(vector.iter().flat_map(|x| x.to_le_bytes()).collect())
     }
+}
+
+/// Removes a memory, its vector and (by cascade) its versions, sources and
+/// drift events. Whatever it had superseded is current again; that one's ID is returned.
+pub(crate) fn remove_memory(tx: &Connection, id: i64, now: i64) -> Result<Option<i64>> {
+    let restored: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM memories WHERE superseded_by = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(old) = restored {
+        tx.execute(
+            "UPDATE memories SET status = 'active', superseded_by = NULL, updated_at = ?1 WHERE id = ?2",
+            params![now, old],
+        )?;
+    }
+    // vec0 is a virtual table, so it isn't part of the foreign-key cascade.
+    tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [id])?;
+    tx.execute("DELETE FROM memories WHERE id = ?1", [id])?;
+    Ok(restored)
+}
+
+/// A new interpretation for a memory, with the vector to match.
+pub(crate) struct Rewrite<'a> {
+    pub id: i64,
+    pub interpretation: &'a str,
+    pub embedding: &'a [u8],
+    /// The memory_versions reason: drift or reinterpreted.
+    pub reason: &'static str,
+    pub drift_event: Option<i64>,
+}
+
+/// Replaces the interpretation and records the version and the new vector.
+/// The schema refuses this for seared memories.
+pub(crate) fn rewrite_interpretation(
+    tx: &Connection,
+    w: &Rewrite,
+    persona_hash: &str,
+    now: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE memories SET interpretation = ?1, persona_hash = ?2, updated_at = ?3 WHERE id = ?4",
+        params![w.interpretation, persona_hash, now, w.id],
+    )?;
+    tx.execute(
+        "INSERT INTO memory_versions (memory_id, interpretation, level, persona_hash, reason, drift_event_id, created_at)
+         SELECT id, interpretation, level, ?1, ?2, ?3, ?4 FROM memories WHERE id = ?5",
+        params![persona_hash, w.reason, w.drift_event, now, w.id],
+    )?;
+    // vec0 rows are replaced, not updated in place.
+    tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [w.id])?;
+    tx.execute(
+        "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?1, ?2)",
+        params![w.id, w.embedding],
+    )?;
+    Ok(())
 }
 
 fn validate(draft: &MemoryDraft) -> Result<()> {

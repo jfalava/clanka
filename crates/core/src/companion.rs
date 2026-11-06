@@ -33,6 +33,19 @@ pub enum PersonaStatus {
 
 impl Companion {
     pub fn open(data_dir: &Path, soul_path: &Path, deps: Deps) -> Result<Self> {
+        Self::open_inner(data_dir, soul_path, deps, false)
+    }
+
+    /// The doctor's re-embed: opens the companion even though its vectors came
+    /// from another embedding model, and rebuilds every vector with this one in
+    /// a single transaction, so a failure leaves the old vectors in place.
+    pub fn reembed(data_dir: &Path, soul_path: &Path, deps: Deps) -> Result<Self> {
+        let mut companion = Self::open_inner(data_dir, soul_path, deps, true)?;
+        companion.rebuild_vectors()?;
+        Ok(companion)
+    }
+
+    fn open_inner(data_dir: &Path, soul_path: &Path, deps: Deps, reembed: bool) -> Result<Self> {
         let soul = Soul::load(soul_path)?;
         let id = soul.traits.id;
         let db_path = data_dir.join(format!("{id}.db"));
@@ -49,7 +62,9 @@ impl Companion {
             }
         }
 
-        ensure_vectors(&conn, deps.embedder.model_id(), deps.embedder.dimensions())?;
+        if !reembed {
+            ensure_vectors(&conn, deps.embedder.model_id(), deps.embedder.dimensions())?;
+        }
 
         let persona = match meta(&conn, "persona_hash")? {
             None => {
@@ -137,6 +152,51 @@ impl Companion {
     }
 }
 
+impl Companion {
+    fn rebuild_vectors(&mut self) -> Result<()> {
+        let memories: Vec<(i64, String)> = self
+            .conn
+            .prepare("SELECT id, interpretation FROM memories ORDER BY id")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let embedder = &self.deps.embedder;
+        let mut vectors = Vec::with_capacity(memories.len());
+        for chunk in memories.chunks(64) {
+            let texts: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
+            let embedded = embedder.embed(&texts)?;
+            if embedded.len() != chunk.len()
+                || embedded.iter().any(|v| v.len() != embedder.dimensions())
+            {
+                return Err(Error::Embedder(format!(
+                    "expected {} vectors of {} dimensions",
+                    chunk.len(),
+                    embedder.dimensions()
+                )));
+            }
+            vectors.extend(embedded);
+        }
+        let (model, dimensions) = (embedder.model_id().to_owned(), embedder.dimensions());
+        let now = self.deps.clock.now_ms();
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch("DROP TABLE IF EXISTS memory_vectors")?;
+        tx.execute("DELETE FROM meta WHERE key = 'embedder_model'", [])?;
+        ensure_vectors(&tx, &model, dimensions)?;
+        for ((id, _), vector) in memories.iter().zip(vectors) {
+            let blob: Vec<u8> = vector.iter().flat_map(|x| x.to_le_bytes()).collect();
+            tx.execute(
+                "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?1, ?2)",
+                params![id, blob],
+            )?;
+        }
+        let summary = json!({ "model": model, "memories": memories.len() });
+        log(&tx, "doctor", "reembed", "companion", None, &summary, now)?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
 /// Vectors are tied to the model that made them. A different model means the
 /// doctor has to re-embed; searching old vectors with new queries is meaningless.
 fn ensure_vectors(conn: &Connection, model: &str, dimensions: usize) -> Result<()> {
@@ -165,7 +225,7 @@ pub(crate) fn meta(conn: &Connection, key: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
-fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
+pub(crate) fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO meta (key, value) VALUES (?1, ?2)
          ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -177,11 +237,25 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
 /// Every write checks this inside its own transaction: the doctor's freeze and
 /// the persona choice may come from another process at any moment.
 pub(crate) fn ensure_writable(conn: &Connection, soul_hash: &str) -> Result<()> {
+    if meta(conn, "archived")?.as_deref() == Some("1") {
+        return Err(Error::Archived);
+    }
     if meta(conn, "frozen")?.as_deref() == Some("1") {
         return Err(Error::Frozen);
     }
     if meta(conn, "persona_hash")?.as_deref() != Some(soul_hash) {
         return Err(Error::PersonaUnresolved);
+    }
+    Ok(())
+}
+
+/// The doctor's gate: it writes only while everything else is frozen.
+pub(crate) fn ensure_doctor(conn: &Connection) -> Result<()> {
+    if meta(conn, "archived")?.as_deref() == Some("1") {
+        return Err(Error::Archived);
+    }
+    if meta(conn, "frozen")?.as_deref() != Some("1") {
+        return Err(Error::NotFrozen);
     }
     Ok(())
 }

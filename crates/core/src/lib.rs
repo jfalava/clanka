@@ -8,6 +8,7 @@ mod companion;
 pub mod context;
 mod db;
 pub mod deps;
+pub mod doctor;
 mod error;
 pub mod memory;
 pub mod model;
