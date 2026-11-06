@@ -11,8 +11,10 @@ mod error;
 pub mod memory;
 pub mod model;
 pub mod soul;
+pub mod state;
 
 pub use companion::{Companion, PersonaStatus};
 pub use deps::Deps;
 pub use error::{Error, Result};
-pub use memory::{Memory, MemoryDraft};
+pub use memory::{Deleted, Memory, MemoryDraft};
+pub use state::{Mood, SectionVersion};

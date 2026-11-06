@@ -98,3 +98,8 @@ text_enum! {
     /// levels; the CLI can set any level except on a seared memory.
     Actor { Writer = "writer", Cli = "cli" }
 }
+
+text_enum! {
+    /// The soul.md sections she may edit. The persona itself is a file she never writes.
+    Section { AboutYou = "about_you", Relationship = "relationship" }
+}

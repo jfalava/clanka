@@ -65,6 +65,15 @@ pub struct Memory {
     pub updated_at: i64,
 }
 
+/// What a hard delete removed besides the memory itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deleted {
+    /// Source turns no other memory cited, now gone from the transcript.
+    pub turns: Vec<i64>,
+    /// The memory this one had superseded, which is current again.
+    pub restored: Option<i64>,
+}
+
 impl Companion {
     /// The open session, or a new one if the last one ended. Sessions end only
     /// at sleep or by the doctor, so every process shares the same open session.
@@ -249,6 +258,65 @@ impl Companion {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// The CLI's hard delete. Removes the memory, its versions, drift events and
+    /// vector, and the turns it cited that no other memory cites. Works on seared
+    /// memories and while the doctor's freeze is on: deleting is yours alone.
+    /// If the memory had replaced another, that one is current again.
+    pub fn delete_memory(&mut self, id: i64) -> Result<Deleted> {
+        let now = self.deps.clock.now_ms();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let found = tx
+            .query_row("SELECT 1 FROM memories WHERE id = ?1", [id], |_| Ok(()))
+            .optional()?;
+        found.ok_or(Error::NotFound(id))?;
+
+        let own_turns: Vec<i64> = tx
+            .prepare(
+                "SELECT s.turn_id FROM memory_sources s WHERE s.memory_id = ?1
+                 AND NOT EXISTS (SELECT 1 FROM memory_sources o
+                                 WHERE o.turn_id = s.turn_id AND o.memory_id != ?1)",
+            )?
+            .query_map([id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let restored: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM memories WHERE superseded_by = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(old) = restored {
+            tx.execute(
+                "UPDATE memories SET status = 'active', superseded_by = NULL, updated_at = ?1 WHERE id = ?2",
+                params![now, old],
+            )?;
+        }
+        // vec0 is a virtual table, so it isn't part of the foreign-key cascade.
+        tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [id])?;
+        tx.execute("DELETE FROM memories WHERE id = ?1", [id])?;
+        for turn in &own_turns {
+            tx.execute("DELETE FROM turns WHERE id = ?1", [turn])?;
+        }
+        // The log keeps that a delete happened, never what was deleted.
+        let report = json!({ "turns_deleted": own_turns.len(), "restored": restored });
+        log(
+            &tx,
+            Actor::Cli.as_str(),
+            "delete",
+            "memory",
+            Some(id),
+            &report,
+            now,
+        )?;
+        tx.commit()?;
+        Ok(Deleted {
+            turns: own_turns,
+            restored,
+        })
     }
 
     pub fn memory(&self, id: i64) -> Result<Memory> {

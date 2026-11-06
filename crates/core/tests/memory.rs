@@ -1,7 +1,8 @@
 mod common;
 
+use clanka_core::model::Section;
 use clanka_core::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Status, Urgency};
-use clanka_core::{Companion, Error, MemoryDraft};
+use clanka_core::{Companion, Deleted, Error, MemoryDraft, Mood};
 use common::{count, fixture, open, raw};
 use rusqlite::Connection;
 use serde_json::json;
@@ -127,7 +128,19 @@ fn freeze_from_another_handle_blocks_every_write_and_leaves_no_trace() {
             .map(drop),
     );
     frozen(c.set_level(Actor::Cli, id, Level::Vivid));
+    let mood = Mood {
+        valence: 0.2,
+        energy: 0.1,
+        warmth: 0.5,
+        cause: "Laura called".into(),
+    };
+    frozen(c.set_mood(Actor::Writer, &mood));
+    frozen(c.write_turn_note(Actor::Writer, turn, "Ask about Laura"));
+    frozen(c.write_section(Actor::Writer, Section::AboutYou, "Has a sister, Laura"));
     assert_eq!(footprint(&db), before);
+    let state = "SELECT (SELECT count(*) FROM mood_states) + (SELECT count(*) FROM turn_notes)
+                        + (SELECT count(*) FROM soul_section_versions)";
+    assert_eq!(count(&db, state), 0);
 
     // The doctor can still close the session while frozen.
     c.end_session(session, SessionEnd::Doctor).unwrap();
@@ -297,4 +310,75 @@ fn sessions_are_shared_until_they_end() {
         Err(Error::SessionClosed(_))
     ));
     assert_ne!(a.open_session().unwrap(), s);
+}
+
+#[test]
+fn delete_removes_everything_but_shared_turns_and_restores_the_past() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let t_madrid = with_turn(&mut c, "I live in Madrid");
+    let t_shared = with_turn(&mut c, "Laura and my dad came to the concert");
+    let t_own = with_turn(&mut c, "I moved to Lisbon for Laura");
+    let t_free = with_turn(&mut c, "Anyway");
+
+    let madrid = c
+        .write(
+            Actor::Writer,
+            &fact("city", "Madrid", "He loves Madrid", t_madrid),
+        )
+        .unwrap();
+    let mut lisbon = fact("city", "Lisbon", "He moved for Laura", t_own);
+    lisbon.source_turns.push(t_shared);
+    lisbon.level = Level::Seared;
+    let lisbon = c.supersede(Actor::Writer, madrid, &lisbon).unwrap();
+    let dad = c
+        .write(
+            Actor::Writer,
+            &fact("dad", "came", "His dad came to the concert", t_shared),
+        )
+        .unwrap();
+
+    // Deleting is yours alone: it works on seared memories and during a freeze.
+    c.set_frozen(true).unwrap();
+    let deleted = c.delete_memory(lisbon).unwrap();
+    assert_eq!(
+        deleted,
+        Deleted {
+            turns: vec![t_own],
+            restored: Some(madrid)
+        }
+    );
+    assert!(matches!(c.memory(lisbon), Err(Error::NotFound(_))));
+    assert!(matches!(c.delete_memory(lisbon), Err(Error::NotFound(_))));
+
+    let m = c.memory(madrid).unwrap();
+    assert_eq!((m.status, m.superseded_by), (Status::Active, None));
+    assert_eq!(c.memory(dad).unwrap().source_turns, [t_shared]);
+
+    let db = raw(c.db_path(), "k");
+    let turns: Vec<i64> = db
+        .prepare("SELECT id FROM turns ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(turns, [t_madrid, t_shared, t_free]);
+    let gone = |sql: &str| {
+        assert_eq!(
+            count(&db, &sql.replace("?", &lisbon.to_string())),
+            0,
+            "{sql}"
+        )
+    };
+    gone("SELECT count(*) FROM memory_versions WHERE memory_id = ?");
+    gone("SELECT count(*) FROM memory_sources WHERE memory_id = ?");
+    gone("SELECT count(*) FROM memory_vectors WHERE memory_id = ?");
+    gone("SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'laura OR lisbon'");
+    gone("SELECT count(*) FROM write_log WHERE payload LIKE '%Laura%' OR payload LIKE '%Lisbon%'");
+    let nearest: i64 = count(
+        &db,
+        "SELECT memory_id FROM memory_vectors WHERE embedding MATCH '[1, 0, 0, 0.1]' AND k = 1",
+    );
+    assert_ne!(nearest, lisbon);
 }
