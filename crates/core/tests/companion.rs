@@ -1,95 +1,9 @@
-use clanka_core::deps::{Clock, Embedder, KeySource, Llm, LlmRequest, LlmResponse, Rng};
+mod common;
+
 use clanka_core::soul::Soul;
-use clanka_core::{Companion, Deps, Error, PersonaStatus, Result};
-use rusqlite::Connection;
-use std::path::{Path, PathBuf};
+use clanka_core::{Companion, Error, PersonaStatus};
+use common::{deps, fixture, open, raw, soul_text};
 use uuid::Uuid;
-
-struct NoLlm;
-impl Llm for NoLlm {
-    fn complete(&self, _: &LlmRequest) -> Result<LlmResponse> {
-        unreachable!("opening a companion must not call the model")
-    }
-}
-
-struct FakeEmbedder(&'static str);
-impl Embedder for FakeEmbedder {
-    fn model_id(&self) -> &str {
-        self.0
-    }
-    fn dimensions(&self) -> usize {
-        4
-    }
-    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        Ok(texts.iter().map(|_| vec![0.0; 4]).collect())
-    }
-}
-
-struct FixedClock;
-impl Clock for FixedClock {
-    fn now_ms(&self) -> i64 {
-        1_700_000_000_000
-    }
-}
-
-struct FixedRng;
-impl Rng for FixedRng {
-    fn next_seed(&self) -> u64 {
-        42
-    }
-}
-
-struct Key(&'static str);
-impl KeySource for Key {
-    fn key(&self, _: Uuid) -> Result<String> {
-        Ok(self.0.to_owned())
-    }
-}
-
-fn deps(key: &'static str, model: &'static str) -> Deps {
-    Deps {
-        llm: Box::new(NoLlm),
-        embedder: Box::new(FakeEmbedder(model)),
-        clock: Box::new(FixedClock),
-        rng: Box::new(FixedRng),
-        keys: Box::new(Key(key)),
-    }
-}
-
-fn soul_text(id: Uuid, tired_at: f64, values: &[&str]) -> String {
-    let values: String = values.iter().map(|v| format!("- {v}\n")).collect();
-    format!(
-        "+++\nid = \"{id}\"\nname = \"Ani\"\ncontrariness = 0.6\npersistence = 0.7\n\
-         time_sense = true\nrecall_window = 2\ndrift = 0.4\ntired_at = {tired_at}\n\
-         sleep_at = 0.9\npushback_window = 20\n+++\n# Ani\n\n## Core values\n\n{values}\n\
-         ## Voice\n\n- Not a value, just style\n"
-    )
-}
-
-struct Fixture {
-    dir: tempfile::TempDir,
-    soul: PathBuf,
-    id: Uuid,
-}
-
-fn fixture() -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
-    let id = Uuid::now_v7();
-    let soul = dir.path().join("soul.md");
-    std::fs::write(&soul, soul_text(id, 0.7, &["Honesty over comfort"])).unwrap();
-    Fixture { dir, soul, id }
-}
-
-fn open(f: &Fixture, key: &'static str) -> Result<Companion> {
-    Companion::open(f.dir.path(), &f.soul, deps(key, "model-a"))
-}
-
-/// A raw connection, as another process would open the file.
-fn raw(path: &Path, key: &str) -> Connection {
-    let conn = Connection::open(path).unwrap();
-    conn.pragma_update(None, "key", key).unwrap();
-    conn
-}
 
 #[test]
 fn persona_change_is_detected_until_continued() {

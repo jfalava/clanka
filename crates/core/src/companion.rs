@@ -1,6 +1,7 @@
 use crate::soul::Soul;
 use crate::{Deps, Error, Result, db};
 use rusqlite::{Connection, OptionalExtension, params};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -10,10 +11,10 @@ use uuid::Uuid;
 /// state they must agree on (the doctor's freeze, the accepted persona) lives in
 /// the database and is read on each call, never cached here.
 pub struct Companion {
-    conn: Connection,
-    soul: Soul,
+    pub(crate) conn: Connection,
+    pub(crate) soul: Soul,
     db_path: PathBuf,
-    deps: Deps,
+    pub(crate) deps: Deps,
     persona: PersonaStatus,
 }
 
@@ -53,7 +54,15 @@ impl Companion {
         let persona = match meta(&conn, "persona_hash")? {
             None => {
                 set_meta(&conn, "persona_hash", &soul.hash)?;
-                log(&conn, "cli", "persona_accepted", &soul.hash, now)?;
+                log(
+                    &conn,
+                    "cli",
+                    "persona_accepted",
+                    "persona",
+                    None,
+                    &json!({ "hash": soul.hash }),
+                    now,
+                )?;
                 PersonaStatus::New
             }
             Some(hash) if hash == soul.hash => PersonaStatus::Unchanged,
@@ -93,11 +102,14 @@ impl Companion {
     /// and write new ones under the new persona.
     pub fn continue_with_persona(&mut self) -> Result<()> {
         set_meta(&self.conn, "persona_hash", &self.soul.hash)?;
+        let hash = json!({ "hash": self.soul.hash });
         log(
             &self.conn,
             "cli",
             "persona_continued",
-            &self.soul.hash,
+            "persona",
+            None,
+            &hash,
             self.deps.clock.now_ms(),
         )?;
         self.persona = PersonaStatus::Unchanged;
@@ -118,6 +130,8 @@ impl Companion {
             "doctor",
             action,
             "companion",
+            None,
+            &json!({}),
             self.deps.clock.now_ms(),
         )
     }
@@ -160,10 +174,31 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn log(conn: &Connection, actor: &str, action: &str, target: &str, now: i64) -> Result<()> {
+/// Every write checks this inside its own transaction: the doctor's freeze and
+/// the persona choice may come from another process at any moment.
+pub(crate) fn ensure_writable(conn: &Connection, soul_hash: &str) -> Result<()> {
+    if meta(conn, "frozen")?.as_deref() == Some("1") {
+        return Err(Error::Frozen);
+    }
+    if meta(conn, "persona_hash")?.as_deref() != Some(soul_hash) {
+        return Err(Error::PersonaUnresolved);
+    }
+    Ok(())
+}
+
+pub(crate) fn log(
+    conn: &Connection,
+    actor: &str,
+    action: &str,
+    target: &str,
+    target_id: Option<i64>,
+    payload: &Value,
+    now: i64,
+) -> Result<()> {
     conn.execute(
-        "INSERT INTO write_log (actor, action, target, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![actor, action, target, now],
+        "INSERT INTO write_log (actor, action, target, target_id, payload, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![actor, action, target, target_id, payload.to_string(), now],
     )?;
     Ok(())
 }

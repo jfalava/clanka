@@ -1,3 +1,4 @@
+use crate::model::Level;
 use std::path::PathBuf;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -36,6 +37,22 @@ pub enum Error {
     EmbedderChanged { stored: String, current: String },
     #[error("memory writes are frozen by the doctor")]
     Frozen,
+    #[error("the persona changed; choose to continue, update or fork before writing")]
+    PersonaUnresolved,
+    #[error("session {0} has ended")]
+    SessionClosed(i64),
+    #[error("memory {0} not found")]
+    NotFound(i64),
+    #[error(
+        "near-duplicate of memory {existing} (similarity {similarity:.2}); supersede it instead"
+    )]
+    Duplicate { existing: i64, similarity: f32 },
+    #[error("the companion can only raise a level, not lower it from {current:?} to {requested:?}")]
+    LevelDown { current: Level, requested: Level },
+    #[error("memory {0} is seared and never changes")]
+    Seared(i64),
+    #[error("invalid write: {0}")]
+    Invalid(String),
     #[error("key source: {0}")]
     Key(String),
     #[error("embedder: {0}")]

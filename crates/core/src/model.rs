@@ -1,30 +1,54 @@
-//! Vocabulary shared by storage and the memory lifecycle.
+//! Vocabulary shared by storage and the memory lifecycle. Each enum is stored as
+//! the text the schema's CHECK constraints expect.
 
-/// How deeply a memory is burned in. Ordered from weakest to strongest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Level {
-    Faint,
-    Normal,
-    Vivid,
-    Seared,
+macro_rules! text_enum {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident = $text:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum $name {
+            $($variant),+
+        }
+
+        impl $name {
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $text),+
+                }
+            }
+
+            pub fn parse(s: &str) -> Option<Self> {
+                match s {
+                    $($text => Some($name::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+
+        impl rusqlite::ToSql for $name {
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                Ok(self.as_str().into())
+            }
+        }
+
+        impl rusqlite::types::FromSql for $name {
+            fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+                let s = value.as_str()?;
+                Self::parse(s).ok_or_else(|| {
+                    rusqlite::types::FromSqlError::Other(
+                        format!("unknown {} {s:?}", stringify!($name)).into(),
+                    )
+                })
+            }
+        }
+    };
+}
+
+text_enum! {
+    /// How deeply a memory is burned in. Ordered from weakest to strongest.
+    Level { Faint = "faint", Normal = "normal", Vivid = "vivid", Seared = "seared" }
 }
 
 impl Level {
-    pub const ALL: [Level; 4] = [Level::Faint, Level::Normal, Level::Vivid, Level::Seared];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Level::Faint => "faint",
-            Level::Normal => "normal",
-            Level::Vivid => "vivid",
-            Level::Seared => "seared",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|l| l.as_str() == s)
-    }
-
     /// One step up for an escalation she didn't choose (an unresolved thread, a
     /// broken promise). Escalation stops at `Vivid`; only her own judgment when
     /// writing, or you from the CLI, can sear a memory.
@@ -37,44 +61,40 @@ impl Level {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemoryType {
-    UserFact,
-    Preference,
-    Episode,
-    Relationship,
-    Promise,
-    Opinion,
-    OpenThread,
-    PersonaNote,
+text_enum! {
+    MemoryType {
+        UserFact = "user_fact",
+        Preference = "preference",
+        Episode = "episode",
+        Relationship = "relationship",
+        Promise = "promise",
+        Opinion = "opinion",
+        OpenThread = "open_thread",
+        PersonaNote = "persona_note",
+    }
 }
 
-impl MemoryType {
-    pub const ALL: [MemoryType; 8] = [
-        MemoryType::UserFact,
-        MemoryType::Preference,
-        MemoryType::Episode,
-        MemoryType::Relationship,
-        MemoryType::Promise,
-        MemoryType::Opinion,
-        MemoryType::OpenThread,
-        MemoryType::PersonaNote,
-    ];
+text_enum! {
+    /// How urgently an open thread wants resolving.
+    Urgency { Simmering = "simmering", Hot = "hot" }
+}
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            MemoryType::UserFact => "user_fact",
-            MemoryType::Preference => "preference",
-            MemoryType::Episode => "episode",
-            MemoryType::Relationship => "relationship",
-            MemoryType::Promise => "promise",
-            MemoryType::Opinion => "opinion",
-            MemoryType::OpenThread => "open_thread",
-            MemoryType::PersonaNote => "persona_note",
-        }
-    }
+text_enum! {
+    Status { Active = "active", Superseded = "superseded" }
+}
 
-    pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|t| t.as_str() == s)
-    }
+text_enum! {
+    /// Who said a turn.
+    Speaker { User = "user", Companion = "companion" }
+}
+
+text_enum! {
+    /// How a session ended.
+    SessionEnd { Sleep = "sleep", Doctor = "doctor" }
+}
+
+text_enum! {
+    /// Who made a write. The companion (through the writer) can only raise
+    /// levels; the CLI can set any level except on a seared memory.
+    Actor { Writer = "writer", Cli = "cli" }
 }
