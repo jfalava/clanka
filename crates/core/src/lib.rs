@@ -5,6 +5,7 @@
 //! traits in [`deps`]. Design: <https://ampcode.com/artifacts/companion-memory-design-4701080c-42d4-44c3-ac9e-95679849e8ae>
 
 mod companion;
+pub mod context;
 mod db;
 pub mod deps;
 mod error;
@@ -15,6 +16,7 @@ pub mod soul;
 pub mod state;
 
 pub use companion::{Companion, PersonaStatus};
+pub use context::{Context, Fatigue, Turn};
 pub use deps::Deps;
 pub use error::{Error, Result};
 pub use memory::{Deleted, Memory, MemoryDraft};

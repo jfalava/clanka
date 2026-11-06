@@ -159,7 +159,7 @@ fn ensure_vectors(conn: &Connection, model: &str, dimensions: usize) -> Result<(
     Ok(())
 }
 
-fn meta(conn: &Connection, key: &str) -> Result<Option<String>> {
+pub(crate) fn meta(conn: &Connection, key: &str) -> Result<Option<String>> {
     Ok(conn
         .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
         .optional()?)
