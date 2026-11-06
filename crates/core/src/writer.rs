@@ -1,9 +1,9 @@
-//! The writer: after a reply has streamed, she reflects on the exchange as
-//! herself and calls tools to change her memory.
+//! The writer: after a reply has streamed, the companion reflects on the
+//! exchange in its own voice and calls tools to change its memory.
 //!
 //! Tool calls go through the same guarded write path as everything else, so
 //! the model can't edit facts, lower a level, touch a seared memory or write
-//! her persona: there is simply no tool for those. A failed call's error goes
+//! the persona: there is simply no tool for those. A failed call's error goes
 //! back to the model, so it can correct itself (supersede a near-duplicate,
 //! for example) in the next round.
 
@@ -37,7 +37,7 @@ pub struct ToolOutcome {
 }
 
 impl Companion {
-    /// Reflects on one exchange: your turn and her reply, both already recorded.
+    /// Reflects on one exchange: the user's turn and the companion's reply, both already recorded.
     /// Long-running (it calls the model); run it after the reply, off the hot path.
     pub fn reflect(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
         // Fail before paying for a model call.
@@ -94,7 +94,7 @@ impl Companion {
                         ok: true,
                         result: format!("ok: {done}"),
                     },
-                    // A freeze from another process mid-reflection stops her at once.
+                    // A freeze from another process mid-reflection stops it at once.
                     Err(Error::Frozen) => return Err(Error::Frozen),
                     Err(e) => ToolOutcome {
                         name: call.name.clone(),
@@ -131,11 +131,11 @@ impl Companion {
         Ok(content)
     }
 
-    /// What she knows going in: soul sections, mood, open threads and the
-    /// memories this exchange brings up, each with the ID her tools need.
+    /// What the companion knows going in: soul sections, mood, open threads and
+    /// the memories this exchange brings up, each with the ID its tools need.
     fn reflection_prompt(&self, exchange: &[i64; 2], said: &str, replied: &str) -> Result<String> {
         let mut out = Vec::new();
-        for section in [Section::AboutYou, Section::Relationship] {
+        for section in [Section::AboutUser, Section::Relationship] {
             let content = self.section(section)?.unwrap_or_default();
             out.push(format!(
                 "Section {} (current):\n{}",
@@ -159,7 +159,7 @@ impl Companion {
             or_none(&memories.join("\n"))
         ));
         out.push(format!(
-            "The exchange:\nTurn {} (him): {said}\nTurn {} (you): {replied}",
+            "The exchange:\nTurn {} (user): {said}\nTurn {} (you): {replied}",
             exchange[0], exchange[1]
         ));
         Ok(out.join("\n\n"))
@@ -260,8 +260,8 @@ fn instructions(name: &str) -> String {
          this: you are deciding, privately and in your own voice, what to keep from it.\n\n\
          Use the tools to remember what matters to you, change a memory with supersede when \
          something changed, raise how much a memory matters, update your mood, open or close \
-         threads, update what you know about him or about your relationship, record when you \
-         pushed back on him, and leave yourself a short note for your next reply.\n\n\
+         threads, update what you know about the user or about your relationship, record when \
+         you pushed back on the user, and leave yourself a short note for your next reply.\n\n\
          Write interpretations in first person, as you felt them. Facts (names, dates, places) \
          must be exactly what was said. Keeping nothing is fine. Call no tools when you are done."
     )
@@ -453,21 +453,21 @@ fn tool_specs() -> Vec<ToolSpec> {
             json!({ "type": "object", "properties": {
                 "valence": { "type": "number", "minimum": -1, "maximum": 1, "description": "Bad to good mood." },
                 "energy": { "type": "number", "minimum": -1, "maximum": 1, "description": "Tired to lively." },
-                "warmth": { "type": "number", "minimum": -1, "maximum": 1, "description": "Cold to warm toward him." },
+                "warmth": { "type": "number", "minimum": -1, "maximum": 1, "description": "Cold to warm toward the user." },
                 "cause": { "type": "string", "description": "One line on why." },
             }, "required": ["valence", "energy", "warmth", "cause"] }),
         ),
         tool(
             "write_section",
-            "Rewrite what you know about him (about_you) or about your relationship. Replaces the whole section.",
+            "Rewrite what you know about the user (about_user) or about your relationship. Replaces the whole section.",
             json!({ "type": "object", "properties": {
-                "section": { "type": "string", "enum": ["about_you", "relationship"] },
+                "section": { "type": "string", "enum": ["about_user", "relationship"] },
                 "content": { "type": "string" },
             }, "required": ["section", "content"] }),
         ),
         tool(
             "pushed_back",
-            "You disagreed with him or challenged him in your reply.",
+            "You disagreed with the user or challenged them in your reply.",
             json!({ "type": "object", "properties": {
                 "about": { "type": "string" },
                 "on_core_value": { "type": "boolean", "description": "It touched one of your core values." },

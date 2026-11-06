@@ -1,4 +1,4 @@
--- Each time she pushed back on him, for the rolling pushback budget. Clashes
+-- Each time the companion pushed back on the user, for the rolling pushback budget. Clashes
 -- with a core value are recorded too but never count against the budget.
 CREATE TABLE pushbacks (
   id INTEGER PRIMARY KEY,

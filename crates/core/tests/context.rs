@@ -10,7 +10,7 @@ const MESSAGE: &str = "What about Laura?";
 /// A companion with every part of the context filled in. Returns the session
 /// turns in order and the hot thread's ID.
 fn furnished(c: &mut Companion) -> (Vec<String>, i64) {
-    c.write_section(Actor::Writer, Section::AboutYou, "Has a sister he adores")
+    c.write_section(Actor::Writer, Section::AboutUser, "Has a sister Sam adores")
         .unwrap();
     c.write_section(
         Actor::Writer,
@@ -22,14 +22,14 @@ fn furnished(c: &mut Companion) -> (Vec<String>, i64) {
         valence: 0.3,
         energy: 0.1,
         warmth: 0.6,
-        cause: "He came back early".into(),
+        cause: "Sam came back early".into(),
     };
     c.set_mood(Actor::Writer, &mood).unwrap();
 
     let mut hot = MemoryDraft::new(
         MemoryType::OpenThread,
         Level::Normal,
-        "He never said why Laura left",
+        "Sam never said why Laura left",
     );
     hot.urgency = Some(Urgency::Hot);
     let hot = c.write(Actor::Writer, &hot).unwrap();
@@ -41,9 +41,9 @@ fn furnished(c: &mut Companion) -> (Vec<String>, i64) {
     simmering.urgency = Some(Urgency::Simmering);
     c.write(Actor::Writer, &simmering).unwrap();
     for (kind, text) in [
-        (MemoryType::UserFact, "Laura is his older sister"),
+        (MemoryType::UserFact, "Laura is Sam's older sister"),
         (MemoryType::Episode, "Laura and dad fought"),
-        (MemoryType::Preference, "Laura sends him songs"),
+        (MemoryType::Preference, "Laura sends Sam songs"),
     ] {
         c.write(Actor::Writer, &MemoryDraft::new(kind, Level::Normal, text))
             .unwrap();
@@ -85,16 +85,16 @@ fn parts_come_in_the_designed_order() {
     };
     let order = [
         at("## Core values"),
-        at("Has a sister he adores"),
+        at("Has a sister Sam adores"),
         at("Close, a little guarded"),
-        at("He came back early"),
+        at("Sam came back early"),
         at("Ask about Laura gently"),
-        at("He never said why Laura left"),
-        at("Laura is his older sister"),
+        at("Sam never said why Laura left"),
+        at("Laura is Sam's older sister"),
     ];
     assert!(order.is_sorted(), "{order:?}\n{text}");
     // The hot thread is listed once, as a thread; the simmering one isn't a hot thread.
-    assert_eq!(text.matches("He never said why Laura left").count(), 1);
+    assert_eq!(text.matches("Sam never said why Laura left").count(), 1);
     assert!(ctx.memories.iter().all(|r| r.memory.id != hot));
     assert_eq!(
         ctx.hot_threads.iter().map(|m| m.id).collect::<Vec<_>>(),
@@ -198,9 +198,9 @@ fn she_lets_go_at_her_pushback_limit_but_never_on_core_values() {
         c.record_pushback(Actor::Writer, t, true, "honesty")
             .unwrap();
     }
-    c.record_pushback(Actor::Writer, turns[0], false, "his job")
+    c.record_pushback(Actor::Writer, turns[0], false, "Sam's job")
         .unwrap();
-    c.record_pushback(Actor::Writer, turns[1], false, "his music")
+    c.record_pushback(Actor::Writer, turns[1], false, "Sam's music")
         .unwrap();
     assert_eq!(
         c.pushback_pressure().unwrap(),
@@ -209,7 +209,7 @@ fn she_lets_go_at_her_pushback_limit_but_never_on_core_values() {
     );
     assert!(!let_go(&c));
 
-    c.record_pushback(Actor::Writer, turns[2], false, "his diet")
+    c.record_pushback(Actor::Writer, turns[2], false, "Sam's diet")
         .unwrap();
     assert!(let_go(&c));
     assert!(

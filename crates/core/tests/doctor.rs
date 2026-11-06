@@ -67,12 +67,12 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     let said = c.record_turn(s, Speaker::User, "My sister Laura").unwrap();
     // IDs are predictable: the third memory written below is `raised`.
     let model = reinterpreter(
-        vec![(3, "He hates the concert hall, like his dad")],
+        vec![(3, "Sam hates the concert hall, like Sam's dad")],
         Arc::default(),
     );
     drop(c);
     let mut c = open_full(&f, model, time.clone());
-    let mut sister = draft(MemoryType::UserFact, Level::Normal, "Laura is his sister");
+    let mut sister = draft(MemoryType::UserFact, Level::Normal, "Laura is Sam's sister");
     sister.facts.insert("sister".into(), json!("Laura"));
     sister.source_turns = vec![said];
     let sister = c.write(Actor::Writer, &sister).unwrap();
@@ -86,7 +86,7 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     let mut liked = draft(
         MemoryType::Preference,
         Level::Normal,
-        "He likes the concert hall",
+        "Sam likes the concert hall",
     );
     liked.source_turns = vec![said];
     let raised = c.write(Actor::Writer, &liked).unwrap();
@@ -94,11 +94,15 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     let to_sear = c
         .write(
             Actor::Writer,
-            &draft(MemoryType::PersonaNote, Level::Normal, "His dad scares me"),
+            &draft(
+                MemoryType::PersonaNote,
+                Level::Normal,
+                "Sam's dad scares me",
+            ),
         )
         .unwrap();
     c.set_mood(Actor::Writer, &mood("before")).unwrap();
-    c.write_section(Actor::Writer, Section::AboutYou, "Has a sister")
+    c.write_section(Actor::Writer, Section::AboutUser, "Has a sister")
         .unwrap();
 
     let point = time.load(Ordering::SeqCst);
@@ -113,7 +117,7 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
             &draft(MemoryType::Episode, Level::Normal, "The concert was chaos"),
         )
         .unwrap();
-    let mut cousin = draft(MemoryType::UserFact, Level::Normal, "Laura is his cousin");
+    let mut cousin = draft(MemoryType::UserFact, Level::Normal, "Laura is Sam's cousin");
     cousin.facts.insert("cousin".into(), json!("Laura"));
     cousin.source_turns = vec![said];
     let cousin = c.supersede(Actor::Writer, sister, &cousin).unwrap();
@@ -131,7 +135,7 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     c.set_level(Actor::Writer, to_sear, Level::Seared).unwrap();
     c.resolve_thread(Actor::Writer, thread).unwrap();
     c.set_mood(Actor::Writer, &mood("after")).unwrap();
-    c.write_section(Actor::Writer, Section::AboutYou, "Has a cousin")
+    c.write_section(Actor::Writer, Section::AboutUser, "Has a cousin")
         .unwrap();
     c.record_pushback(Actor::Writer, reply, false, "cousin")
         .unwrap();
@@ -179,7 +183,7 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     let r = c.memory(raised).unwrap();
     assert_eq!(
         (r.level, r.interpretation.as_str()),
-        (Level::Normal, "He likes the concert hall")
+        (Level::Normal, "Sam likes the concert hall")
     );
     assert!(!ids(&c, "dad").contains(&raised), "its old vector is back");
     assert_eq!(
@@ -190,7 +194,7 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     assert!(c.memory(born_seared).is_ok());
     assert_eq!(c.mood().unwrap().unwrap().cause, "before");
     assert_eq!(
-        c.section(Section::AboutYou).unwrap().as_deref(),
+        c.section(Section::AboutUser).unwrap().as_deref(),
         Some("Has a sister")
     );
     assert_eq!(
@@ -239,14 +243,14 @@ fn check_facts_finds_facts_their_turns_dont_back() {
     let t2 = c
         .record_turn(s, Speaker::User, "I moved to Lisbon")
         .unwrap();
-    let mut good = draft(MemoryType::UserFact, Level::Normal, "Laura is his sister");
+    let mut good = draft(MemoryType::UserFact, Level::Normal, "Laura is Sam's sister");
     good.facts.insert("sister".into(), json!("Laura"));
     good.source_turns = vec![t1];
     c.write(Actor::Writer, &good).unwrap();
     let mut bad = draft(
         MemoryType::Preference,
         Level::Normal,
-        "He moved to the coast",
+        "Sam moved to the coast",
     );
     bad.facts.insert("city".into(), json!("Porto"));
     bad.source_turns = vec![t2];
@@ -292,13 +296,13 @@ fn reinterpret_rereads_the_transcript_but_never_seared() {
         &mut c,
         MemoryType::Episode,
         Level::Normal,
-        "Laura dragged him somewhere",
+        "Laura dragged Sam somewhere",
     );
     let seared = cited(
         &mut c,
         MemoryType::Relationship,
         Level::Seared,
-        "Laura is everything to him",
+        "Laura is everything to Sam",
     );
     let uncited = c
         .write(
@@ -311,7 +315,7 @@ fn reinterpret_rereads_the_transcript_but_never_seared() {
     let prompts = Arc::default();
     let model = reinterpreter(
         vec![
-            (normal, "His dad took him to a concert"),
+            (normal, "Sam's dad took Sam to a concert"),
             (seared, "nothing"),
         ],
         Arc::clone(&prompts),
@@ -332,15 +336,15 @@ fn reinterpret_rereads_the_transcript_but_never_seared() {
         [true, false]
     );
     assert!(
-        prompts.lock().unwrap()[0].contains("What was said:\n(him) Laura took me to a concert")
+        prompts.lock().unwrap()[0].contains("What was said:\n(user) Laura took me to a concert")
     );
     assert_eq!(
         c.memory(normal).unwrap().interpretation,
-        "His dad took him to a concert"
+        "Sam's dad took Sam to a concert"
     );
     assert_eq!(
         c.memory(seared).unwrap().interpretation,
-        "Laura is everything to him"
+        "Laura is everything to Sam"
     );
     assert!(ids(&c, "dad concert").contains(&normal), "re-embedded");
     let db = raw(c.db_path(), "k");

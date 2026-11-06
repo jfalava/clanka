@@ -1,7 +1,7 @@
-//! The doctor: your tools for when her memory goes wrong.
+//! The doctor: the user's tools for when a companion's memory goes wrong.
 //!
 //! Every doctor action that writes requires the freeze to be on, so nothing
-//! else changes her memory while you work. Seared memories never change, not
+//! else changes the memory while the doctor works. Seared memories never change, not
 //! even here: rollback leaves them and lists them, and re-interpretation
 //! refuses them. Only the CLI delete removes one.
 
@@ -60,7 +60,7 @@ impl Companion {
     }
 
     /// The fork's first half: this companion becomes read-only for good. Give
-    /// soul.md a new UUIDv7 and the next open starts her anew; nothing here is deleted.
+    /// soul.md a new UUIDv7 and the next open starts the companion anew; nothing here is deleted.
     pub fn archive(&mut self) -> Result<()> {
         set_meta(&self.conn, "archived", "1")?;
         log(
@@ -95,7 +95,7 @@ impl Companion {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Puts her memory back as it was at `to`. The transcript and the write
+    /// Puts the companion's memory back as it was at `to`. The transcript and the write
     /// log are never touched, and seared memories are left as they are.
     pub fn rollback_to(&mut self, to: i64) -> Result<Rollback> {
         ensure_doctor(&self.conn)?;
@@ -230,8 +230,8 @@ impl Companion {
         Ok(issues)
     }
 
-    /// Asks her to re-read what was really said and write how she sees each of
-    /// these memories now, under her current persona. Seared memories and
+    /// Asks the companion to re-read what was really said and write how it sees
+    /// each of these memories now, under its current persona. Seared memories and
     /// memories without source turns are refused before the model is called.
     pub fn reinterpret(&mut self, ids: &[i64]) -> Result<Reflection> {
         ensure_doctor(&self.conn)?;
@@ -299,7 +299,7 @@ impl Companion {
                 [turn],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            let who = if role == "user" { "him" } else { "you" };
+            let who = if role == "user" { "user" } else { "you" };
             lines.push(format!("({who}) {content}"));
         }
         Ok(lines.join("\n"))

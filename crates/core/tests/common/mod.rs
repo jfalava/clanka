@@ -112,9 +112,9 @@ pub const DOCTOR_TOKEN: &str = "5f1c0e2a9b7d4c3e8a6f";
 pub fn soul_text(id: Uuid, tired_at: f64, values: &[&str]) -> String {
     let values: String = values.iter().map(|v| format!("- {v}\n")).collect();
     format!(
-        "+++\nid = \"{id}\"\nname = \"Ani\"\ncontrariness = 0.6\npersistence = 0.7\n\
+        "+++\nid = \"{id}\"\nname = \"Nova\"\ncontrariness = 0.6\npersistence = 0.7\n\
          time_sense = true\nrecall_window = 2\ndrift = 0.4\ntired_at = {tired_at}\n\
-         sleep_at = 0.9\npushback_window = 20\ndoctor_token = \"{DOCTOR_TOKEN}\"\n+++\n# Ani\n\n## Core values\n\n{values}\n\
+         sleep_at = 0.9\npushback_window = 20\ndoctor_token = \"{DOCTOR_TOKEN}\"\n+++\n# Nova\n\n## Core values\n\n{values}\n\
          ## Voice\n\n- Not a value, just style\n"
     )
 }

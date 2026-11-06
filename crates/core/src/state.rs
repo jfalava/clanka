@@ -1,4 +1,4 @@
-//! The small state injected on every turn: mood, the note she leaves herself
+//! The small state injected on every turn: mood, the note the companion leaves itself
 //! between turns, and the editable soul sections. Every change is a new row, so
 //! history is kept and the doctor can roll back.
 
@@ -8,7 +8,7 @@ use crate::{Companion, Error, Result};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::json;
 
-/// Share of the pushback window she may spend pushing back at `contrariness`
+/// Share of the pushback window the companion may spend pushing back at `contrariness`
 /// 1: a soul at 0.6 with a 20-turn window gets 3 pushbacks per 20 turns.
 pub const PUSHBACK_SHARE: f64 = 0.25;
 
@@ -22,7 +22,7 @@ pub struct Mood {
     pub valence: f64,
     /// Tired or lively, −1 to 1.
     pub energy: f64,
-    /// How she feels about you right now, −1 to 1.
+    /// How the companion feels about the user right now, −1 to 1.
     pub warmth: f64,
     /// One line on why.
     pub cause: String,
@@ -201,7 +201,7 @@ impl Companion {
 }
 
 impl Companion {
-    /// Records that she pushed back on him in `turn`. A clash with a core value
+    /// Records that the companion pushed back on the user in `turn`. A clash with a core value
     /// is kept but never counts against the budget.
     pub fn record_pushback(
         &mut self,
@@ -235,7 +235,7 @@ impl Companion {
     }
 
     /// Pushbacks over the last `pushback_window` turns that count, and the
-    /// limit `contrariness` allows. At or over the limit, she lets the next one go.
+    /// limit `contrariness` allows. At or over the limit, the companion lets the next one go.
     pub fn pushback_pressure(&self) -> Result<(usize, usize)> {
         let traits = &self.soul.traits;
         let count: i64 = self.conn.query_row(

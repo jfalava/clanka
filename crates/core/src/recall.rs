@@ -26,7 +26,7 @@ pub struct Ranking {
     /// Added to the cosine relevance for the best full-text match, scaled
     /// down for weaker matches. Lets names and places in `facts` count.
     pub fts_weight: f64,
-    /// How strongly her mood pulls same-feeling memories up and others down.
+    /// How strongly the companion's mood pulls same-feeling memories up and others down.
     pub mood_weight: f64,
     /// Multiplier for open threads that haven't been resolved.
     pub thread_boost: f64,

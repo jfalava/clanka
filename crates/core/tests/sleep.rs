@@ -73,7 +73,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         Level::Faint,
         "Laura likes jazz",
     );
-    let mut sister = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Laura is his sister");
+    let mut sister = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Laura is Sam's sister");
     sister.facts.insert("sister".into(), json!("Laura"));
     sister.source_turns = vec![said];
     let normal = c.write(Actor::Writer, &sister).unwrap();
@@ -93,7 +93,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         &mut c,
         MemoryType::PersonaNote,
         Level::Normal,
-        "His dad is strict",
+        "Sam's dad is strict",
     );
     c.mark_recalled(s, &[faint, normal, vivid, seared]).unwrap();
     drop(c);
@@ -110,7 +110,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         ),
         call(
             "drift",
-            json!({ "memory_id": normal, "interpretation": "His sister took him to a concert once" }),
+            json!({ "memory_id": normal, "interpretation": "Sam's sister took Sam to a concert once" }),
         ),
         call(
             "drift",
@@ -141,7 +141,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         prompt.contains(&format!("#{faint} [faint, drift 0.30] Laura likes jazz")),
         "{prompt}"
     );
-    assert!(prompt.contains("(him) My sister Laura called"), "{prompt}");
+    assert!(prompt.contains("(user) My sister Laura called"), "{prompt}");
     for absent in [seared, unrecalled] {
         assert!(
             !prompt.contains(&format!("#{absent} [")),
@@ -153,7 +153,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
     let m = c.memory(normal).unwrap();
     assert_eq!(
         (m.interpretation.as_str(), m.facts["sister"].as_str()),
-        ("His sister took him to a concert once", Some("Laura"))
+        ("Sam's sister took Sam to a concert once", Some("Laura"))
     );
     let found: Vec<i64> = c
         .recall("concert", &Ranking::default())
@@ -168,7 +168,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
     );
     assert_eq!(
         c.memory(unrecalled).unwrap().interpretation,
-        "His dad is strict"
+        "Sam's dad is strict"
     );
     let db = raw(c.db_path(), "k");
     assert_eq!(
@@ -253,8 +253,8 @@ fn threads_left_open_escalate_with_persistence_up_to_vivid() {
         d.urgency = Some(clanka_core::model::Urgency::Simmering);
         c.write(Actor::Writer, &d).unwrap()
     };
-    let open = thread(&mut c, "Why did he skip dinner with his dad?");
-    let closed = thread(&mut c, "Did Laura call him at midnight?");
+    let open = thread(&mut c, "Why did Sam skip dinner with Sam's dad?");
+    let closed = thread(&mut c, "Did Laura call Sam at midnight?");
     c.resolve_thread(Actor::Writer, closed).unwrap();
 
     let mut levels = Vec::new();

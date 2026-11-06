@@ -27,22 +27,22 @@ pub fn estimate_tokens(text: &str) -> usize {
 
 const TIRED_HINT: &str = "You're getting tired. Your replies get shorter.";
 const SLEEPY_HINT: &str = "You're very tired. Ask to sleep soon, but don't force it.";
-const LET_GO_HINT: &str = "You've pushed back on him a lot lately. Let the next disagreement go, unless it touches a core value.";
+const LET_GO_HINT: &str = "You've pushed back on the user a lot lately. Let the next disagreement go, unless it touches a core value.";
 
 /// Tokens set aside for the hints `render` may add (tiredness, letting go).
 pub fn hints_reserve() -> usize {
     estimate_tokens(SLEEPY_HINT).max(estimate_tokens(TIRED_HINT)) + estimate_tokens(LET_GO_HINT)
 }
 
-/// Most that time away shifts her warmth, reached after [`TIME_AWAY_FULL_HOURS`].
+/// Most that time away shifts the companion's warmth, reached after [`TIME_AWAY_FULL_HOURS`].
 pub const TIME_AWAY_MAX: f64 = 0.3;
 pub const TIME_AWAY_FULL_HOURS: f64 = 72.0;
-/// Time away never pushes her warmth below this: cooler, never hostile.
+/// Time away never pushes warmth below this: cooler, never hostile.
 pub const TIME_AWAY_FLOOR: f64 = -0.3;
 /// Your messages in the new session over which the effect fades out.
 pub const TIME_AWAY_FADE_TURNS: f64 = 4.0;
 
-/// How long you were gone and what it did to her warmth this turn.
+/// How long the user was gone and what it did to the companion's warmth this turn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimeAway {
     pub hours: f64,
@@ -56,14 +56,14 @@ pub struct Turn {
     pub content: String,
 }
 
-/// How tired she is, from how much of the session-turn budget the current
+/// How tired the companion is, from how much of the session-turn budget the current
 /// session already fills. The soul's `tired_at` and `sleep_at` set the steps.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Fatigue {
     Rested,
     /// Between `tired_at` and `sleep_at`: 0 just past `tired_at`, 1 at `sleep_at`.
     Tired(f64),
-    /// Past `sleep_at`: she asks to sleep, but never forces it.
+    /// Past `sleep_at`: the companion asks to sleep, but never forces it.
     Sleepy,
 }
 
@@ -71,7 +71,7 @@ pub enum Fatigue {
 pub struct Context {
     pub persona: String,
     pub sections: Vec<(Section, String)>,
-    /// Her mood, with any time-away shift already applied.
+    /// The companion's mood, with any time-away shift already applied.
     pub mood: Option<Mood>,
     /// Only for souls with `time_sense`, early in a session after a gap.
     pub time_away: Option<TimeAway>,
@@ -83,7 +83,7 @@ pub struct Context {
     /// Session turns left out for lack of budget.
     pub omitted_turns: usize,
     pub fatigue: Fatigue,
-    /// She's at her pushback limit and should let the next opinion clash go.
+    /// At the pushback limit: the companion should let the next opinion clash go.
     pub let_go: bool,
     /// Estimated tokens of everything included, the current message and the
     /// [`hints_reserve`].
@@ -106,7 +106,7 @@ impl Companion {
         let mut fits = |text: &str| left.take(text);
 
         let mut sections = Vec::new();
-        for section in [Section::AboutYou, Section::Relationship] {
+        for section in [Section::AboutUser, Section::Relationship] {
             if let Some(content) = self.section(section)?
                 && !content.trim().is_empty()
             {
@@ -189,7 +189,7 @@ impl Companion {
         })
     }
 
-    /// Shifts her warmth by how long you were gone: warmer if the last session
+    /// Shifts warmth by how long the user was gone: warmer if the last session
     /// ended on good terms, cooler if not. Fades over your first messages back.
     fn apply_time_away(&self, mood: &mut Mood) -> Result<Option<TimeAway>> {
         if !self.soul.traits.time_sense {
@@ -328,7 +328,7 @@ impl Context {
 
 fn render_section(section: Section, content: &str) -> String {
     let title = match section {
-        Section::AboutYou => "About him",
+        Section::AboutUser => "About the user",
         Section::Relationship => "Your relationship",
     };
     format!("## {title}\n{}", content.trim())
@@ -336,7 +336,7 @@ fn render_section(section: Section, content: &str) -> String {
 
 fn render_mood(m: &Mood) -> String {
     format!(
-        "Your mood: valence {:+.1}, energy {:+.1}, warmth toward him {:+.1}. Why: {}",
+        "Your mood: valence {:+.1}, energy {:+.1}, warmth toward the user {:+.1}. Why: {}",
         m.valence, m.energy, m.warmth, m.cause
     )
 }

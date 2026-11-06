@@ -28,7 +28,7 @@ BEGIN
   SELECT RAISE(ABORT, 'turns are immutable');
 END;
 
--- Her interpretation of the transcript.
+-- The companion's interpretation of the transcript.
 CREATE TABLE memories (
   id INTEGER PRIMARY KEY,
   type TEXT NOT NULL CHECK (type IN (
@@ -42,7 +42,7 @@ CREATE TABLE memories (
   superseded_by INTEGER REFERENCES memories(id),
   occurred_at INTEGER,
   persona_hash TEXT NOT NULL,
-  -- Opinions: how strongly she holds the stance (0–1).
+  -- Opinions: how strongly the companion holds the stance (0–1).
   strength REAL CHECK (strength IS NULL OR strength BETWEEN 0 AND 1),
   -- Open threads.
   urgency TEXT CHECK (urgency IN ('simmering', 'hot')),

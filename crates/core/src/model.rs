@@ -49,8 +49,8 @@ text_enum! {
 }
 
 impl Level {
-    /// One step up for an escalation she didn't choose (an unresolved thread, a
-    /// broken promise). Escalation stops at `Vivid`; only her own judgment when
+    /// One step up for an escalation the companion didn't choose (an unresolved
+    /// thread, a broken promise). Escalation stops at `Vivid`; only its own judgment when
     /// writing, or you from the CLI, can sear a memory.
     pub fn escalated(self) -> Self {
         match self {
@@ -94,12 +94,12 @@ text_enum! {
 }
 
 text_enum! {
-    /// Who made a write. The companion (through the writer or in her sleep)
+    /// Who made a write. The companion (through the writer or in its sleep)
     /// can only raise levels; the CLI can set any level except on a seared memory.
     Actor { Writer = "writer", Sleep = "sleep", Cli = "cli" }
 }
 
 text_enum! {
-    /// The soul.md sections she may edit. The persona itself is a file she never writes.
-    Section { AboutYou = "about_you", Relationship = "relationship" }
+    /// The soul.md sections the companion may edit. The persona itself is a file it never writes.
+    Section { AboutUser = "about_user", Relationship = "relationship" }
 }

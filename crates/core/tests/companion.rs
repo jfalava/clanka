@@ -100,8 +100,8 @@ fn storage_rules_hold_for_any_process() {
          INSERT INTO turns (id, session_id, role, content, created_at)
            VALUES (1, 1, 'user', 'My sister Laura moved to Lisbon', 0);
          INSERT INTO memories (id, type, level, facts, interpretation, persona_hash, created_at, updated_at)
-           VALUES (1, 'user_fact', 'normal', '{\"sister\":\"Laura\"}', 'He misses Laura more than he says', 'h', 0, 0),
-                  (2, 'episode', 'seared', '{}', 'The night he told me about his dad', 'h', 0, 0);
+           VALUES (1, 'user_fact', 'normal', '{\"sister\":\"Laura\"}', 'Sam misses Laura more than Sam says', 'h', 0, 0),
+                  (2, 'episode', 'seared', '{}', 'The night Sam told me about Sam''s dad', 'h', 0, 0);
          INSERT INTO memory_vectors (memory_id, embedding) VALUES (1, '[0.1, 0.2, 0.3, 0.4]');",
     )
     .unwrap();
@@ -129,7 +129,7 @@ fn storage_rules_hold_for_any_process() {
 
     // Interpretations of non-seared memories can drift, and search follows them.
     db.execute(
-        "UPDATE memories SET interpretation = 'He keeps going quiet about Laura' WHERE id = 1",
+        "UPDATE memories SET interpretation = 'Sam keeps going quiet about Laura' WHERE id = 1",
         [],
     )
     .unwrap();
@@ -175,7 +175,7 @@ fn soul_errors_refuse_to_load() {
             "drift",
         ),
         (
-            soul_text(id, 0.7, &["a"]).replace("name = \"Ani\"", "name = \"Ani\"\nmood = 1"),
+            soul_text(id, 0.7, &["a"]).replace("name = \"Nova\"", "name = \"Nova\"\nmood = 1"),
             "mood",
         ),
         ("# no frontmatter".to_owned(), "frontmatter"),

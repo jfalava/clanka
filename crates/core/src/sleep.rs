@@ -1,5 +1,5 @@
 //! Sleep: the only compaction. It escalates threads left open too long, then
-//! asks her, as herself, to write the night's episode, settle her mood and let
+//! asks the companion, in its own voice, to write the night's episode, settle its mood and let
 //! the memories that came up tonight drift. Then the session ends.
 //!
 //! Sleep can be retried: if it fails before the episode is written, the session
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 /// Drift caps per level: faint memories shift the most, vivid ones only in detail.
 const DRIFT_CAP: [f64; 3] = [1.0, 0.6, 0.25];
 
-/// Drifts smaller than this aren't offered: she'd remember it the same.
+/// Drifts smaller than this aren't offered: it would be remembered the same.
 const MIN_DRIFT: f64 = 0.05;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +116,7 @@ impl Companion {
             .prepare("SELECT role, content FROM turns WHERE session_id = ?1 ORDER BY id")?
             .query_map([session], |r| {
                 let who = match r.get::<_, Speaker>(0)? {
-                    Speaker::User => "him",
+                    Speaker::User => "user",
                     Speaker::Companion => "you",
                 };
                 Ok(format!("({who}) {}", r.get::<_, String>(1)?))
@@ -276,7 +276,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             json!({ "type": "object", "properties": {
                 "valence": axis("Bad to good mood."),
                 "energy": axis("Tired to lively."),
-                "warmth": axis("Cold to warm toward him."),
+                "warmth": axis("Cold to warm toward the user."),
                 "cause": { "type": "string", "description": "One line on why." },
             }, "required": ["valence", "energy", "warmth", "cause"] }),
         ),

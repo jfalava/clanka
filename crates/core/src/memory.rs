@@ -26,11 +26,11 @@ pub struct MemoryDraft {
     /// Turns that anchor the facts. Required whenever `facts` is not empty.
     pub source_turns: Vec<i64>,
     pub occurred_at: Option<i64>,
-    /// Opinions only: how strongly she holds the stance, 0–1.
+    /// Opinions only: how strongly the companion holds the stance, 0–1.
     pub strength: Option<f64>,
     /// Open threads only.
     pub urgency: Option<Urgency>,
-    /// How the memory feels to her, −1 to 1. `None` is neutral.
+    /// How the memory feels to the companion, −1 to 1. `None` is neutral.
     pub valence: Option<f64>,
 }
 
@@ -266,7 +266,7 @@ impl Companion {
         Ok(())
     }
 
-    /// Closes an open thread. It stays a memory; it just stops chasing him.
+    /// Closes an open thread. It stays a memory; it just stops chasing the user.
     pub fn resolve_thread(&mut self, actor: Actor, id: i64) -> Result<()> {
         let now = self.deps.clock.now_ms();
         let tx = self
@@ -309,7 +309,7 @@ impl Companion {
         Ok(())
     }
 
-    /// Rewrites a memory's interpretation as it drifts in her sleep, with the
+    /// Rewrites a memory's interpretation as it drifts in the companion's sleep, with the
     /// seed and magnitude that set how far, so the doctor can explain it.
     /// Facts never drift and seared memories never change.
     pub(crate) fn drift_memory(

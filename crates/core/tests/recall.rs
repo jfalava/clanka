@@ -110,7 +110,7 @@ fn levels_decide_what_survives_burial_and_seared_is_capped() {
 fn names_in_facts_count_and_odd_input_is_safe() {
     let f = fixture();
     let mut c = open(&f, "k").unwrap();
-    let mut marta = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "His dad is strict");
+    let mut marta = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Sam's dad is strict");
     let s = c.open_session().unwrap();
     marta.source_turns = vec![c.record_turn(s, Speaker::User, "My friend Marta").unwrap()];
     marta.facts.insert("friend".into(), json!("Marta"));
@@ -139,11 +139,11 @@ fn mood_pulls_same_feeling_memories_up() {
     let mut proud = MemoryDraft::new(
         MemoryType::UserFact,
         Level::Normal,
-        "Laura was proud of him",
+        "Laura was proud of Sam",
     );
     proud.valence = Some(0.8);
     let proud = c.write(Actor::Writer, &proud).unwrap();
-    let mut fight = MemoryDraft::new(MemoryType::Episode, Level::Normal, "Laura yelled at him");
+    let mut fight = MemoryDraft::new(MemoryType::Episode, Level::Normal, "Laura yelled at Sam");
     fight.valence = Some(-0.8);
     let fight = c.write(Actor::Writer, &fight).unwrap();
 
@@ -162,7 +162,7 @@ fn the_query_covers_the_recall_window_of_user_messages() {
         &mut c,
         MemoryType::UserFact,
         Level::Normal,
-        "Laura is his sister",
+        "Laura is Sam's sister",
     );
     write(
         &mut c,
@@ -189,7 +189,7 @@ fn marking_recalls_respects_the_freeze() {
         &mut c,
         MemoryType::UserFact,
         Level::Normal,
-        "Laura is his sister",
+        "Laura is Sam's sister",
     );
     let s = c.open_session().unwrap();
     c.set_frozen(true).unwrap();

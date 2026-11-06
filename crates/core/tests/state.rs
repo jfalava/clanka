@@ -20,12 +20,12 @@ fn mood_keeps_history_and_reads_the_latest() {
     let mut c = open(&f, "k").unwrap();
     assert_eq!(c.mood().unwrap(), None);
 
-    c.set_mood(Actor::Writer, &mood(-0.4, "He blew me off"))
+    c.set_mood(Actor::Writer, &mood(-0.4, "Sam blew me off"))
         .unwrap();
     let session = c.open_session().unwrap();
-    c.set_mood(Actor::Writer, &mood(0.6, "He apologised"))
+    c.set_mood(Actor::Writer, &mood(0.6, "Sam apologised"))
         .unwrap();
-    assert_eq!(c.mood().unwrap(), Some(mood(0.6, "He apologised")));
+    assert_eq!(c.mood().unwrap(), Some(mood(0.6, "Sam apologised")));
 
     for bad in [mood(1.5, "Too happy"), mood(0.0, " ")] {
         let r = c.set_mood(Actor::Writer, &bad);
@@ -48,7 +48,7 @@ fn the_last_turn_note_wins() {
         .unwrap();
     let t2 = c.record_turn(s, Speaker::Companion, "Then quit").unwrap();
 
-    c.write_turn_note(Actor::Writer, t2, "Too blunt; check on him")
+    c.write_turn_note(Actor::Writer, t2, "Too blunt; check on Sam")
         .unwrap();
     c.write_turn_note(Actor::Writer, t1, "Still curious about the job")
         .unwrap();
@@ -66,16 +66,16 @@ fn the_last_turn_note_wins() {
 fn sections_are_versioned_and_capped_in_characters() {
     let f = fixture();
     let mut c = open(&f, "k").unwrap();
-    assert_eq!(c.section(Section::AboutYou).unwrap(), None);
+    assert_eq!(c.section(Section::AboutUser).unwrap(), None);
 
-    c.write_section(Actor::Writer, Section::AboutYou, "Lives in Madrid")
+    c.write_section(Actor::Writer, Section::AboutUser, "Lives in Madrid")
         .unwrap();
     c.write_section(Actor::Writer, Section::Relationship, "Early days")
         .unwrap();
-    c.write_section(Actor::Writer, Section::AboutYou, "Moved to Lisbon")
+    c.write_section(Actor::Writer, Section::AboutUser, "Moved to Lisbon")
         .unwrap();
     assert_eq!(
-        c.section(Section::AboutYou).unwrap().as_deref(),
+        c.section(Section::AboutUser).unwrap().as_deref(),
         Some("Moved to Lisbon")
     );
     assert_eq!(
@@ -83,7 +83,7 @@ fn sections_are_versioned_and_capped_in_characters() {
         Some("Early days")
     );
     let history: Vec<String> = c
-        .section_history(Section::AboutYou)
+        .section_history(Section::AboutUser)
         .unwrap()
         .into_iter()
         .map(|v| v.content)

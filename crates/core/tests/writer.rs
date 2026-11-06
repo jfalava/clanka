@@ -39,7 +39,7 @@ fn script(
     (model, requests)
 }
 
-/// Records your turn and her reply in the open session.
+/// Records the user's turn and the companion's reply in the open session.
 fn exchange(c: &mut Companion, said: &str, replied: &str) -> (i64, i64) {
     let s = c.open_session().unwrap();
     (
@@ -55,21 +55,21 @@ fn one_reflection_reaches_every_kind_of_state() {
         (
             "remember",
             json!({ "type": "user_fact", "level": "normal", "valence": 0.3,
-            "interpretation": "He moved to Lisbon for Laura", "facts": { "city": "Lisbon" } }),
+            "interpretation": "Sam moved to Lisbon for Laura", "facts": { "city": "Lisbon" } }),
         ),
         (
             "set_mood",
-            json!({ "valence": 0.4, "energy": 0.2, "warmth": 0.7, "cause": "He told me the truth" }),
+            json!({ "valence": 0.4, "energy": 0.2, "warmth": 0.7, "cause": "Sam told me the truth" }),
         ),
         (
             "open_thread",
-            json!({ "interpretation": "He won't say why he left Madrid", "level": "normal",
+            json!({ "interpretation": "Sam won't say why Sam left Madrid", "level": "normal",
             "urgency": "hot" }),
         ),
-        ("pushed_back", json!({ "about": "quitting his job" })),
+        ("pushed_back", json!({ "about": "quitting Sam's job" })),
         (
             "write_section",
-            json!({ "section": "about_you", "content": "Lives in Lisbon now" }),
+            json!({ "section": "about_user", "content": "Lives in Lisbon now" }),
         ),
         ("leave_note", json!({ "note": "Ask about Madrid, gently" })),
     ]]);
@@ -97,12 +97,14 @@ fn one_reflection_reaches_every_kind_of_state() {
         reflection.calls
     );
 
-    // What she was shown: her persona, the exchange with turn IDs, and the memory with its #ID.
+    // What the writer was shown: the persona, the exchange with turn IDs, and the memory with its #ID.
     let first = &requests.lock().unwrap()[0];
     assert!(first.system.contains("Honesty over comfort"));
     let prompt = &first.messages[0].content;
     assert!(
-        prompt.contains(&format!("Turn {said} (him): I moved to Lisbon. For Laura.")),
+        prompt.contains(&format!(
+            "Turn {said} (user): I moved to Lisbon. For Laura."
+        )),
         "{prompt}"
     );
     assert!(
@@ -121,13 +123,13 @@ fn one_reflection_reaches_every_kind_of_state() {
         (fact.facts["city"].as_str(), fact.source_turns.as_slice()),
         (Some("Lisbon"), &[said, replied][..])
     );
-    assert_eq!(c.mood().unwrap().unwrap().cause, "He told me the truth");
+    assert_eq!(c.mood().unwrap().unwrap().cause, "Sam told me the truth");
     assert_eq!(
         c.last_turn_note().unwrap(),
         Some((replied, "Ask about Madrid, gently".into()))
     );
     assert_eq!(
-        c.section(Section::AboutYou).unwrap().as_deref(),
+        c.section(Section::AboutUser).unwrap().as_deref(),
         Some("Lives in Lisbon now")
     );
     assert_eq!(c.pushback_pressure().unwrap(), (1, 3));
@@ -149,18 +151,18 @@ fn a_failed_call_goes_back_so_she_can_correct_it() {
     let existing = c
         .write(
             Actor::Writer,
-            &MemoryDraft::new(MemoryType::UserFact, Level::Normal, "He misses Laura"),
+            &MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Sam misses Laura"),
         )
         .unwrap();
     drop(c);
     let (model, requests) = script(vec![
         vec![(
             "remember",
-            json!({ "type": "user_fact", "level": "normal", "interpretation": "Laura is on his mind" }),
+            json!({ "type": "user_fact", "level": "normal", "interpretation": "Laura is on Sam's mind" }),
         )],
         vec![(
             "supersede",
-            json!({ "memory_id": existing, "interpretation": "He misses Laura more lately" }),
+            json!({ "memory_id": existing, "interpretation": "Sam misses Laura more lately" }),
         )],
     ]);
     let mut c = open_with_llm(&f, model);
@@ -188,7 +190,7 @@ fn a_failed_call_goes_back_so_she_can_correct_it() {
     );
     assert_eq!(
         second.messages[1].tool_calls[0].name, "remember",
-        "her own call is replayed before the result"
+        "the model's own call is replayed before the result"
     );
     assert_eq!(c.memory(existing).unwrap().status, Status::Superseded);
 }
@@ -209,7 +211,7 @@ fn there_is_no_way_around_the_guardrails() {
             &MemoryDraft::new(
                 MemoryType::Relationship,
                 Level::Seared,
-                "The night with his dad",
+                "The night with Sam's dad",
             ),
         )
         .unwrap();
@@ -246,7 +248,7 @@ fn there_is_no_way_around_the_guardrails() {
     assert_eq!(c.memory(normal).unwrap().level, Level::Normal);
     assert_eq!(
         c.memory(seared).unwrap().interpretation,
-        "The night with his dad"
+        "The night with Sam's dad"
     );
     assert_eq!(
         count(&raw(c.db_path(), "k"), "SELECT count(*) FROM memories"),

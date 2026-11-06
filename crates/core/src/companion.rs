@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// One companion: her soul.md and her database file `<data_dir>/<id>.db`.
+/// One companion: its soul.md and its database file `<data_dir>/<id>.db`.
 ///
 /// Several processes may hold a handle to the same companion at once, so any
 /// state they must agree on (the doctor's freeze, the accepted persona) lives in
@@ -18,7 +18,7 @@ pub struct Companion {
     persona: PersonaStatus,
 }
 
-/// How the soul.md on disk relates to the one her memories were written under.
+/// How the soul.md on disk relates to the one its memories were written under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PersonaStatus {
     /// First open: this persona is now the accepted one.
@@ -113,7 +113,7 @@ impl Companion {
         &self.persona
     }
 
-    /// "Continue" after a persona change: keep old memories as she felt them
+    /// "Continue" after a persona change: keep old memories as they were felt
     /// and write new ones under the new persona.
     pub fn continue_with_persona(&mut self) -> Result<()> {
         set_meta(&self.conn, "persona_hash", &self.soul.hash)?;

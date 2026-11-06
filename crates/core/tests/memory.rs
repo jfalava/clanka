@@ -49,20 +49,20 @@ fn supersede_keeps_the_past_word_for_word() {
     let old = c
         .write(
             Actor::Writer,
-            &fact("city", "Madrid", "He loves Madrid", t1),
+            &fact("city", "Madrid", "Sam loves Madrid", t1),
         )
         .unwrap();
     let new = c
         .supersede(
             Actor::Writer,
             old,
-            &fact("city", "Lisbon", "He left for Lisbon, maybe for Laura", t2),
+            &fact("city", "Lisbon", "Sam left for Lisbon, maybe for Laura", t2),
         )
         .unwrap();
 
     let o = c.memory(old).unwrap();
     assert_eq!((o.status, o.superseded_by), (Status::Superseded, Some(new)));
-    assert_eq!(o.interpretation, "He loves Madrid");
+    assert_eq!(o.interpretation, "Sam loves Madrid");
     assert_eq!(o.facts["city"], "Madrid");
     assert_eq!(o.source_turns, [t1]);
     let n = c.memory(new).unwrap();
@@ -83,7 +83,7 @@ fn supersede_keeps_the_past_word_for_word() {
     assert!(matches!(retyped, Err(Error::Invalid(_))), "{retyped:?}");
 
     // A seared memory can become the past too, unchanged.
-    let mut night = draft(MemoryType::Episode, "The night he told me about his dad");
+    let mut night = draft(MemoryType::Episode, "The night Sam told me about Sam's dad");
     night.level = Level::Seared;
     let seared = c.write(Actor::Writer, &night).unwrap();
     c.supersede(
@@ -94,7 +94,7 @@ fn supersede_keeps_the_past_word_for_word() {
     .unwrap();
     let s = c.memory(seared).unwrap();
     assert_eq!((s.status, s.level), (Status::Superseded, Level::Seared));
-    assert_eq!(s.interpretation, "The night he told me about his dad");
+    assert_eq!(s.interpretation, "The night Sam told me about Sam's dad");
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn freeze_from_another_handle_blocks_every_write_and_leaves_no_trace() {
     let id = c
         .write(
             Actor::Writer,
-            &fact("sister", "Laura", "Laura matters to him", turn),
+            &fact("sister", "Laura", "Laura matters to Sam", turn),
         )
         .unwrap();
     let session = c.open_session().unwrap();
@@ -136,7 +136,7 @@ fn freeze_from_another_handle_blocks_every_write_and_leaves_no_trace() {
     };
     frozen(c.set_mood(Actor::Writer, &mood));
     frozen(c.write_turn_note(Actor::Writer, turn, "Ask about Laura"));
-    frozen(c.write_section(Actor::Writer, Section::AboutYou, "Has a sister, Laura"));
+    frozen(c.write_section(Actor::Writer, Section::AboutUser, "Has a sister, Laura"));
     assert_eq!(footprint(&db), before);
     let state = "SELECT (SELECT count(*) FROM mood_states) + (SELECT count(*) FROM turn_notes)
                         + (SELECT count(*) FROM soul_section_versions)";
@@ -226,13 +226,13 @@ fn near_duplicates_are_refused_but_similar_memories_are_not() {
     let first = c
         .write(
             Actor::Writer,
-            &draft(MemoryType::UserFact, "He misses Laura"),
+            &draft(MemoryType::UserFact, "Sam misses Laura"),
         )
         .unwrap();
 
     let copy = c.write(
         Actor::Writer,
-        &draft(MemoryType::UserFact, "Laura is always on his mind"),
+        &draft(MemoryType::UserFact, "Laura is always on Sam's mind"),
     );
     assert!(
         matches!(copy, Err(Error::Duplicate { existing, similarity }) if existing == first && similarity > 0.99),
@@ -241,12 +241,12 @@ fn near_duplicates_are_refused_but_similar_memories_are_not() {
     // Same words under another type, or a related memory, are fine.
     c.write(
         Actor::Writer,
-        &draft(MemoryType::Episode, "He misses Laura"),
+        &draft(MemoryType::Episode, "Sam misses Laura"),
     )
     .unwrap();
     c.write(
         Actor::Writer,
-        &draft(MemoryType::UserFact, "Laura took him to a concert"),
+        &draft(MemoryType::UserFact, "Laura took Sam to a concert"),
     )
     .unwrap();
     // Superseding with near-identical text is the intended path.
@@ -254,7 +254,7 @@ fn near_duplicates_are_refused_but_similar_memories_are_not() {
         .supersede(
             Actor::Writer,
             first,
-            &draft(MemoryType::UserFact, "He misses Laura a lot"),
+            &draft(MemoryType::UserFact, "Sam misses Laura a lot"),
         )
         .unwrap();
     // The superseded memory no longer blocks anything; the new one does.
@@ -271,11 +271,11 @@ fn writes_must_be_well_formed_and_cite_real_turns() {
     let mut c = open(&f, "k").unwrap();
     let turn = with_turn(&mut c, "I'm 34");
 
-    let mut uncited = fact("age", "34", "He's 34", turn);
+    let mut uncited = fact("age", "34", "Sam's 34", turn);
     uncited.source_turns.clear();
-    let mut missing = fact("age", "34", "He's 34", turn);
+    let mut missing = fact("age", "34", "Sam's 34", turn);
     missing.source_turns = vec![turn, 999];
-    let mut thread = draft(MemoryType::OpenThread, "He never answered about his dad");
+    let mut thread = draft(MemoryType::OpenThread, "Sam never answered about Sam's dad");
     let opinion = draft(MemoryType::Opinion, "Concerts are overrated");
 
     for bad in [&uncited, &missing, &thread, &opinion] {
@@ -324,17 +324,17 @@ fn delete_removes_everything_but_shared_turns_and_restores_the_past() {
     let madrid = c
         .write(
             Actor::Writer,
-            &fact("city", "Madrid", "He loves Madrid", t_madrid),
+            &fact("city", "Madrid", "Sam loves Madrid", t_madrid),
         )
         .unwrap();
-    let mut lisbon = fact("city", "Lisbon", "He moved for Laura", t_own);
+    let mut lisbon = fact("city", "Lisbon", "Sam moved for Laura", t_own);
     lisbon.source_turns.push(t_shared);
     lisbon.level = Level::Seared;
     let lisbon = c.supersede(Actor::Writer, madrid, &lisbon).unwrap();
     let dad = c
         .write(
             Actor::Writer,
-            &fact("dad", "came", "His dad came to the concert", t_shared),
+            &fact("dad", "came", "Sam's dad came to the concert", t_shared),
         )
         .unwrap();
 
