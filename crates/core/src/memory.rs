@@ -30,6 +30,8 @@ pub struct MemoryDraft {
     pub strength: Option<f64>,
     /// Open threads only.
     pub urgency: Option<Urgency>,
+    /// How the memory feels to her, −1 to 1. `None` is neutral.
+    pub valence: Option<f64>,
 }
 
 impl MemoryDraft {
@@ -43,6 +45,7 @@ impl MemoryDraft {
             occurred_at: None,
             strength: None,
             urgency: None,
+            valence: None,
         }
     }
 }
@@ -60,6 +63,9 @@ pub struct Memory {
     pub persona_hash: String,
     pub strength: Option<f64>,
     pub urgency: Option<Urgency>,
+    pub valence: Option<f64>,
+    pub recall_count: i64,
+    pub last_recalled_session: Option<i64>,
     pub source_turns: Vec<i64>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -324,7 +330,8 @@ impl Companion {
             .conn
             .query_row(
                 "SELECT id, type, level, facts, interpretation, status, superseded_by, occurred_at,
-                        persona_hash, strength, urgency, created_at, updated_at
+                        persona_hash, strength, urgency, created_at, updated_at, valence,
+                        recall_count, last_recalled_session
                  FROM memories WHERE id = ?1",
                 [id],
                 |r| {
@@ -340,6 +347,9 @@ impl Companion {
                         persona_hash: r.get(8)?,
                         strength: r.get(9)?,
                         urgency: r.get(10)?,
+                        valence: r.get(13)?,
+                        recall_count: r.get(14)?,
+                        last_recalled_session: r.get(15)?,
                         source_turns: Vec::new(),
                         created_at: r.get(11)?,
                         updated_at: r.get(12)?,
@@ -361,7 +371,7 @@ impl Companion {
     }
 
     /// One vector as sqlite-vec's little-endian f32 blob.
-    fn embed(&self, text: &str) -> Result<Vec<u8>> {
+    pub(crate) fn embed(&self, text: &str) -> Result<Vec<u8>> {
         let dimensions = self.deps.embedder.dimensions();
         let vector = self
             .deps
@@ -389,6 +399,9 @@ fn validate(draft: &MemoryDraft) -> Result<()> {
         (false, Some(_)) => return invalid("only opinions have a strength"),
         (true, Some(s)) if !(0.0..=1.0).contains(&s) => return invalid("strength must be 0–1"),
         _ => {}
+    }
+    if draft.valence.is_some_and(|v| !(-1.0..=1.0).contains(&v)) {
+        return invalid("valence must be −1–1");
     }
     if (draft.kind == MemoryType::OpenThread) != draft.urgency.is_some() {
         return invalid("open threads, and only open threads, have an urgency");
@@ -433,14 +446,16 @@ fn insert(
         }
     }
 
-    // A full scan, not a KNN query: it has to be restricted to one type and
-    // active memories, and a companion's memories number in the thousands.
+    // The nearest neighbours by cosine, then the type and status filters. A
+    // copy would sit at the very top, so a few dozen candidates are plenty.
     let nearest: Option<(i64, f64)> = tx
         .query_row(
-            "SELECT m.id, 1 - vec_distance_cosine(v.embedding, ?1) AS similarity
-             FROM memories m JOIN memory_vectors v ON v.memory_id = m.id
+            "WITH knn AS MATERIALIZED (
+               SELECT memory_id AS id, distance FROM memory_vectors
+               WHERE embedding MATCH ?1 AND k = 32)
+             SELECT m.id, 1 - knn.distance FROM knn JOIN memories m ON m.id = knn.id
              WHERE m.status = 'active' AND m.type = ?2 AND m.id IS NOT ?3
-             ORDER BY similarity DESC LIMIT 1",
+             ORDER BY knn.distance LIMIT 1",
             params![embedding, draft.kind, replaces],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -456,8 +471,8 @@ fn insert(
 
     tx.execute(
         "INSERT INTO memories (type, level, facts, interpretation, occurred_at, persona_hash,
-                               strength, urgency, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                               strength, urgency, valence, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             draft.kind,
             draft.level,
@@ -467,6 +482,7 @@ fn insert(
             persona_hash,
             draft.strength,
             draft.urgency,
+            draft.valence,
             now,
             now
         ],

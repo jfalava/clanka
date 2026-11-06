@@ -151,7 +151,7 @@ fn ensure_vectors(conn: &Connection, model: &str, dimensions: usize) -> Result<(
         None => {
             conn.execute_batch(&format!(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors USING vec0(\
-                   memory_id INTEGER PRIMARY KEY, embedding float[{dimensions}])"
+                   memory_id INTEGER PRIMARY KEY, embedding float[{dimensions}] distance_metric=cosine)"
             ))?;
             set_meta(conn, "embedder_model", model)?;
         }

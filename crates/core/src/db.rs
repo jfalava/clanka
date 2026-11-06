@@ -7,9 +7,15 @@ use std::path::Path;
 use std::sync::Once;
 use std::time::Duration;
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0001_init.sql"),
+    include_str!("migrations/0002_memory_valence.sql"),
+];
 
 /// How long a write waits for another process holding the lock.
+/// Page cache per connection, in KiB.
+const CACHE_KIB: i64 = 64 * 1024;
+
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn open(path: &Path, key: &str) -> Result<Connection> {
@@ -38,6 +44,9 @@ pub fn open(path: &Path, key: &str) -> Result<Connection> {
         });
     }
     conn.pragma_update(None, "foreign_keys", true)?;
+    // Vectors are read on every recall. SQLCipher decrypts each page it reads,
+    // so they must stay in the page cache: 64 MiB holds ~40k 384-dim vectors.
+    conn.pragma_update(None, "cache_size", -CACHE_KIB)?;
     migrate(&conn, path)?;
     Ok(conn)
 }
