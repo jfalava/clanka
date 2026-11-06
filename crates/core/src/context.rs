@@ -17,6 +17,7 @@
 use crate::companion::meta;
 use crate::model::{Level, MemoryType, Section, Speaker, Urgency};
 use crate::{Companion, Error, Memory, Mood, Ranking, Recalled, Result};
+use rusqlite::OptionalExtension;
 
 /// A deliberately high token estimate (one token per 3 characters), so a
 /// budget computed with it doesn't overflow the model's window.
@@ -31,6 +32,21 @@ const LET_GO_HINT: &str = "You've pushed back on him a lot lately. Let the next 
 /// Tokens set aside for the hints `render` may add (tiredness, letting go).
 pub fn hints_reserve() -> usize {
     estimate_tokens(SLEEPY_HINT).max(estimate_tokens(TIRED_HINT)) + estimate_tokens(LET_GO_HINT)
+}
+
+/// Most that time away shifts her warmth, reached after [`TIME_AWAY_FULL_HOURS`].
+pub const TIME_AWAY_MAX: f64 = 0.3;
+pub const TIME_AWAY_FULL_HOURS: f64 = 72.0;
+/// Time away never pushes her warmth below this: cooler, never hostile.
+pub const TIME_AWAY_FLOOR: f64 = -0.3;
+/// Your messages in the new session over which the effect fades out.
+pub const TIME_AWAY_FADE_TURNS: f64 = 4.0;
+
+/// How long you were gone and what it did to her warmth this turn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimeAway {
+    pub hours: f64,
+    pub warmth_shift: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +71,10 @@ pub enum Fatigue {
 pub struct Context {
     pub persona: String,
     pub sections: Vec<(Section, String)>,
+    /// Her mood, with any time-away shift already applied.
     pub mood: Option<Mood>,
+    /// Only for souls with `time_sense`, early in a session after a gap.
+    pub time_away: Option<TimeAway>,
     pub turn_note: Option<String>,
     pub hot_threads: Vec<Memory>,
     pub memories: Vec<Recalled>,
@@ -97,7 +116,12 @@ impl Companion {
                 sections.push((section, content));
             }
         }
-        let mood = self.mood()?.filter(|m| fits(&render_mood(m)));
+        let mut mood = self.mood()?;
+        let time_away = match &mut mood {
+            Some(m) => self.apply_time_away(m)?,
+            None => None,
+        };
+        let mood = mood.filter(|m| fits(&render_mood(m)));
         let turn_note = self
             .last_turn_note()?
             .map(|(_, note)| note)
@@ -151,6 +175,7 @@ impl Companion {
         let (pushbacks, limit) = self.pushback_pressure()?;
         Ok(Context {
             let_go: pushbacks >= limit,
+            time_away,
             persona,
             sections,
             mood,
@@ -162,6 +187,57 @@ impl Companion {
             fatigue,
             tokens: left.used,
         })
+    }
+
+    /// Shifts her warmth by how long you were gone: warmer if the last session
+    /// ended on good terms, cooler if not. Fades over your first messages back.
+    fn apply_time_away(&self, mood: &mut Mood) -> Result<Option<TimeAway>> {
+        if !self.soul.traits.time_sense {
+            return Ok(None);
+        }
+        let ended: Option<i64> = self.conn.query_row(
+            "SELECT max(ended_at) FROM sessions WHERE ended_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        let Some(ended) = ended else { return Ok(None) };
+        let hours = (self.deps.clock.now_ms() - ended) as f64 / 3_600_000.0;
+        let said: i64 = self.conn.query_row(
+            "SELECT count(*) FROM turns WHERE role = 'user' AND session_id =
+               (SELECT id FROM sessions WHERE ended_at IS NULL AND started_at > ?1 ORDER BY id DESC LIMIT 1)",
+            [ended],
+            |r| r.get(0),
+        )?;
+        let fade = 1.0 - said as f64 / TIME_AWAY_FADE_TURNS;
+        let parted: Option<f64> = self
+            .conn
+            .query_row(
+                "SELECT valence FROM mood_states WHERE created_at <= ?1 ORDER BY id DESC LIMIT 1",
+                [ended],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(parted) = parted else {
+            return Ok(None);
+        };
+        if hours < 1.0 || fade <= 0.0 {
+            return Ok(None);
+        }
+        let strength = TIME_AWAY_MAX * (hours / TIME_AWAY_FULL_HOURS).min(1.0) * fade;
+        let before = mood.warmth;
+        mood.warmth = if parted >= 0.0 {
+            (before + strength).min(1.0)
+        } else {
+            (before - strength).max(before.min(TIME_AWAY_FLOOR))
+        };
+        mood.cause = format!(
+            "{} It's been about {hours:.0} hours since you last talked.",
+            mood.cause
+        );
+        Ok(Some(TimeAway {
+            hours,
+            warmth_shift: mood.warmth - before,
+        }))
     }
 
     /// Unresolved hot threads, oldest first: they must come up until closed.

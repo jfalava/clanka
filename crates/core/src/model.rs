@@ -94,9 +94,9 @@ text_enum! {
 }
 
 text_enum! {
-    /// Who made a write. The companion (through the writer) can only raise
-    /// levels; the CLI can set any level except on a seared memory.
-    Actor { Writer = "writer", Cli = "cli" }
+    /// Who made a write. The companion (through the writer or in her sleep)
+    /// can only raise levels; the CLI can set any level except on a seared memory.
+    Actor { Writer = "writer", Sleep = "sleep", Cli = "cli" }
 }
 
 text_enum! {

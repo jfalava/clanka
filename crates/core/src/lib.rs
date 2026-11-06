@@ -12,15 +12,17 @@ mod error;
 pub mod memory;
 pub mod model;
 pub mod recall;
+pub mod sleep;
 pub mod soul;
 pub mod state;
 pub mod writer;
 
 pub use companion::{Companion, PersonaStatus};
-pub use context::{Context, Fatigue, Turn};
+pub use context::{Context, Fatigue, TimeAway, Turn};
 pub use deps::Deps;
 pub use error::{Error, Result};
 pub use memory::{Deleted, Memory, MemoryDraft};
 pub use recall::{Ranking, Recalled};
+pub use sleep::SleepReport;
 pub use state::{Mood, SectionVersion};
 pub use writer::{Reflection, ToolOutcome};

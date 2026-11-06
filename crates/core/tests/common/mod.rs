@@ -4,7 +4,8 @@ use clanka_core::deps::{Clock, Embedder, KeySource, Llm, LlmRequest, LlmResponse
 use clanka_core::{Companion, Deps, Result};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 struct NoLlm;
@@ -42,11 +43,17 @@ impl Embedder for KeywordEmbedder {
     }
 }
 
-struct FixedClock;
-impl Clock for FixedClock {
+/// Ticks one second per read, so every timestamp is distinct and ordered.
+/// Tests jump it forward through the shared handle.
+pub struct TestClock(pub Arc<AtomicI64>);
+impl Clock for TestClock {
     fn now_ms(&self) -> i64 {
-        1_700_000_000_000
+        self.0.fetch_add(1000, Ordering::SeqCst)
     }
+}
+
+pub fn clock() -> Arc<AtomicI64> {
+    Arc::new(AtomicI64::new(1_700_000_000_000))
 }
 
 struct FixedRng;
@@ -76,8 +83,17 @@ pub fn open_with_llm(
     f: &Fixture,
     llm: impl FnMut(&LlmRequest) -> LlmResponse + Send + 'static,
 ) -> Companion {
+    open_full(f, llm, clock())
+}
+
+pub fn open_full(
+    f: &Fixture,
+    llm: impl FnMut(&LlmRequest) -> LlmResponse + Send + 'static,
+    clock: Arc<AtomicI64>,
+) -> Companion {
     let mut deps = deps("k", "model-a");
     deps.llm = Box::new(FnLlm(Mutex::new(Box::new(llm))));
+    deps.clock = Box::new(TestClock(clock));
     Companion::open(f.dir.path(), &f.soul, deps).unwrap()
 }
 
@@ -85,7 +101,7 @@ pub fn deps(key: &'static str, model: &'static str) -> Deps {
     Deps {
         llm: Box::new(NoLlm),
         embedder: Box::new(KeywordEmbedder(model)),
-        clock: Box::new(FixedClock),
+        clock: Box::new(TestClock(clock())),
         rng: Box::new(FixedRng),
         keys: Box::new(Key(key)),
     }

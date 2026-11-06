@@ -46,15 +46,27 @@ impl Companion {
         let replied = self.turn_text(companion_turn, Speaker::Companion)?;
 
         let exchange = [user_turn, companion_turn];
-        let mut messages = vec![LlmMessage::user(
-            self.reflection_prompt(&exchange, &said, &replied)?,
-        )];
+        let prompt = self.reflection_prompt(&exchange, &said, &replied)?;
         let system = format!(
             "{}\n\n{}",
             self.soul.body.trim(),
             instructions(&self.soul.traits.name)
         );
-        let tools = tool_specs();
+        self.tool_loop(system, prompt, tool_specs(), |c, call| {
+            c.run_tool(call, &exchange)
+        })
+    }
+
+    /// Calls the model with tools for up to [`MAX_ROUNDS`] rounds, running each
+    /// call through `run` and sending its result back, until it stops calling.
+    pub(crate) fn tool_loop(
+        &mut self,
+        system: String,
+        prompt: String,
+        tools: Vec<ToolSpec>,
+        mut run: impl FnMut(&mut Self, &ToolCall) -> Result<String>,
+    ) -> Result<Reflection> {
+        let mut messages = vec![LlmMessage::user(prompt)];
         let mut calls = Vec::new();
         let mut rounds = 0;
         while rounds < MAX_ROUNDS {
@@ -76,7 +88,7 @@ impl Companion {
                 tool_call_id: None,
             });
             for call in &response.tool_calls {
-                let outcome = match self.run_tool(call, &exchange) {
+                let outcome = match run(self, call) {
                     Ok(done) => ToolOutcome {
                         name: call.name.clone(),
                         ok: true,
@@ -278,12 +290,12 @@ fn or_none(text: &str) -> &str {
     }
 }
 
-fn args<T: for<'de> Deserialize<'de>>(call: &ToolCall) -> Result<T> {
+pub(crate) fn args<T: for<'de> Deserialize<'de>>(call: &ToolCall) -> Result<T> {
     serde_json::from_str(&call.arguments)
         .map_err(|e| Error::Invalid(format!("arguments for {}: {e}", call.name)))
 }
 
-fn parse<T>(parse: fn(&str) -> Option<T>, value: &str, what: &str) -> Result<T> {
+pub(crate) fn parse<T>(parse: fn(&str) -> Option<T>, value: &str, what: &str) -> Result<T> {
     parse(value).ok_or_else(|| Error::Invalid(format!("unknown {what} {value:?}")))
 }
 

@@ -233,7 +233,7 @@ impl Companion {
         if level == current {
             return Ok(());
         }
-        if actor == Actor::Writer && level < current {
+        if actor != Actor::Cli && level < current {
             return Err(Error::LevelDown {
                 current,
                 requested: level,
@@ -244,7 +244,7 @@ impl Companion {
             params![level, now, id],
         )?;
         let reason = match actor {
-            Actor::Writer => "escalated",
+            Actor::Writer | Actor::Sleep => "escalated",
             Actor::Cli => "cli",
         };
         tx.execute(
@@ -303,6 +303,75 @@ impl Companion {
             "memory",
             Some(id),
             &json!({}),
+            now,
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Rewrites a memory's interpretation as it drifts in her sleep, with the
+    /// seed and magnitude that set how far, so the doctor can explain it.
+    /// Facts never drift and seared memories never change.
+    pub(crate) fn drift_memory(
+        &mut self,
+        session: i64,
+        id: i64,
+        interpretation: &str,
+        seed: u64,
+        magnitude: f64,
+    ) -> Result<()> {
+        if interpretation.trim().is_empty() {
+            return Err(Error::Invalid("interpretation is empty".into()));
+        }
+        let embedding = self.embed(interpretation)?;
+        let now = self.deps.clock.now_ms();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_writable(&tx, &self.soul.hash)?;
+        let (level, status): (Level, Status) = tx
+            .query_row(
+                "SELECT level, status FROM memories WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or(Error::NotFound(id))?;
+        if level == Level::Seared {
+            return Err(Error::Seared(id));
+        }
+        if status == Status::Superseded {
+            return Err(Error::Invalid(format!("memory {id} is superseded")));
+        }
+        tx.execute(
+            "INSERT INTO drift_events (session_id, memory_id, seed, magnitude, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![session, id, seed.to_string(), magnitude, now],
+        )?;
+        let event = tx.last_insert_rowid();
+        tx.execute(
+            "UPDATE memories SET interpretation = ?1, updated_at = ?2 WHERE id = ?3",
+            params![interpretation, now, id],
+        )?;
+        tx.execute(
+            "INSERT INTO memory_versions (memory_id, interpretation, level, persona_hash, reason, drift_event_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'drift', ?5, ?6)",
+            params![id, interpretation, level, self.soul.hash, event, now],
+        )?;
+        // vec0 rows are replaced, not updated in place.
+        tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [id])?;
+        tx.execute(
+            "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?1, ?2)",
+            params![id, embedding],
+        )?;
+        let summary = json!({ "magnitude": magnitude, "drift_event": event });
+        log(
+            &tx,
+            Actor::Sleep.as_str(),
+            "drift",
+            "memory",
+            Some(id),
+            &summary,
             now,
         )?;
         tx.commit()?;
@@ -452,7 +521,7 @@ fn validate(draft: &MemoryDraft) -> Result<()> {
     Ok(())
 }
 
-fn ensure_open(conn: &Connection, session: i64) -> Result<()> {
+pub(crate) fn ensure_open(conn: &Connection, session: i64) -> Result<()> {
     let ended: Option<Option<i64>> = conn
         .query_row(
             "SELECT ended_at FROM sessions WHERE id = ?1",
