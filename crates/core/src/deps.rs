@@ -31,6 +31,21 @@ pub struct LlmRequest {
 pub struct LlmMessage {
     pub role: Role,
     pub content: String,
+    /// Assistant messages: the tool calls the model made.
+    pub tool_calls: Vec<ToolCall>,
+    /// Tool messages: the call this result answers.
+    pub tool_call_id: Option<String>,
+}
+
+impl LlmMessage {
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +71,8 @@ pub struct LlmResponse {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
+    /// The provider's call ID, echoed back with the result.
+    pub id: String,
     pub name: String,
     /// Arguments as a JSON string.
     pub arguments: String,

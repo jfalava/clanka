@@ -266,6 +266,49 @@ impl Companion {
         Ok(())
     }
 
+    /// Closes an open thread. It stays a memory; it just stops chasing him.
+    pub fn resolve_thread(&mut self, actor: Actor, id: i64) -> Result<()> {
+        let now = self.deps.clock.now_ms();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_writable(&tx, &self.soul.hash)?;
+        let (kind, status, resolved): (MemoryType, Status, Option<i64>) = tx
+            .query_row(
+                "SELECT type, status, resolved_at FROM memories WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?
+            .ok_or(Error::NotFound(id))?;
+        if kind != MemoryType::OpenThread {
+            return Err(Error::Invalid(format!(
+                "memory {id} is a {}, not an open thread",
+                kind.as_str()
+            )));
+        }
+        if status == Status::Superseded || resolved.is_some() {
+            return Err(Error::Invalid(format!(
+                "thread {id} is already closed or superseded"
+            )));
+        }
+        tx.execute(
+            "UPDATE memories SET resolved_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        log(
+            &tx,
+            actor.as_str(),
+            "resolve_thread",
+            "memory",
+            Some(id),
+            &json!({}),
+            now,
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// The CLI's hard delete. Removes the memory, its versions, drift events and
     /// vector, and the turns it cited that no other memory cites. Works on seared
     /// memories and while the doctor's freeze is on: deleting is yours alone.

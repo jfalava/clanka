@@ -14,6 +14,7 @@ pub mod model;
 pub mod recall;
 pub mod soul;
 pub mod state;
+pub mod writer;
 
 pub use companion::{Companion, PersonaStatus};
 pub use context::{Context, Fatigue, Turn};
@@ -22,3 +23,4 @@ pub use error::{Error, Result};
 pub use memory::{Deleted, Memory, MemoryDraft};
 pub use recall::{Ranking, Recalled};
 pub use state::{Mood, SectionVersion};
+pub use writer::{Reflection, ToolOutcome};

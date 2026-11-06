@@ -8,6 +8,10 @@ use crate::{Companion, Error, Result};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::json;
 
+/// Share of the pushback window she may spend pushing back at `contrariness`
+/// 1: a soul at 0.6 with a 20-turn window gets 3 pushbacks per 20 turns.
+pub const PUSHBACK_SHARE: f64 = 0.25;
+
 /// Longest an editable soul section may be, in characters. Sections go into
 /// every turn's context, so they must stay small.
 pub const SECTION_MAX_CHARS: usize = 2000;
@@ -193,6 +197,56 @@ impl Companion {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+}
+
+impl Companion {
+    /// Records that she pushed back on him in `turn`. A clash with a core value
+    /// is kept but never counts against the budget.
+    pub fn record_pushback(
+        &mut self,
+        actor: Actor,
+        turn: i64,
+        core_value: bool,
+        about: &str,
+    ) -> Result<()> {
+        let now = self.deps.clock.now_ms();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_writable(&tx, &self.soul.hash)?;
+        ensure_turn(&tx, turn)?;
+        tx.execute(
+            "INSERT INTO pushbacks (turn_id, core_value, about, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![turn, core_value, about, now],
+        )?;
+        let id = tx.last_insert_rowid();
+        log(
+            &tx,
+            actor.as_str(),
+            "pushback",
+            "pushback",
+            Some(id),
+            &json!({ "core_value": core_value }),
+            now,
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Pushbacks over the last `pushback_window` turns that count, and the
+    /// limit `contrariness` allows. At or over the limit, she lets the next one go.
+    pub fn pushback_pressure(&self) -> Result<(usize, usize)> {
+        let traits = &self.soul.traits;
+        let count: i64 = self.conn.query_row(
+            "SELECT count(*) FROM pushbacks WHERE core_value = 0 AND turn_id >=
+               (SELECT coalesce(min(id), 0) FROM (SELECT id FROM turns ORDER BY id DESC LIMIT ?1))",
+            [traits.pushback_window],
+            |r| r.get(0),
+        )?;
+        let limit =
+            (traits.contrariness * f64::from(traits.pushback_window) * PUSHBACK_SHARE).round();
+        Ok((count as usize, limit as usize))
     }
 }
 

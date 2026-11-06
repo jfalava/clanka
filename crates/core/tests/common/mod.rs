@@ -4,6 +4,7 @@ use clanka_core::deps::{Clock, Embedder, KeySource, Llm, LlmRequest, LlmResponse
 use clanka_core::{Companion, Deps, Result};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use uuid::Uuid;
 
 struct NoLlm;
@@ -60,6 +61,24 @@ impl KeySource for Key {
     fn key(&self, _: Uuid) -> Result<String> {
         Ok(self.0.to_owned())
     }
+}
+
+/// A model whose every reply comes from a closure, so tests script it.
+type Reply = Box<dyn FnMut(&LlmRequest) -> LlmResponse + Send>;
+pub struct FnLlm(Mutex<Reply>);
+impl Llm for FnLlm {
+    fn complete(&self, request: &LlmRequest) -> Result<LlmResponse> {
+        Ok((self.0.lock().unwrap())(request))
+    }
+}
+
+pub fn open_with_llm(
+    f: &Fixture,
+    llm: impl FnMut(&LlmRequest) -> LlmResponse + Send + 'static,
+) -> Companion {
+    let mut deps = deps("k", "model-a");
+    deps.llm = Box::new(FnLlm(Mutex::new(Box::new(llm))));
+    Companion::open(f.dir.path(), &f.soul, deps).unwrap()
 }
 
 pub fn deps(key: &'static str, model: &'static str) -> Deps {

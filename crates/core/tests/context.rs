@@ -1,6 +1,6 @@
 mod common;
 
-use clanka_core::context::estimate_tokens;
+use clanka_core::context::{estimate_tokens, hints_reserve};
 use clanka_core::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
 use clanka_core::{Companion, Context, Error, Fatigue, MemoryDraft, Mood, Ranking};
 use common::{fixture, open, soul_text};
@@ -113,7 +113,7 @@ fn shrinking_the_budget_drops_the_least_important_first() {
     let mut c = open(&f, "k").unwrap();
     furnished(&mut c);
     let full = assemble(&c, 100_000);
-    let floor = estimate_tokens(&full.persona) + estimate_tokens(MESSAGE);
+    let floor = estimate_tokens(&full.persona) + estimate_tokens(MESSAGE) + hints_reserve();
 
     let prefix = |part: &[i64], whole: &[i64]| whole.starts_with(part);
     let ids = |ctx: &Context| {
@@ -183,4 +183,50 @@ fn a_changed_persona_blocks_assembly() {
         c.assemble(MESSAGE, 10_000, &Ranking::default()),
         Err(Error::PersonaUnresolved)
     ));
+}
+
+#[test]
+fn she_lets_go_at_her_pushback_limit_but_never_on_core_values() {
+    let f = fixture(); // contrariness 0.6, pushback_window 20: 3 per 20 turns
+    let mut c = open(&f, "k").unwrap();
+    let s = c.open_session().unwrap();
+    let mut turn = || c.record_turn(s, Speaker::Companion, "No.").unwrap();
+    let turns: Vec<i64> = (0..6).map(|_| turn()).collect();
+    let let_go = |c: &Companion| assemble(c, 10_000).let_go;
+
+    for &t in &turns[..5] {
+        c.record_pushback(Actor::Writer, t, true, "honesty")
+            .unwrap();
+    }
+    c.record_pushback(Actor::Writer, turns[0], false, "his job")
+        .unwrap();
+    c.record_pushback(Actor::Writer, turns[1], false, "his music")
+        .unwrap();
+    assert_eq!(
+        c.pushback_pressure().unwrap(),
+        (2, 3),
+        "core-value clashes don't count"
+    );
+    assert!(!let_go(&c));
+
+    c.record_pushback(Actor::Writer, turns[2], false, "his diet")
+        .unwrap();
+    assert!(let_go(&c));
+    assert!(
+        assemble(&c, 10_000)
+            .render()
+            .contains("Let the next disagreement go")
+    );
+
+    // Twenty turns later, those pushbacks have left the window.
+    for _ in 0..16 {
+        c.record_turn(s, Speaker::User, "ok").unwrap();
+    }
+    assert_eq!(
+        c.pushback_pressure().unwrap(),
+        (1, 3),
+        "turns[2] is still the 20th from last"
+    );
+    c.record_turn(s, Speaker::User, "ok").unwrap();
+    assert_eq!(c.pushback_pressure().unwrap(), (0, 3));
 }

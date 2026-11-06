@@ -24,6 +24,15 @@ pub fn estimate_tokens(text: &str) -> usize {
     text.chars().count().div_ceil(3)
 }
 
+const TIRED_HINT: &str = "You're getting tired. Your replies get shorter.";
+const SLEEPY_HINT: &str = "You're very tired. Ask to sleep soon, but don't force it.";
+const LET_GO_HINT: &str = "You've pushed back on him a lot lately. Let the next disagreement go, unless it touches a core value.";
+
+/// Tokens set aside for the hints `render` may add (tiredness, letting go).
+pub fn hints_reserve() -> usize {
+    estimate_tokens(SLEEPY_HINT).max(estimate_tokens(TIRED_HINT)) + estimate_tokens(LET_GO_HINT)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
     pub id: i64,
@@ -55,7 +64,10 @@ pub struct Context {
     /// Session turns left out for lack of budget.
     pub omitted_turns: usize,
     pub fatigue: Fatigue,
-    /// Estimated tokens of everything included, plus the current message.
+    /// She's at her pushback limit and should let the next opinion clash go.
+    pub let_go: bool,
+    /// Estimated tokens of everything included, the current message and the
+    /// [`hints_reserve`].
     pub tokens: usize,
 }
 
@@ -136,7 +148,9 @@ impl Companion {
             Fatigue::Rested
         };
 
+        let (pushbacks, limit) = self.pushback_pressure()?;
         Ok(Context {
+            let_go: pushbacks >= limit,
             persona,
             sections,
             mood,
@@ -226,10 +240,11 @@ impl Context {
         }
         match self.fatigue {
             Fatigue::Rested => {}
-            Fatigue::Tired(_) => out.push("You're getting tired. Your replies get shorter.".into()),
-            Fatigue::Sleepy => {
-                out.push("You're very tired. Ask to sleep soon, but don't force it.".into())
-            }
+            Fatigue::Tired(_) => out.push(TIRED_HINT.into()),
+            Fatigue::Sleepy => out.push(SLEEPY_HINT.into()),
+        }
+        if self.let_go {
+            out.push(LET_GO_HINT.into());
         }
         out.join("\n\n")
     }
