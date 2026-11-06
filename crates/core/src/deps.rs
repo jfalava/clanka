@@ -1,0 +1,169 @@
+//! Everything the core needs from the outside world. Front ends implement these;
+//! the core never knows which model, host or key store is behind them.
+
+use crate::Result;
+use uuid::Uuid;
+
+/// The dependencies one [`crate::Companion`] handle uses.
+pub struct Deps {
+    pub llm: Box<dyn Llm>,
+    pub embedder: Box<dyn Embedder>,
+    pub clock: Box<dyn Clock>,
+    pub rng: Box<dyn Rng>,
+    pub keys: Box<dyn KeySource>,
+}
+
+/// A chat model call. Used by the writer, sleep, doctor re-interpretation and
+/// linter warnings. Blocking: an async front end wraps the core, not the other way round.
+pub trait Llm: Send + Sync {
+    fn complete(&self, request: &LlmRequest) -> Result<LlmResponse>;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmRequest {
+    pub system: String,
+    pub messages: Vec<LlmMessage>,
+    pub tools: Vec<ToolSpec>,
+    pub temperature: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmMessage {
+    pub role: Role,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema for the arguments, as a JSON string.
+    pub parameters: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LlmResponse {
+    pub text: String,
+    pub tool_calls: Vec<ToolCall>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub name: String,
+    /// Arguments as a JSON string.
+    pub arguments: String,
+}
+
+/// Text embeddings. Built from model files already on disk; fetching models is
+/// the front end's job.
+pub trait Embedder: Send + Sync {
+    /// Stable identifier stored with every vector, e.g. `all-MiniLM-L6-v2-q`.
+    fn model_id(&self) -> &str;
+    fn dimensions(&self) -> usize;
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+}
+
+/// Wall-clock time. Only time-away mood and record timestamps use it; erosion
+/// and burial follow volume, never the clock.
+pub trait Clock: Send + Sync {
+    /// Milliseconds since the Unix epoch.
+    fn now_ms(&self) -> i64;
+}
+
+/// Randomness for drift. Every draw's seed is stored so the doctor can replay it.
+pub trait Rng: Send + Sync {
+    fn next_seed(&self) -> u64;
+}
+
+/// The SQLCipher key for a companion's database, e.g. from the Secret Service.
+pub trait KeySource: Send + Sync {
+    fn key(&self, companion: Uuid) -> Result<String>;
+}
+
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_ms(&self) -> i64 {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        since.as_millis() as i64
+    }
+}
+
+#[cfg(feature = "fastembed")]
+pub use self::fastembed_impl::FastEmbedder;
+
+#[cfg(feature = "fastembed")]
+mod fastembed_impl {
+    use super::Embedder;
+    use crate::{Error, Result};
+    use fastembed::{
+        InitOptionsUserDefined, TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
+    };
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    /// fastembed with an ONNX model loaded from a local directory holding
+    /// `model.onnx`, `tokenizer.json`, `config.json`, `special_tokens_map.json`
+    /// and `tokenizer_config.json`.
+    pub struct FastEmbedder {
+        model_id: String,
+        dimensions: usize,
+        inner: Mutex<TextEmbedding>,
+    }
+
+    impl FastEmbedder {
+        pub fn from_dir(model_id: impl Into<String>, dir: &Path) -> Result<Self> {
+            let read = |name: &str| {
+                let path = dir.join(name);
+                std::fs::read(&path).map_err(|source| Error::Io { path, source })
+            };
+            let model = UserDefinedEmbeddingModel::new(
+                read("model.onnx")?,
+                TokenizerFiles {
+                    tokenizer_file: read("tokenizer.json")?,
+                    config_file: read("config.json")?,
+                    special_tokens_map_file: read("special_tokens_map.json")?,
+                    tokenizer_config_file: read("tokenizer_config.json")?,
+                },
+            );
+            let mut inner =
+                TextEmbedding::try_new_from_user_defined(model, InitOptionsUserDefined::default())
+                    .map_err(|e| Error::Embedder(e.to_string()))?;
+            let dimensions = inner
+                .embed(vec!["probe"], None)
+                .map_err(|e| Error::Embedder(e.to_string()))?[0]
+                .len();
+            Ok(Self {
+                model_id: model_id.into(),
+                dimensions,
+                inner: Mutex::new(inner),
+            })
+        }
+    }
+
+    impl Embedder for FastEmbedder {
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dimensions
+        }
+
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+            let mut inner = self.inner.lock().expect("embedder lock poisoned");
+            inner
+                .embed(texts, None)
+                .map_err(|e| Error::Embedder(e.to_string()))
+        }
+    }
+}
