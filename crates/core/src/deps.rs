@@ -116,14 +116,16 @@ impl Clock for SystemClock {
 }
 
 #[cfg(feature = "fastembed")]
-pub use self::fastembed_impl::FastEmbedder;
+pub use self::fastembed_impl::{EmbeddingModel, FastEmbedder};
 
 #[cfg(feature = "fastembed")]
 mod fastembed_impl {
     use super::Embedder;
     use crate::{Error, Result};
+    pub use fastembed::EmbeddingModel;
     use fastembed::{
-        InitOptionsUserDefined, TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
+        InitOptionsUserDefined, QuantizationMode, TextEmbedding, TokenizerFiles,
+        UserDefinedEmbeddingModel,
     };
     use std::path::Path;
     use std::sync::Mutex;
@@ -134,16 +136,28 @@ mod fastembed_impl {
     pub struct FastEmbedder {
         model_id: String,
         dimensions: usize,
+        /// Dynamically quantized models scale each batch to its own range, so
+        /// they embed one text at a time to give every text the same vector
+        /// alone or in a batch.
+        one_at_a_time: bool,
         inner: Mutex<TextEmbedding>,
     }
 
     impl FastEmbedder {
-        pub fn from_dir(model_id: impl Into<String>, dir: &Path) -> Result<Self> {
+        /// `model` is the fastembed model the files are for; its pooling and
+        /// quantization come from fastembed's own table, so they match the
+        /// model's training (MiniLM mean-pools; fastembed's fallback is CLS).
+        pub fn from_dir(
+            model: EmbeddingModel,
+            model_id: impl Into<String>,
+            dir: &Path,
+        ) -> Result<Self> {
             let read = |name: &str| {
                 let path = dir.join(name);
                 std::fs::read(&path).map_err(|source| Error::Io { path, source })
             };
-            let model = UserDefinedEmbeddingModel::new(
+            let quantization = TextEmbedding::get_quantization_mode(&model);
+            let mut user_model = UserDefinedEmbeddingModel::new(
                 read("model.onnx")?,
                 TokenizerFiles {
                     tokenizer_file: read("tokenizer.json")?,
@@ -151,10 +165,16 @@ mod fastembed_impl {
                     special_tokens_map_file: read("special_tokens_map.json")?,
                     tokenizer_config_file: read("tokenizer_config.json")?,
                 },
-            );
-            let mut inner =
-                TextEmbedding::try_new_from_user_defined(model, InitOptionsUserDefined::default())
-                    .map_err(|e| Error::Embedder(e.to_string()))?;
+            )
+            .with_quantization(quantization);
+            if let Some(pooling) = TextEmbedding::get_default_pooling_method(&model) {
+                user_model = user_model.with_pooling(pooling);
+            }
+            let mut inner = TextEmbedding::try_new_from_user_defined(
+                user_model,
+                InitOptionsUserDefined::default(),
+            )
+            .map_err(|e| Error::Embedder(e.to_string()))?;
             let dimensions = inner
                 .embed(vec!["probe"], None)
                 .map_err(|e| Error::Embedder(e.to_string()))?[0]
@@ -162,6 +182,7 @@ mod fastembed_impl {
             Ok(Self {
                 model_id: model_id.into(),
                 dimensions,
+                one_at_a_time: quantization == QuantizationMode::Dynamic,
                 inner: Mutex::new(inner),
             })
         }
@@ -178,9 +199,19 @@ mod fastembed_impl {
 
         fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
             let mut inner = self.inner.lock().expect("embedder lock poisoned");
-            inner
-                .embed(texts, None)
-                .map_err(|e| Error::Embedder(e.to_string()))
+            let mut embed = |batch: &[&str]| {
+                inner
+                    .embed(batch, None)
+                    .map_err(|e| Error::Embedder(e.to_string()))
+            };
+            if !self.one_at_a_time {
+                return embed(texts);
+            }
+            let mut out = Vec::with_capacity(texts.len());
+            for text in texts {
+                out.extend(embed(std::slice::from_ref(text))?);
+            }
+            Ok(out)
         }
     }
 }

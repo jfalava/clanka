@@ -1,0 +1,24 @@
+[package]
+name = "clanka"
+version = "0.1.0"
+description = "Command line and MCP server for clanka companions."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+clanka-core = { path = "../core", features = ["fastembed"] }
+clap = { version = "4.6", features = ["derive"] }
+directories = "6"
+getrandom = "0.3"
+keyring-core = "1"
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+toml = "1"
+rmcp = { version = "3.9", features = ["server", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync"] }
+ureq = "3.5"
+uuid = { version = "1.29", features = ["v7"] }
