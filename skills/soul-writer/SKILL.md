@@ -33,7 +33,9 @@ changes the companion's identity, so leave notes freely.
 5. On Hermes the companion is a profile of its own:
    `clanka hermes profile <profile> <soul.md>` makes it, and run again
    refreshes the profile's SOUL.md after a persona change (other hosts take
-   `clanka soul persona <soul.md>`). Then `hermes -p <profile> chat`.
+   `clanka soul persona <soul.md>`). Then `hermes -p <profile> chat`. The
+   profile gets the root's own `providers:`, model aliases and their keys, so
+   `/model <alias>` works there too.
 
 `clanka hermes nightshade` sets up Nightshade, a Hermes agent that does all of
 this as a conversation: it interviews you about the companion in rounds until

@@ -88,6 +88,133 @@ fn hermes(home: &Path, profile: Option<&str>, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// `hermes [-p profile] config get key --json --raw`: None when the key is not
+/// set.
+fn config_get(home: &Path, profile: Option<&str>, key: &str) -> Result<Option<serde_json::Value>> {
+    let mut command = Command::new("hermes");
+    if let Some(profile) = profile {
+        command.args(["-p", profile]);
+    }
+    let output = command
+        .args(["config", "get", key, "--json", "--raw"])
+        .env("HERMES_HOME", home)
+        .stdin(Stdio::null())
+        .output()
+        .context("running hermes; is it on PATH?")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        if stdout.contains("Config key not set") {
+            return Ok(None);
+        }
+        bail!(
+            "hermes config get {key} failed:\n{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let json = stdout.lines().last().unwrap_or_default();
+    Ok(Some(serde_json::from_str(json).with_context(|| {
+        format!("hermes config get {key} did not print JSON: {json}")
+    })?))
+}
+
+/// Gives the profile the root's own model endpoints: its `providers:` dict,
+/// the aliases that name them and the reasoning effort each model wants, and
+/// the secrets they read. `hermes -p` loads only the profile's .env and drops
+/// keys inherited from the shell, so a provider the root reaches is unreachable
+/// from a profile until its key is in the profile's .env too. Nothing is
+/// removed from the profile and existing keys are kept.
+fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
+    let Some(providers) = config_get(home, None, "providers")? else {
+        return Ok(());
+    };
+    let Some(providers) = providers.as_object().filter(|p| !p.is_empty()) else {
+        return Ok(());
+    };
+    for (key, value) in [
+        (
+            "providers",
+            Some(serde_json::Value::Object(providers.clone())),
+        ),
+        ("model.aliases", config_get(home, None, "model.aliases")?),
+        (
+            "agent.reasoning_overrides",
+            config_get(home, None, "agent.reasoning_overrides")?,
+        ),
+    ] {
+        if let Some(value) = value.filter(|v| v.as_object().is_some_and(|o| !o.is_empty())) {
+            hermes(
+                home,
+                Some(profile),
+                &["config", "set", key, &value.to_string()],
+            )?;
+        }
+    }
+    let key_envs: Vec<&str> = providers
+        .values()
+        .filter_map(|p| p.get("key_env")?.as_str())
+        .collect();
+    if key_envs.is_empty() {
+        return Ok(());
+    }
+    let root_env = std::fs::read_to_string(home.join(".env")).unwrap_or_default();
+    let env_path = dir.join(".env");
+    let mut env = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let (lines, missing) = missing_env_lines(&root_env, &env, &key_envs);
+    for name in missing {
+        eprintln!(
+            "warning: {name} is not in {}; its provider will not work from the {profile} profile",
+            home.join(".env").display()
+        );
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+    if !env.is_empty() && !env.ends_with('\n') {
+        env.push('\n');
+    }
+    for line in lines {
+        env.push_str(line);
+        env.push('\n');
+    }
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&env_path)
+        .with_context(|| format!("writing {}", env_path.display()))?;
+    std::io::Write::write_all(&mut file, env.as_bytes())?;
+    Ok(())
+}
+
+/// The `NAME=value` lines of `root_env` for the `names` that `profile_env`
+/// lacks, and the names neither file has.
+fn missing_env_lines<'a>(
+    root_env: &'a str,
+    profile_env: &str,
+    names: &[&'a str],
+) -> (Vec<&'a str>, Vec<&'a str>) {
+    fn line<'e>(env: &'e str, name: &str) -> Option<&'e str> {
+        env.lines().find(|line| {
+            line.strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('='))
+        })
+    }
+    let mut lines = Vec::new();
+    let mut missing = Vec::new();
+    for &name in names {
+        if line(profile_env, name).is_some() {
+            continue;
+        }
+        match line(root_env, name) {
+            Some(line) => lines.push(line),
+            None => missing.push(name),
+        }
+    }
+    (lines, missing)
+}
+
 /// Creates the profile unless it exists. A directory without a config.yaml is
 /// not a profile but stops Hermes from making one, so an empty one is removed.
 fn create_profile(home: &Path, profile: &str) -> Result<PathBuf> {
@@ -105,7 +232,8 @@ fn create_profile(home: &Path, profile: &str) -> Result<PathBuf> {
 /// Makes a Hermes profile that is one companion and nothing else: clanka's two
 /// tools are the only toolset on every platform; Hermes's own memory, user
 /// profile, coding brief, toolchain probe and agent-style guidance are off; the
-/// terminal and Telegram notes are a line each; and SOUL.md is the persona.
+/// terminal and Telegram notes are a line each; and SOUL.md is the persona. The
+/// root's own providers, model aliases and their keys are shared with it.
 /// Safe to run again, and the way to refresh SOUL.md after editing the persona.
 pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
     let soul = Soul::load(soul_path)?;
@@ -133,6 +261,7 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
     std::fs::copy(source.join(EXTENSION), &staged)?;
     std::fs::rename(&staged, plugin.join(EXTENSION))?;
 
+    share_providers(&home, profile, &dir)?;
     let h = |args: &[&str]| hermes(&home, Some(profile), args);
     h(&["plugins", "enable", "clanka"])?;
     let soul_str = soul_path
@@ -177,7 +306,8 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
 /// Makes the Nightshade profile: an agent with the terminal and file tools and
 /// nothing else, whose SOUL.md is hermes/nightshade/SOUL.md with the path of
 /// this binary filled in, so it can run `clanka` to write, lint and wire a
-/// companion. Safe to run again. Without `model` the Hermes default stays.
+/// companion. The root's own providers, model aliases and their keys are shared
+/// with it. Safe to run again. Without `model` the Hermes default stays.
 pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
     const SOUL: &str = include_str!("../../../hermes/nightshade/SOUL.md");
     let clanka = std::env::current_exe().context("finding this binary's path")?;
@@ -186,6 +316,7 @@ pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
         .context("this binary's path is not valid UTF-8")?;
     let home = home()?;
     let dir = create_profile(&home, profile)?;
+    share_providers(&home, profile, &dir)?;
     let h = |args: &[&str]| hermes(&home, Some(profile), args);
     if let Some(model) = model {
         h(&["config", "set", "model.default", model])?;
@@ -233,6 +364,16 @@ mod tests {
             root(PathBuf::from("/srv/profiles")),
             PathBuf::from("/srv/profiles")
         );
+    }
+
+    #[test]
+    fn a_profile_gets_the_root_keys_it_lacks() {
+        let root = "A_KEY=1\nB_KEY=2\nB_KEY_2=x\n";
+        let profile = "# comment\nB_KEY=mine\n";
+        let (lines, missing) =
+            missing_env_lines(root, profile, &["A_KEY", "B_KEY", "C_KEY", "B_KEY_"]);
+        assert_eq!(lines, ["A_KEY=1"]);
+        assert_eq!(missing, ["C_KEY", "B_KEY_"]);
     }
 
     #[test]

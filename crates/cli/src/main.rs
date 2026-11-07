@@ -151,9 +151,11 @@ enum HermesCommand {
     /// brief, toolchain probe and agent-style guidance are off; the terminal and Telegram
     /// notes are a line each; and SOUL.md is the persona. Each turn then carries the
     /// persona and the conversation instead of Hermes's whole toolbox: on Haiku the system
-    /// prompt and tools went from about 19k tokens on a stock profile to about 1.2k. Run it
-    /// again after editing the persona to refresh SOUL.md. A gateway already serving the
-    /// profile re-reads its config on its own.
+    /// prompt and tools went from about 19k tokens on a stock profile to about 1.2k. The
+    /// root's own `providers:`, model aliases and reasoning overrides are copied in, and
+    /// the keys those providers read are copied from ~/.hermes/.env into the profile's,
+    /// since a profile loads only its own .env. Run it again after editing the persona to
+    /// refresh SOUL.md. A gateway already serving the profile re-reads its config on its own.
     #[command(after_long_help = "Example:\n  \
         clanka hermes profile nova ~/.config/clanka/souls/<id>.md\n  \
         hermes -p nova chat")]
@@ -168,8 +170,10 @@ enum HermesCommand {
     ///
     /// It is the soul-writer skill as a person to talk to. The terminal and file tools are
     /// all it has, and hermes/nightshade/SOUL.md is the whole of what it knows, with the
-    /// path of this binary filled in. Without --model it runs on the Hermes default; a
-    /// stronger model interviews better and the session is short.
+    /// path of this binary filled in. The root's own `providers:`, model aliases and their
+    /// keys are shared with it, so `/model <alias>` works in its chat. Without --model it
+    /// runs on the Hermes default; a stronger model interviews better and the session is
+    /// short.
     #[command(after_long_help = "Example:\n  \
         clanka hermes nightshade --model claude-opus-5-5\n  \
         hermes -p nightshade chat")]
