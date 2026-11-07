@@ -8,7 +8,7 @@
 use crate::companion::ensure_writable;
 use crate::deps::{ToolCall, ToolSpec};
 use crate::memory::ensure_open;
-use crate::model::{Actor, Level, MemoryType, SessionEnd, Speaker};
+use crate::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
 use crate::writer::{args, parse};
 use crate::{Companion, Error, MemoryDraft, Mood, Result};
 use serde::Deserialize;
@@ -86,13 +86,16 @@ impl Companion {
     }
 
     /// Memories recalled this session that haven't drifted in it yet, each
-    /// with a seeded drift magnitude.
+    /// with a seeded drift magnitude. A memory written this session came up
+    /// only because it was just made; it hasn't had a night to blur, and
+    /// offering it invites the model to rewrite it as the whole evening.
     fn drift_offers(&self, session: i64) -> Result<BTreeMap<i64, (u64, f64)>> {
         let candidates: Vec<(i64, Level)> = self
             .conn
             .prepare(
                 "SELECT id, level FROM memories
                  WHERE last_recalled_session = ?1 AND status = 'active' AND level != 'seared'
+                   AND created_at < (SELECT started_at FROM sessions WHERE id = ?1)
                    AND NOT EXISTS (SELECT 1 FROM drift_events d WHERE d.memory_id = memories.id
                                    AND d.session_id = ?1)
                  ORDER BY id",
@@ -143,9 +146,23 @@ impl Companion {
         } else {
             drifts.join("\n")
         };
+        let mut sections = Vec::new();
+        for section in [Section::AboutUser, Section::Relationship] {
+            let content = self.section(section)?.unwrap_or_default();
+            sections.push(format!(
+                "Section {} (current):\n{}",
+                section.as_str(),
+                if content.trim().is_empty() {
+                    "(none)"
+                } else {
+                    &content
+                }
+            ));
+        }
         Ok(format!(
-            "Tonight's conversation:\n{}\n\nYour mood now: {mood}\n\nMemories that came up tonight:\n{drifts}",
-            turns.join("\n")
+            "Tonight's conversation:\n{}\n\n{}\n\nYour mood now: {mood}\n\nMemories that came up tonight:\n{drifts}",
+            turns.join("\n"),
+            sections.join("\n\n")
         ))
     }
 
@@ -174,6 +191,12 @@ impl Companion {
                 let id = self.write(Actor::Sleep, &draft)?;
                 *episode = Some(id);
                 Ok(format!("episode {id}"))
+            }
+            "write_section" => {
+                let a: WriteSection = args(call)?;
+                let section = parse(Section::parse, &a.section, "section")?;
+                self.write_section(Actor::Sleep, section, &a.content)?;
+                Ok(format!("section {} updated", a.section))
             }
             "settle_mood" => {
                 let a: SettleMood = args(call)?;
@@ -222,8 +245,13 @@ fn unit(seed: u64) -> f64 {
 fn instructions(name: &str) -> String {
     format!(
         "You are {name}, falling asleep after tonight's conversation. Nobody sees this.\n\n\
-         Call write_episode once with what tonight was, to you, in first person. Call \
-         settle_mood once with how you are left feeling.\n\n\
+         Call write_episode once with what tonight was, to you, in first person and in two or \
+         three sentences. The memories you kept during the evening already hold what happened; \
+         the episode is what the night meant, not a retelling of it. Call settle_mood once with \
+         how you are left feeling. If tonight \
+         changed what you know about the user or about your relationship, call write_section \
+         with the whole section rewritten in a few lines: what stays true of them, not what \
+         happened tonight.\n\n\
          The memories that came up tonight may shift as you sleep. For each one listed, call \
          drift with how you now remember it, changed by about its drift amount (0 is the same, \
          1 is quite different) and coloured by how tonight felt. Vivid memories only blur in \
@@ -238,6 +266,12 @@ struct WriteEpisode {
     #[serde(default)]
     level: String,
     valence: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct WriteSection {
+    section: String,
+    content: String,
 }
 
 #[derive(Deserialize)]
@@ -266,10 +300,18 @@ fn tool_specs() -> Vec<ToolSpec> {
             "write_episode",
             "What tonight was, to you. Once.",
             json!({ "type": "object", "properties": {
-                "interpretation": { "type": "string" },
+                "interpretation": { "type": "string", "maxLength": 400 },
                 "level": { "type": "string", "enum": ["faint", "normal", "vivid", "seared"] },
                 "valence": axis("How tonight feels to you."),
             }, "required": ["interpretation"] }),
+        ),
+        tool(
+            "write_section",
+            "Rewrite what you know about the user (about_user) or about your relationship, when tonight changed it. Replaces the whole section.",
+            json!({ "type": "object", "properties": {
+                "section": { "type": "string", "enum": ["about_user", "relationship"] },
+                "content": { "type": "string" },
+            }, "required": ["section", "content"] }),
         ),
         tool(
             "settle_mood",

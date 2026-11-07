@@ -222,6 +222,8 @@ impl Companion {
             "The exchange:\nTurn {} (user): {said}\nTurn {} (you): {replied}",
             exchange[0], exchange[1]
         ));
+        // Last, where a small model weighs it most: the expected size of the reply.
+        out.push("Keep what this earns: one call is usual, none is common, three is a lot.".into());
         Ok(out.join("\n\n"))
     }
 
@@ -294,11 +296,6 @@ impl Companion {
                 self.set_mood(w, &mood)?;
                 Ok("mood set".into())
             }
-            "write_section" => {
-                let a: WriteSection = args(call)?;
-                self.write_section(w, parse(Section::parse, &a.section, "section")?, &a.content)?;
-                Ok(format!("section {} updated", a.section))
-            }
             "pushed_back" => {
                 let a: PushedBack = args(call)?;
                 self.record_pushback(w, exchange[1], a.on_core_value, &a.about)?;
@@ -342,14 +339,23 @@ fn instructions(name: &str) -> String {
          this: you are deciding, privately and in your own voice, what to keep from it.\n\n\
          Use the tools to remember what matters to you, change a memory with supersede when \
          something changed, raise how much a memory matters, update your mood, open or close \
-         threads, update what you know about the user or about your relationship, record when \
-         you pushed back on the user, and leave yourself a short note for your next reply.\n\n\
-         Write interpretations in first person, as you felt them. A memory's level is how deeply \
-         it's burned in: faint, normal, vivid or seared; seared ones never change or fade, so use \
-         that rarely. Facts (names, dates, places) must be exactly what was said and never change \
-         later. Valence is how it feels to you, -1 to 1.\n\n\
-         Make every call you want in this one reply; you hear back only if one fails. Keeping \
-         nothing is fine: then call nothing."
+         threads, record when you pushed back on the user, and leave yourself a short note for \
+         your next reply. Most exchanges earn one call or none: small talk, a goodbye, or more \
+         of what you already remember earns nothing. The exception is something the user left \
+         unresolved that you would want to ask about next time: open_thread for it, even on a \
+         quiet exchange, and close_thread when it resolves. What you know about the user and about \
+         your relationship you rewrite when you sleep, with the whole conversation in view, and \
+         the evening becomes a memory then too.\n\n\
+         Write interpretations in first person, as you felt them, in one or two sentences: what \
+         happened and what it meant to you. Don't retell what you replied; the memory keeps the \
+         exchange it came from. One memory from an exchange is the norm, a second only for a \
+         separate thing worth keeping. A memory's level is how deeply it's burned in: faint, \
+         normal, vivid or seared; seared ones never change or fade, so use that rarely. Facts go \
+         on user_fact memories only: the names, dates and places that were said, exactly as \
+         said; they never change later. Valence is how it feels to you, -1 to 1.\n\n\
+         Call set_mood only when this exchange moved your mood, and leave_note only when your \
+         next reply needs it, in one line. Make every call you want in this one reply; you hear \
+         back only if one fails. Keeping nothing is fine: then call nothing."
     )
 }
 
@@ -452,12 +458,6 @@ struct SetMood {
 }
 
 #[derive(Deserialize)]
-struct WriteSection {
-    section: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
 struct PushedBack {
     #[serde(default)]
     on_core_value: bool,
@@ -474,9 +474,10 @@ fn tool_specs() -> Vec<ToolSpec> {
     let level = json!({ "type": "string", "enum": ["faint", "normal", "vivid", "seared"] });
     let memory = |extra: Value, required: &[&str]| {
         let mut properties = json!({
-            "interpretation": { "type": "string" },
+            "interpretation": { "type": "string", "maxLength": 300 },
             "level": level,
-            "facts": { "type": "object", "additionalProperties": { "type": "string" } },
+            "facts": { "type": "object", "additionalProperties": { "type": "string" },
+                "description": "user_fact only: names, dates and places as said, a few words each." },
             "valence": { "type": "number", "minimum": -1, "maximum": 1 },
         });
         properties
@@ -541,14 +542,6 @@ fn tool_specs() -> Vec<ToolSpec> {
                 "warmth": { "type": "number", "minimum": -1, "maximum": 1, "description": "Cold to warm toward the user." },
                 "cause": { "type": "string", "description": "One line on why." },
             }, "required": ["valence", "energy", "warmth", "cause"] }),
-        ),
-        tool(
-            "write_section",
-            "Rewrite what you know about the user (about_user) or about your relationship. Replaces the whole section.",
-            json!({ "type": "object", "properties": {
-                "section": { "type": "string", "enum": ["about_user", "relationship"] },
-                "content": { "type": "string" },
-            }, "required": ["section", "content"] }),
         ),
         tool(
             "pushed_back",

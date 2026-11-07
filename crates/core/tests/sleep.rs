@@ -1,7 +1,7 @@
 mod common;
 
 use clanka_core::deps::{LlmRequest, LlmResponse, ToolCall};
-use clanka_core::model::{Actor, Level, MemoryType, SessionEnd, Speaker};
+use clanka_core::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
 use clanka_core::{Companion, Error, MemoryDraft, Mood, Ranking};
 use common::{clock, count, fixture, open_full, raw, soul_text};
 use serde_json::{Value, json};
@@ -60,12 +60,19 @@ fn write(c: &mut Companion, kind: MemoryType, level: Level, text: &str) -> i64 {
 fn sleep_writes_the_night_and_drifts_only_what_came_up() {
     let f = fixture();
     let prompts = Arc::default();
-    let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), clock());
-    let s = c.open_session().unwrap();
+    let clk = clock();
+    let mut c = open_full(
+        &f,
+        |_: &LlmRequest| LlmResponse::default(),
+        Arc::clone(&clk),
+    );
+    // An earlier day, where the memories come from.
+    let earlier = c.open_session().unwrap();
     let said = c
-        .record_turn(s, Speaker::User, "My sister Laura called")
+        .record_turn(earlier, Speaker::User, "My sister Laura called")
         .unwrap();
-    c.record_turn(s, Speaker::Companion, "How is she?").unwrap();
+    c.record_turn(earlier, Speaker::Companion, "How is she?")
+        .unwrap();
 
     let faint = write(
         &mut c,
@@ -95,7 +102,23 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         Level::Normal,
         "Sam's dad is strict",
     );
-    c.mark_recalled(s, &[faint, normal, vivid, seared]).unwrap();
+    c.end_session(earlier, SessionEnd::Doctor).unwrap();
+    clk.fetch_add(HOUR, Ordering::SeqCst);
+
+    let s = c.open_session().unwrap();
+    c.record_turn(s, Speaker::User, "Laura called again")
+        .unwrap();
+    c.record_turn(s, Speaker::Companion, "What did she want?")
+        .unwrap();
+    // Made tonight: it came up tonight only because it was just written, so it doesn't drift.
+    let tonight = write(
+        &mut c,
+        MemoryType::Episode,
+        Level::Normal,
+        "Laura wants Sam at her concert",
+    );
+    c.mark_recalled(s, &[faint, normal, vivid, seared, tonight])
+        .unwrap();
     drop(c);
 
     let night = vec![
@@ -103,6 +126,10 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         call(
             "settle_mood",
             json!({ "valence": 0.5, "energy": -0.6, "warmth": 0.7, "cause": "A good night" }),
+        ),
+        call(
+            "write_section",
+            json!({ "section": "about_user", "content": "Has a sister, Laura, who calls" }),
         ),
         call(
             "drift",
@@ -124,8 +151,12 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
             "drift",
             json!({ "memory_id": unrecalled, "interpretation": "Dad is fine" }),
         ),
+        call(
+            "drift",
+            json!({ "memory_id": tonight, "interpretation": "The whole evening, retold" }),
+        ),
     ];
-    let mut c = open_full(&f, sleeper(vec![night], Arc::clone(&prompts)), clock());
+    let mut c = open_full(&f, sleeper(vec![night], Arc::clone(&prompts)), clk);
     let report = c.sleep(s).unwrap();
 
     let drifted: Vec<i64> = report.drifted.iter().map(|d| d.0).collect();
@@ -141,13 +172,29 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         prompt.contains(&format!("#{faint} [faint, drift 0.30] Laura likes jazz")),
         "{prompt}"
     );
-    assert!(prompt.contains("(user) My sister Laura called"), "{prompt}");
-    for absent in [seared, unrecalled] {
+    assert!(prompt.contains("(user) Laura called again"), "{prompt}");
+    assert!(
+        !prompt.contains("My sister Laura called"),
+        "an earlier night's conversation isn't tonight's:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("Section about_user (current):\n(none)"),
+        "sleep is where the sections get rewritten, so it sees them:\n{prompt}"
+    );
+    assert_eq!(
+        c.section(Section::AboutUser).unwrap().as_deref(),
+        Some("Has a sister, Laura, who calls")
+    );
+    for absent in [seared, unrecalled, tonight] {
         assert!(
             !prompt.contains(&format!("#{absent} [")),
             "{absent} offered:\n{prompt}"
         );
     }
+    assert_eq!(
+        c.memory(tonight).unwrap().interpretation,
+        "Laura wants Sam at her concert"
+    );
 
     // Facts never drift; the vector follows the new interpretation.
     let m = c.memory(normal).unwrap();
@@ -187,13 +234,14 @@ fn no_episode_means_no_sleep_and_a_retry_never_drifts_twice() {
     let f = fixture();
     let time = clock();
     let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), time.clone());
-    let s = c.open_session().unwrap();
     let id = write(
         &mut c,
         MemoryType::Preference,
         Level::Faint,
         "Laura likes jazz",
     );
+    time.fetch_add(HOUR, Ordering::SeqCst);
+    let s = c.open_session().unwrap();
     c.mark_recalled(s, &[id]).unwrap();
     drop(c);
 

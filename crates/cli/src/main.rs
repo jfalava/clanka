@@ -77,6 +77,16 @@ enum Command {
         #[command(subcommand)]
         command: DoctorCommand,
     },
+    /// Print what a companion remembers: mood, sections, open threads and every memory.
+    ///
+    /// Reads the memory and changes nothing, so it is safe while a host has the companion
+    /// open. For checking what a persona keeps from a conversation; `hermes/bench.sh` prints
+    /// it after a scripted evening.
+    #[command(after_long_help = "Example:\n  clanka memories ~/.config/clanka/souls/<id>.md")]
+    Memories {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
     /// Talk with a companion in the terminal, on its [model].
     ///
     /// Needs a [model] section in ~/.config/clanka/config.toml (base_url, model and
@@ -144,23 +154,31 @@ enum SoulCommand {
     /// to any model as its instructions, then `clanka init <Name> --from` what it wrote.
     #[command(after_long_help = "Example:\n  clanka soul guide | less")]
     Guide,
-    /// Have the [model] write a soul from a short brief, lint it and create the companion.
+    /// Have a model write a soul from a short brief, lint it and create the companion.
     ///
-    /// Needs the [model] in ~/.config/clanka/config.toml. Sends the guide and your brief,
-    /// takes the body it writes, runs the lint, and sends the warnings back for another try
-    /// up to --rounds times. Then creates the companion as `clanka init --from` would and
-    /// prints the lint report. The persona is a draft: read it before anyone talks to it.
-    #[command(after_long_help = "Example:\n  \
-        clanka soul draft Mara --brief \"a night-shift radiographer in a coastal town, dry, kind\"")]
+    /// Sends the guide and your brief to the [model] in ~/.config/clanka/config.toml, or to
+    /// the --writer command, takes the body it writes, runs the lint, and sends the warnings
+    /// back for another try up to --rounds times. Then creates the companion as `clanka init
+    /// --from` would and prints the lint report. The persona is a draft: read it before
+    /// anyone talks to it.
+    #[command(after_long_help = "Examples:\n  \
+        clanka soul draft Mara --brief \"a night-shift radiographer in a coastal town, dry, kind\"\n  \
+        clanka soul draft Mara --brief \"$(cat brief.md)\" \\\n      \
+        --writer 'hermes chat -Q -m claude-opus-5-5 --query-file -'\n\n\
+        `clanka soul guide` says what a brief should hold (section \"The brief\").")]
     Draft {
         /// The companion's display name.
         name: String,
-        /// Who the companion is, in a sentence or a paragraph.
+        /// Who the companion is, in a sentence or a paragraph; `clanka soul guide` says what to put in.
         #[arg(long)]
         brief: String,
         /// Most times the warnings go back to the model for a rewrite.
         #[arg(long, default_value_t = 2)]
         rounds: usize,
+        /// A shell command that writes the body instead of the [model]: it reads the whole
+        /// prompt on stdin and prints the body. Any model with a command line will do.
+        #[arg(long, value_name = "COMMAND")]
+        writer: Option<String>,
     },
     /// Print the persona without its frontmatter, for a host's own persona file.
     ///
@@ -299,8 +317,9 @@ fn main() -> Result<()> {
                     name,
                     brief,
                     rounds,
+                    writer,
                 },
-        } => draft(&paths, &name, &brief, rounds),
+        } => draft(&paths, &name, &brief, rounds, writer.as_deref()),
         Command::Soul {
             command: SoulCommand::Persona { soul },
         } => {
@@ -325,6 +344,7 @@ fn main() -> Result<()> {
         Command::Doctor {
             command: DoctorCommand::DeleteAll { soul },
         } => doctor(&paths, &soul, DoctorAction::DeleteAll),
+        Command::Memories { soul } => memories(&paths, &soul),
         Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
@@ -441,6 +461,62 @@ fn doctor(paths: &Paths, soul: &Path, action: DoctorAction) -> Result<()> {
                 soul.display()
             );
         }
+    }
+    Ok(())
+}
+
+fn memories(paths: &Paths, soul: &Path) -> Result<()> {
+    use clanka_core::model::{MemoryType, Section};
+    let companion = setup::open(paths, soul, SharedEmbedder::load(paths)?, None)?;
+    match companion.mood()? {
+        Some(m) => println!(
+            "Mood: valence {:+.1}, energy {:+.1}, warmth {:+.1}. Why: {}",
+            m.valence, m.energy, m.warmth, m.cause
+        ),
+        None => println!("Mood: not set yet."),
+    }
+    if let Some((_, note)) = companion.last_turn_note()? {
+        println!("Note for the next reply: {note}");
+    }
+    for section in [Section::AboutUser, Section::Relationship] {
+        println!(
+            "\n{}:\n{}",
+            section.as_str(),
+            companion
+                .section(section)?
+                .filter(|c| !c.trim().is_empty())
+                .as_deref()
+                .unwrap_or("(empty)")
+        );
+    }
+    let all = companion.active_memories()?;
+    let (threads, memories): (Vec<_>, Vec<_>) =
+        all.iter().partition(|m| m.kind == MemoryType::OpenThread);
+    println!("\nOpen threads ({}):", threads.len());
+    for m in threads {
+        let urgency = m.urgency.map(|u| u.as_str()).unwrap_or("?");
+        println!(
+            "#{} [{urgency}, {}] {}",
+            m.id,
+            m.level.as_str(),
+            m.interpretation
+        );
+    }
+    println!("\nMemories ({}):", memories.len());
+    for m in memories {
+        let valence = m.valence.map(|v| format!(", {v:+.1}")).unwrap_or_default();
+        let facts = if m.facts.is_empty() {
+            String::new()
+        } else {
+            format!(" facts {}", serde_json::Value::Object(m.facts.clone()))
+        };
+        println!(
+            "#{} [{}, {}{valence}] {}{facts}",
+            m.id,
+            m.kind.as_str(),
+            m.level.as_str(),
+            m.interpretation
+        );
     }
     Ok(())
 }
@@ -588,19 +664,36 @@ fn guide() -> &'static str {
         .trim()
 }
 
-/// The configured model writes a body from the brief, hears the lint warnings
-/// back up to `rounds` times, and the result becomes a companion.
-fn draft(paths: &Paths, name: &str, brief: &str, rounds: usize) -> Result<()> {
+/// The configured model, or the `--writer` command, writes a body from the
+/// brief, hears the lint warnings back up to `rounds` times, and the result
+/// becomes a companion.
+fn draft(
+    paths: &Paths,
+    name: &str,
+    brief: &str,
+    rounds: usize,
+    writer: Option<&str>,
+) -> Result<()> {
     use clanka_core::deps::{Llm, LlmMessage, LlmRequest};
-    let config = Config::load(paths)?;
-    let Some(model) = config.model else {
-        bail!(
-            "no model configured to write the soul; add a [model] section to {}, or write the \
-             body with any model from `clanka soul guide` and pass it to `clanka init --from`",
-            paths.config_file().display()
-        );
+    let llm = match writer {
+        Some(_) => None,
+        None => match Config::load(paths)?.model {
+            Some(model) => Some(clanka::llm::OpenAiModel::new(model)),
+            None => bail!(
+                "no model configured to write the soul; add a [model] section to {}, pass \
+                 --writer with a command that runs one, or write the body with any model \
+                 from `clanka soul guide` and pass it to `clanka init --from`",
+                paths.config_file().display()
+            ),
+        },
     };
-    let llm = clanka::llm::OpenAiModel::new(model);
+    let write = |r: &LlmRequest| -> Result<String> {
+        match (writer, &llm) {
+            (Some(command), _) => write_through(command, r),
+            (None, Some(llm)) => Ok(llm.complete(r)?.text),
+            (None, None) => unreachable!("a writer or a model was chosen above"),
+        }
+    };
     let mut request = LlmRequest {
         system: format!(
             "{}\n\nYou are writing the soul.md body for a new companion named {name}. Reply with \
@@ -615,12 +708,8 @@ fn draft(paths: &Paths, name: &str, brief: &str, rounds: usize) -> Result<()> {
     let mut body = String::new();
     let mut report = None;
     for round in 0..=rounds {
-        body = unfenced(&llm.complete(&request)?.text);
-        let text = soul_text(uuid::Uuid::nil(), name, &"0".repeat(32), &body);
-        let r = match Soul::parse(&text) {
-            Ok(soul) => LintReport::of(&soul),
-            Err(e) => LintReport::invalid(e.to_string()),
-        };
+        body = unfenced(&write(&request)?);
+        let r = lint_draft(name, &body);
         eprintln!(
             "round {}: {} words, {} warnings",
             round + 1,
@@ -644,6 +733,54 @@ fn draft(paths: &Paths, name: &str, brief: &str, rounds: usize) -> Result<()> {
     );
     println!("Read it before anyone talks to it: {}", soul.display());
     Ok(())
+}
+
+/// Lints a drafted body as the soul it would become. The placeholder id must
+/// pass the same checks as a real one, or every round reports a warning the
+/// writer can't fix.
+fn lint_draft(name: &str, body: &str) -> LintReport {
+    let text = soul_text(uuid::Uuid::now_v7(), name, &"0".repeat(32), body);
+    match Soul::parse(&text) {
+        Ok(soul) => LintReport::of(&soul),
+        Err(e) => LintReport::invalid(e.to_string()),
+    }
+}
+
+/// Runs a `--writer` command with the whole request as one prompt on stdin: the
+/// system prompt, then each message, a later round's draft marked as such. What
+/// it prints is the reply.
+fn write_through(command: &str, request: &clanka_core::deps::LlmRequest) -> Result<String> {
+    use clanka_core::deps::Role;
+    use std::io::Write;
+    use std::process::{Command as Process, Stdio};
+    let mut prompt = request.system.clone();
+    for m in &request.messages {
+        prompt.push_str("\n\n");
+        if m.role == Role::Assistant {
+            prompt.push_str("Your previous draft:\n\n");
+        }
+        prompt.push_str(&m.content);
+    }
+    let mut child = Process::new("sh")
+        .args(["-c", command])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("starting the writer command {command:?}"))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(prompt.as_bytes())?;
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        bail!("the writer command {command:?} failed ({})", out.status);
+    }
+    let text = String::from_utf8(out.stdout).context("the writer command printed invalid UTF-8")?;
+    if text.trim().is_empty() {
+        bail!("the writer command {command:?} printed nothing");
+    }
+    Ok(text)
 }
 
 /// A model's reply without a Markdown code fence around it, if it added one.
@@ -920,6 +1057,9 @@ mod tests {
         assert!(report.valid && report.warnings.is_empty(), "{report:?}");
         assert!(report.chat_tokens > 0 && report.memory_tokens > report.chat_tokens);
         assert_eq!(super::unfenced("plain"), "plain", "no fence, no change");
+        // The draft's own lint sees the same body as the soul it becomes.
+        let draft = super::lint_draft("Mara", &body);
+        assert!(draft.valid && draft.warnings.is_empty(), "{draft:?}");
     }
 
     #[test]

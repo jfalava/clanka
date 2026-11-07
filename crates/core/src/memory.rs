@@ -432,6 +432,17 @@ impl Companion {
         })
     }
 
+    /// Everything the companion currently holds, oldest first: active memories,
+    /// open threads included.
+    pub fn active_memories(&self) -> Result<Vec<Memory>> {
+        let ids: Vec<i64> = self
+            .conn
+            .prepare("SELECT id FROM memories WHERE status = 'active' ORDER BY id")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        ids.into_iter().map(|id| self.memory(id)).collect()
+    }
+
     pub fn memory(&self, id: i64) -> Result<Memory> {
         let (mut memory, facts) = self
             .conn

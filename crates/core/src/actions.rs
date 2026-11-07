@@ -69,13 +69,18 @@ pub fn protocol(tools: &[ToolSpec]) -> String {
     out
 }
 
-/// A property's JSON Schema as a short type: `string`, `"a"|"b"`, `number -1..1`, `{"<key>": string, ...}`.
+/// A property's JSON Schema as a short type: `string`, `string ≤300 chars`, `"a"|"b"`,
+/// `number -1..1`, `{"<key>": string, ...}`.
 fn type_of(p: &Value) -> String {
     if let Some(e) = p["enum"].as_array() {
         return e.iter().map(Value::to_string).collect::<Vec<_>>().join("|");
     }
     let ty = p["type"].as_str().unwrap_or("any");
     match ty {
+        "string" => match p["maxLength"].as_u64() {
+            Some(n) => format!("string ≤{n} chars"),
+            None => ty.into(),
+        },
         "object" => match p.get("additionalProperties") {
             Some(v) if v.is_object() => format!("{{\"<key>\": {}, ...}}", type_of(v)),
             _ => "object".into(),
@@ -193,9 +198,9 @@ mod tests {
             spec(
                 "remember",
                 format!(
-                    r#""valence":{{"type":"number","minimum":-1,"maximum":1}},"level":{level},"facts":{{"type":"object","additionalProperties":{{"type":"string"}}}}"#
+                    r#""valence":{{"type":"number","minimum":-1,"maximum":1}},"level":{level},"facts":{{"type":"object","additionalProperties":{{"type":"string"}}}},"interpretation":{{"type":"string","maxLength":300}}"#
                 ),
-                r#""level""#,
+                r#""interpretation","level""#,
             ),
             spec(
                 "raise_level",
@@ -206,7 +211,8 @@ mod tests {
         let tools = &p[p.find("- remember").unwrap()..];
         assert_eq!(
             tools,
-            "- remember: remember it.\n  level: \"faint\"|\"seared\" — How deep.\n  \
+            "- remember: remember it.\n  interpretation: string ≤300 chars\n  \
+             level: \"faint\"|\"seared\" — How deep.\n  \
              facts?: {\"<key>\": string, ...}\n  valence?: number -1..1\n\
              - raise_level: raise_level it.\n  level: \"faint\"|\"seared\"\n  memory_id: integer"
         );

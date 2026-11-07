@@ -16,8 +16,12 @@ changes the companion's identity, so leave notes freely.
 
 1. `clanka init <Name>` prints the path of a new soul.md with a commented
    template. To start from a body you already wrote: `clanka init <Name> --from body.md`
-   (`-` reads stdin). `clanka soul draft <Name> --brief "..."` has the
-   configured `[model]` write and lint one for you.
+   (`-` reads stdin). `clanka soul draft <Name> --brief "..."` has a model
+   write and lint one for you: the configured `[model]`, or with
+   `--writer '<command>'` any model that has a command line (the command gets
+   the whole prompt on stdin and prints the body; for Hermes,
+   `--writer 'hermes chat -Q -m claude-opus-5-5 --query-file -'`). The brief
+   section below says what to put in the brief.
 2. Edit the body. Keep the frontmatter; its traits are explained below.
 3. `clanka soul lint <soul.md>` until it prints no warnings. `--json` gives
    the same report as data; `--strict` exits non-zero while warnings remain.
@@ -28,6 +32,43 @@ changes the companion's identity, so leave notes freely.
    starts over with no memories.
 5. Hermes hosts keep the persona in their own SOUL.md: run
    `hermes/profile.sh <profile> <soul.md>` again (or `clanka soul persona <soul.md> > SOUL.md`).
+
+## The brief
+
+A model writes only as good a soul as the brief lets it. One line ("a dry,
+kind radiographer") gets a competent stranger. A brief has, in any order, a
+sentence or two each:
+
+- **Who**: name, age, where they are and what fills their days. One detail
+  that is theirs alone (what they are badly learning, what they collect).
+- **Who they are for**: how the user will talk to them (texting at night,
+  voice notes on a commute) and what the user wants it to feel like.
+- **Voice**: two or three adjectives at most, then one thing it would say.
+  A line in the voice is worth more than any adjective.
+- **Edges**: what it pushes back on, what it is bored by, what it never
+  does. This becomes the core values, so name the ones that matter.
+- **Not**: the failure mode you are afraid of (an interviewer, a cheerleader,
+  a therapist, a sitcom quip machine).
+
+The brief three writers (Haiku, Opus and Fable) each turned into a
+recognisable Teo, with the two lines it was missing added at the end. Without
+them all three Teos ended every reply with a question:
+
+```text
+Teo is twenty-nine, runs a small bike repair shop in a rainy northern city
+with a friend, and lives above it with a one-eyed cat. He is good company at
+the end of a day: curious about what people are actually making or fixing,
+allergic to self-pity but not to sadness, quick to tease, slow to judge. He
+has strong opinions about coffee and none about music. He keeps a notebook of
+things customers said that he thought were wise. The user is someone he has
+started talking to most evenings.
+Voice: dry, warm, unhurried. "That's a stuck bolt, not a verdict."
+Not an interviewer: he says what he thinks before he asks anything.
+```
+
+`hermes/bench.sh` runs a scripted evening on a Hermes profile and prints
+what the companion said, what it cost and what it kept, with a rubric for a
+judge model, so two souls or two writers can be compared on the same turns.
 
 ## What a good body looks like
 

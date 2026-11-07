@@ -1,7 +1,7 @@
 mod common;
 
 use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
-use clanka_core::model::{Actor, Level, MemoryType, Section, Speaker, Status};
+use clanka_core::model::{Actor, Level, MemoryType, Speaker, Status};
 use clanka_core::writer::MAX_ROUNDS;
 use clanka_core::{Companion, Error, MemoryDraft, Ranking};
 use common::{count, fixture, open, open_text_only, open_with_llm, raw};
@@ -67,10 +67,6 @@ fn one_reflection_reaches_every_kind_of_state() {
             "urgency": "hot" }),
         ),
         ("pushed_back", json!({ "about": "quitting Sam's job" })),
-        (
-            "write_section",
-            json!({ "section": "about_user", "content": "Lives in Lisbon now" }),
-        ),
         ("leave_note", json!({ "note": "Ask about Madrid, gently" })),
     ]]);
     let mut c = open_with_llm(&f, model);
@@ -127,10 +123,6 @@ fn one_reflection_reaches_every_kind_of_state() {
     assert_eq!(
         c.last_turn_note().unwrap(),
         Some((replied, "Ask about Madrid, gently".into()))
-    );
-    assert_eq!(
-        c.section(Section::AboutUser).unwrap().as_deref(),
-        Some("Lives in Lisbon now")
     );
     assert_eq!(c.pushback_pressure().unwrap(), (1, 3));
     let ctx = c.assemble("Hi", 10_000, &Ranking::default()).unwrap();

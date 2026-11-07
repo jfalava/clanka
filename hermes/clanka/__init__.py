@@ -128,7 +128,10 @@ class _Plugin:
     def _after_turn(self, turns, sleep):
         with self._work_lock:
             c = self.companion()
-            if turns is not None:
+            # When the companion asked to sleep, sleep sees the whole conversation,
+            # this exchange included, and writes the night from it: a separate
+            # reflection on the goodbye would only retell it.
+            if turns is not None and not sleep:
                 try:
                     ok, refused = c.reflect(*turns)
                     if refused:
