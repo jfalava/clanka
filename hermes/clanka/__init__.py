@@ -111,6 +111,11 @@ class _Plugin:
 
 
 def register(ctx):
+    # Load the native core now, so a broken build fails at plugin load and the
+    # process that holds it is known before the first turn. The companion
+    # itself still opens lazily, on the first hook.
+    from . import _clanka  # noqa: F401
+
     plugin = _Plugin(ctx)
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
