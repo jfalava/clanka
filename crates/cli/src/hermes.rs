@@ -141,11 +141,22 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
             config_get(home, None, "agent.reasoning_overrides")?,
         ),
     ] {
-        if let Some(value) = value.filter(|v| v.as_object().is_some_and(|o| !o.is_empty())) {
+        let Some(root) = value.as_ref().and_then(|v| v.as_object()) else {
+            continue;
+        };
+        // The root's entries win over the profile's, and the profile keeps any of
+        // its own. Hermes replaces a non-empty section only with --force.
+        let mut merged = config_get(home, Some(profile), key)?
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        let before = merged.clone();
+        merged.extend(root.clone());
+        if merged != before {
+            let merged = serde_json::Value::Object(merged).to_string();
             hermes(
                 home,
                 Some(profile),
-                &["config", "set", key, &value.to_string()],
+                &["config", "set", "--force", key, &merged],
             )?;
         }
     }
