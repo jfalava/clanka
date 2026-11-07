@@ -14,6 +14,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 const INSTRUCTIONS: &str = "You are a companion with a long-term memory. For EVERY user message, \
@@ -48,6 +49,9 @@ pub struct Server {
     /// never blocks the next begin_turn. `None` without a companion model.
     writer: Option<Arc<Mutex<Companion>>>,
     pending: Arc<Mutex<Option<Pending>>>,
+    /// Whether the client's model has been given context yet. The client
+    /// replays it on every later turn, so later turns carry only what is new.
+    seen: Arc<AtomicBool>,
     budget: usize,
 }
 
@@ -73,10 +77,16 @@ impl Server {
         &self,
         Parameters(BeginTurn { message }): Parameters<BeginTurn>,
     ) -> Result<String, String> {
-        let (chat, pending, budget) = (self.chat.clone(), self.pending.clone(), self.budget);
+        let (chat, pending, seen, budget) = (
+            self.chat.clone(),
+            self.pending.clone(),
+            self.seen.clone(),
+            self.budget,
+        );
         blocking(move || {
-            let begun =
-                turn::begin(&mut lock(&chat), &message, budget).map_err(|e| e.to_string())?;
+            let first = !seen.load(Ordering::Relaxed);
+            let begun = turn::begin(&mut lock(&chat), &message, budget, first)
+                .map_err(|e| e.to_string())?;
             Ok(match begun {
                 Begin::Doctor => {
                     *lock(&pending) = None;
@@ -92,7 +102,12 @@ impl Server {
                     pending: p,
                 } => {
                     *lock(&pending) = Some(p);
-                    context
+                    seen.store(true, Ordering::Relaxed);
+                    if context.is_empty() {
+                        "Nothing new comes to mind.".into()
+                    } else {
+                        context
+                    }
                 }
             })
         })
@@ -222,9 +237,14 @@ pub fn serve(chat: Companion, writer: Option<Companion>, budget: usize) -> Resul
         chat: Arc::new(Mutex::new(chat)),
         writer: writer.map(|w| Arc::new(Mutex::new(w))),
         pending: Arc::default(),
+        seen: Arc::default(),
         budget,
     };
-    tokio::runtime::Runtime::new()?.block_on(async {
+    // One thread serves stdio; core work runs on the blocking pool.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
         Ok(())

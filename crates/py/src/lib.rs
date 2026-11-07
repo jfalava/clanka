@@ -120,10 +120,19 @@ impl PyCompanion {
     /// Before the model replies. Returns `("doctor", "")` when the message is
     /// the doctor token (memory is frozen, nothing recorded: don't send the
     /// message to the model), `("frozen", "")` while frozen, or
-    /// `("open", context)` with the memory to give the model.
-    fn begin_turn(&self, py: Python<'_>, message: &str) -> PyResult<(&'static str, String)> {
+    /// `("open", context)` with the memory to give the model. On the host
+    /// conversation's first turn (`first`) that is everything; later it is
+    /// only what the model hasn't seen, and empty when nothing is new.
+    #[pyo3(signature = (message, first = true))]
+    fn begin_turn(
+        &self,
+        py: Python<'_>,
+        message: &str,
+        first: bool,
+    ) -> PyResult<(&'static str, String)> {
         py.detach(|| {
-            let begun = turn::begin(&mut lock(&self.chat), message, self.budget).map_err(err)?;
+            let begun =
+                turn::begin(&mut lock(&self.chat), message, self.budget, first).map_err(err)?;
             Ok(match begun {
                 Begin::Doctor => {
                     *lock(&self.pending) = None;

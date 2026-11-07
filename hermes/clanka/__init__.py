@@ -59,6 +59,11 @@ class _Plugin:
 
     def _model(self, system, messages, temperature):
         """The host's active model, for the core's memory writing."""
+        logger.info(
+            "clanka: memory model call, %d chars in %d messages",
+            len(system) + sum(len(m["content"]) for m in messages),
+            len(messages),
+        )
         result = self._ctx.llm.complete(
             [{"role": "system", "content": system}, *messages],
             temperature=temperature,
@@ -67,11 +72,14 @@ class _Plugin:
         )
         return result.text
 
-    def pre_llm_call(self, user_message="", **_):
-        kind, context = self.companion().begin_turn(user_message or "")
+    def pre_llm_call(self, user_message="", is_first_turn=True, **_):
+        # Hermes replays injected context on every later turn, so after the
+        # first one only what the model hasn't seen is injected, and nothing
+        # at all when nothing is new.
+        kind, context = self.companion().begin_turn(user_message or "", bool(is_first_turn))
         if kind == "doctor":
             return {"action": "block", "message": "Memory frozen."}
-        if kind == "open":
+        if kind == "open" and context:
             return {"context": context}
         return None
 

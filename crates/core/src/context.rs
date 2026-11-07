@@ -189,6 +189,53 @@ impl Companion {
         })
     }
 
+    /// For a host that keeps its own history and replays every message, so
+    /// whatever one turn injects is paid for again on every later turn: drops
+    /// from `ctx` what the model already saw earlier in the open session. The
+    /// first turn gets everything; later ones only what changed since the last
+    /// time you spoke, plus memories not yet recalled this session. Hot threads
+    /// and memories count as seen once [`Companion::mark_recalled`] records them.
+    pub fn keep_new(&self, ctx: &mut Context) -> Result<()> {
+        let last: Option<(i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT session_id, max(created_at) FROM turns WHERE role = 'user'
+                 AND session_id = (SELECT id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1)",
+                [],
+                |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?)),
+            )
+            .map(|(s, t)| s.zip(t))?;
+        let Some((session, since)) = last else {
+            return Ok(());
+        };
+        let changed = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<bool> {
+            let newest: Option<i64> = self.conn.query_row(sql, params, |r| r.get(0))?;
+            Ok(newest.is_some_and(|t| t >= since))
+        };
+        let mut sections = Vec::new();
+        for (section, content) in std::mem::take(&mut ctx.sections) {
+            if changed(
+                "SELECT max(created_at) FROM soul_section_versions WHERE name = ?1",
+                &[&section],
+            )? {
+                sections.push((section, content));
+            }
+        }
+        ctx.sections = sections;
+        // A time-away shift is this turn's own; otherwise the mood is as last shown.
+        if ctx.time_away.is_none() && !changed("SELECT max(created_at) FROM mood_states", &[])? {
+            ctx.mood = None;
+        }
+        if !changed("SELECT max(created_at) FROM turn_notes", &[])? {
+            ctx.turn_note = None;
+        }
+        ctx.hot_threads
+            .retain(|m| m.last_recalled_session != Some(session));
+        ctx.memories
+            .retain(|r| r.memory.last_recalled_session != Some(session));
+        Ok(())
+    }
+
     /// Shifts warmth by how long the user was gone: warmer if the last session
     /// ended on good terms, cooler if not. Fades over your first messages back.
     fn apply_time_away(&self, mood: &mut Mood) -> Result<Option<TimeAway>> {
