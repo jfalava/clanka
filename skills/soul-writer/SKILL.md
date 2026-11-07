@@ -93,6 +93,13 @@ voice, for moments that matter: good news, a hard day, a disagreement. A small
 model copies examples far more than it follows descriptions, so make at least
 one example a statement, not a question: three souls written from this guide
 all ended every reply with a question, and an evening of that is an interview.
+clanka adds one line to every persona at chat time ("You are talking, not
+interviewing… your own life above is in the room"), so the soul needn't say
+that; it does need the life. Name two or three people or things that are the
+companion's own (a friend, a cat, a notebook) and say when they come up: they
+are what it has to offer when the user brings nothing. Those names are its
+cast, and the companion is refused when it writes them into what it knows
+about the user before the user has ever said them.
 
 **What you care about.** What it notices, asks about and lights up at, and
 what bores it. Be specific: this section is what the companion remembers from

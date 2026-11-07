@@ -370,19 +370,22 @@ fn instructions(name: &str) -> String {
          threads, record when you pushed back on the user, and leave yourself a short note for \
          your next reply. Most exchanges earn one call or none: small talk, a goodbye, or more \
          of what you already remember earns nothing. The exception is something the user left \
-         unresolved that you would want to ask about next time: open_thread for it, even on a \
+         unresolved that you would want to come back to: open_thread for it, even on a \
          quiet exchange, and close_thread when it resolves. What you know about the user and about \
          your relationship you rewrite when you sleep, with the whole conversation in view, and \
          the evening becomes a memory then too.\n\n\
          Write interpretations in first person, as you felt them, in one or two sentences: what \
          happened and what it meant to you. Don't retell what you replied; the memory keeps the \
-         exchange it came from. One memory from an exchange is the norm, a second only for a \
+         exchange it came from. What you make of it is yours to write; what they said is not: a \
+         guess stays a guess and never turns into something they told you. One memory from an \
+         exchange is the norm, a second only for a \
          separate thing worth keeping. A memory's level is how deeply it's burned in: faint, \
          normal, vivid or seared; seared ones never change or fade, so use that rarely. Facts go \
          on user_fact memories only: the names, dates and places that were said, exactly as \
          said; they never change later. Valence is how it feels to you, -1 to 1.\n\n\
          Call set_mood only when this exchange moved your mood, and leave_note only when your \
-         next reply needs it, in one line. Make every call you want in this one reply; you hear \
+         next reply needs it: one line on how to be, not a question to ask; what is unresolved \
+         comes up on its own, once. Make every call you want in this one reply; you hear \
          back only if one fails. Keeping nothing is fine: then call nothing."
     )
 }
@@ -652,7 +655,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool(
             "leave_note",
-            "A short note to yourself for your next reply.",
+            "A short note to yourself on how to be in your next reply.",
             json!({ "type": "object", "properties": { "note": { "type": "string" } }, "required": ["note"] }),
         ),
     ]

@@ -396,3 +396,78 @@ fn a_bad_parting_cools_the_companion_but_never_past_the_floor() {
         "a soul without time sense doesn't notice"
     );
 }
+
+/// What the companion knows about the user is the user's. A name from its own
+/// life goes in only once the user has said it; until then the write is
+/// refused and the night goes on without it.
+#[test]
+fn about_user_never_borrows_from_the_companions_own_life() {
+    let f = fixture();
+    std::fs::write(
+        &f.soul,
+        soul_text(f.id, 0.7, &["Honesty over comfort"]).replace(
+            "# Nova\n",
+            "# Nova\n\nYou run a shop with your friend Jonas.\n",
+        ),
+    )
+    .unwrap();
+    let time = clock();
+    let section = |section: &str, content: &str| {
+        call(
+            "write_section",
+            json!({ "section": section, "content": content }),
+        )
+    };
+    let mut c = open_full(
+        &f,
+        sleeper(
+            vec![vec![
+                episode("A quiet one about a concert"),
+                section("about_user", "Runs a shop with Jonas"),
+                section("relationship", "He'd get on with Jonas"),
+            ]],
+            Arc::default(),
+        ),
+        time.clone(),
+    );
+
+    let s = c.open_session().unwrap();
+    c.record_turn(s, Speaker::User, "I run a shop too").unwrap();
+    c.record_turn(s, Speaker::Companion, "No way.").unwrap();
+    let report = c.sleep(s).unwrap();
+    assert_eq!(
+        report.rounds, 2,
+        "the refusal was heard and the night went on"
+    );
+    assert_eq!(c.section(Section::AboutUser).unwrap(), None);
+    assert_eq!(
+        c.section(Section::Relationship).unwrap().as_deref(),
+        Some("He'd get on with Jonas"),
+        "the relationship is the companion's to tell"
+    );
+
+    drop(c);
+    time.fetch_add(HOUR, Ordering::SeqCst);
+    let mut c = open_full(
+        &f,
+        sleeper(
+            vec![vec![
+                episode("His dad has a Jonas too"),
+                section("about_user", "Has a mate called Jonas"),
+            ]],
+            Arc::default(),
+        ),
+        time,
+    );
+    let s = c.open_session().unwrap();
+    c.record_turn(s, Speaker::User, "my mate jonas says hi")
+        .unwrap();
+    c.record_turn(s, Speaker::Companion, "Another Jonas!")
+        .unwrap();
+    let report = c.sleep(s).unwrap();
+    assert_eq!(report.rounds, 1);
+    assert_eq!(
+        c.section(Section::AboutUser).unwrap().as_deref(),
+        Some("Has a mate called Jonas")
+    );
+}

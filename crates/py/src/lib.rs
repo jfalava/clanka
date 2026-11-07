@@ -108,7 +108,7 @@ impl PyCompanion {
             let writer = open(for_writer)?;
             Ok(Self {
                 name: chat.soul().traits.name.clone(),
-                persona: chat.soul().body.trim().to_owned(),
+                persona: chat.soul().persona(),
                 chat: Arc::new(Mutex::new(chat)),
                 writer: Arc::new(Mutex::new(writer)),
                 pending: Mutex::new(None),

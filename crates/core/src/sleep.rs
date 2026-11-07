@@ -68,6 +68,26 @@ impl Companion {
         })
     }
 
+    /// A name from the soul's cast that the user has never said. Small models
+    /// comfort the user with the companion's own life ("you've got a friend you
+    /// run a shop with") and then write it down as the user's.
+    fn borrowed_from_cast(&self, content: &str) -> Result<Option<String>> {
+        for name in &self.soul.cast {
+            if !content.contains(name.as_str()) {
+                continue;
+            }
+            let said: i64 = self.conn.query_row(
+                "SELECT count(*) FROM turns WHERE role = 'user' AND instr(lower(content), lower(?1)) > 0",
+                [name],
+                |r| r.get(0),
+            )?;
+            if said == 0 {
+                return Ok(Some(name.clone()));
+            }
+        }
+        Ok(None)
+    }
+
     /// Raises each open thread one level once it has stayed open for enough
     /// sessions since it was written or last raised. Persistent souls escalate
     /// sooner. Escalation stops at vivid; nothing is seared automatically.
@@ -201,6 +221,14 @@ impl Companion {
             "write_section" => {
                 let a: WriteSection = args(call)?;
                 let section = parse(Section::parse, &a.section, "section")?;
+                if section == Section::AboutUser
+                    && let Some(name) = self.borrowed_from_cast(&a.content)?
+                {
+                    return Err(Error::Invalid(format!(
+                        "about_user names {name}, who is in your life, not the user's; keep the \
+                         section to what is true of them"
+                    )));
+                }
                 self.write_section(Actor::Sleep, section, &a.content)?;
                 Ok(format!("section {} updated", a.section))
             }

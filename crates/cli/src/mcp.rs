@@ -209,7 +209,7 @@ impl Server {
         description = "The companion's persona and how to use its memory tools."
     )]
     async fn persona(&self) -> Vec<PromptMessage> {
-        let persona = lock(&self.chat).soul().body.trim().to_owned();
+        let persona = lock(&self.chat).soul().persona();
         vec![PromptMessage::new_text(
             Role::User,
             format!("{persona}\n\n{INSTRUCTIONS}"),

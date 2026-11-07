@@ -102,7 +102,7 @@ impl Companion {
         if meta(&self.conn, "persona_hash")?.as_deref() != Some(self.soul.hash.as_str()) {
             return Err(Error::PersonaUnresolved);
         }
-        let persona = self.soul.body.trim().to_owned();
+        let persona = self.soul.persona();
         let mut left = Budget {
             total: budget,
             used: estimate_tokens(&persona) + estimate_tokens(message),
@@ -371,7 +371,7 @@ impl Context {
         if !self.hot_threads.is_empty() {
             let threads: Vec<String> = self.hot_threads.iter().map(render_memory).collect();
             out.push(format!(
-                "Unresolved, and it matters to you:\n{}",
+                "Unresolved, and it matters to you; one comes up when it fits, as a remark:\n{}",
                 threads.join("\n")
             ));
         }

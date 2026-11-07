@@ -323,7 +323,7 @@ fn main() -> Result<()> {
         Command::Soul {
             command: SoulCommand::Persona { soul },
         } => {
-            println!("{}", Soul::load(&soul)?.body.trim());
+            println!("{}", Soul::load(&soul)?.persona());
             Ok(())
         }
         Command::Soul {
@@ -939,7 +939,7 @@ impl LintReport {
                 warnings.push(format!("core value \"{value}\" may be too vague to defend"));
             }
         }
-        let chat_tokens = clanka_core::context::estimate_tokens(&soul.body);
+        let chat_tokens = clanka_core::context::estimate_tokens(&soul.persona());
         let memory_tokens = clanka_core::context::estimate_tokens(
             &clanka_core::writer::reflection_system_prompt(soul),
         );

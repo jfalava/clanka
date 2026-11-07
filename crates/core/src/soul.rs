@@ -15,11 +15,22 @@ use uuid::Uuid;
 pub const MAX_CORE_VALUES: usize = 5;
 pub const MIN_DOCTOR_TOKEN: usize = 16;
 
+/// Added to every persona at chat time. Every model tried, Opus included, ends
+/// most replies with a question and never brings up the people in its own
+/// soul unless told so here, so the soul doesn't have to say it.
+pub const TALK_HINT: &str = "You are talking, not interviewing: end most replies on what you \
+    think, one question at most. Your own life above is in the room: bring a piece of it in \
+    when it fits, in a line.";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Soul {
     pub traits: Traits,
     pub body: String,
     pub core_values: Vec<String>,
+    /// The people and things of the companion's own life: the proper names in
+    /// the body, in the order they appear. They belong in its stories, not in
+    /// what it knows about the user.
+    pub cast: Vec<String>,
     /// SHA-256 of the persona body without its outer whitespace, hex: who the
     /// companion is. Traits and the doctor token are settings, so editing them
     /// is not a persona change.
@@ -77,13 +88,21 @@ impl Soul {
             )));
         }
 
+        let cast = cast(&body, &traits.name);
         Ok(Soul {
             traits,
             hash: sha256_hex(body.trim()),
             body,
             core_values,
+            cast,
             legacy_hash: sha256_hex(text),
         })
+    }
+
+    /// The system prompt a chat model gets: the body and [`TALK_HINT`]. The
+    /// writer and sleep get the body alone; they are not talking.
+    pub fn persona(&self) -> String {
+        format!("{}\n\n{TALK_HINT}", self.body.trim())
     }
 
     /// Whether a message is the doctor token. Compared in constant time, so the
@@ -190,6 +209,37 @@ fn core_values(body: &str) -> Vec<String> {
         }
     }
     values
+}
+
+/// Proper names: capitalised words that don't start a sentence, a line, a
+/// quote or a list item. The companion's own name is left out.
+fn cast(body: &str, name: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for line in body.lines() {
+        let mut rest = line;
+        while let Some(start) = rest.find(|c: char| !c.is_whitespace()) {
+            let end = rest[start..]
+                .find(char::is_whitespace)
+                .map_or(rest.len(), |i| start + i);
+            let before = &line[..line.len() - rest.len() + start];
+            let word = rest[start..end].trim_end_matches(|c: char| !c.is_alphanumeric());
+            let word = word.strip_suffix("'s").unwrap_or(word);
+            rest = &rest[end..];
+            let mid_sentence = before
+                .trim_end()
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == ',');
+            let mut chars = word.chars();
+            let proper = chars.next().is_some_and(char::is_uppercase)
+                && chars.clone().any(char::is_lowercase)
+                && chars.all(char::is_alphabetic);
+            if mid_sentence && proper && word != name && !names.iter().any(|n| n == word) {
+                names.push(word.to_owned());
+            }
+        }
+    }
+    names
 }
 
 fn sha256_hex(text: &str) -> String {

@@ -307,3 +307,31 @@ fn comments_are_notes_to_the_writer_and_never_part_of_the_persona() {
         .to_string();
     assert!(err.contains("never closed"), "{err}");
 }
+
+#[test]
+fn the_cast_is_the_souls_own_people_and_the_persona_says_to_talk() {
+    let plain = soul_text(Uuid::now_v7(), 0.7, &["Honesty over comfort"]);
+    // Every capitalised word that is not a name: the companion itself, line
+    // and sentence starts, list items, quotes, "I'm", a possessive of a name.
+    let teo = plain.replace("name = \"Nova\"", "name = \"Teo\"").replace(
+        "# Nova\n",
+        "# Teo\n\nYou are Teo, twenty-nine, and you run a bike shop with your friend Jonas in a \
+         northern city. You live above it with Ojo, a one-eyed cat. Most evenings you talk with \
+         the user, never as an AI.\n\n## How you talk\n- One to three sentences. I'm not fussy: \
+         \"Play whatever. But if that's instant coffee we need to talk.\"\n- Jonas's jokes, and \
+         what Ojo knocked over today, are yours to bring up.\n",
+    );
+    let soul = Soul::parse(&teo).unwrap();
+    assert_eq!(soul.cast, ["Jonas", "Ojo"]);
+    assert!(Soul::parse(&plain).unwrap().cast.is_empty());
+
+    let persona = soul.persona();
+    assert!(
+        persona.starts_with(soul.body.trim()) && persona.ends_with(clanka_core::soul::TALK_HINT),
+        "{persona}"
+    );
+    assert!(
+        !soul.body.contains("interviewing"),
+        "the hint is added at chat time, not part of the persona's identity"
+    );
+}
