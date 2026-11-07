@@ -199,10 +199,14 @@ impl PyCompanion {
         })
     }
 
-    /// Ends the conversation and consolidates it. Slow.
+    /// Ends the conversation and consolidates it. Slow. Does nothing, and says
+    /// so, when nothing was said since the companion last slept, so a host may
+    /// call it at every conversation boundary.
     fn sleep(&self, py: Python<'_>) -> PyResult<String> {
         py.detach(|| {
-            let session = lock(&self.chat).open_session().map_err(err)?;
+            let Some(session) = lock(&self.chat).session_in_progress().map_err(err)? else {
+                return Ok("Already asleep: nothing was said since.".to_owned());
+            };
             let report = lock(&self.writer).sleep(session).map_err(err)?;
             Ok(format!(
                 "Asleep. The conversation is now a memory; {} memories shifted and {} unresolved \

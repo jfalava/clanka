@@ -107,6 +107,23 @@ impl Companion {
         Ok(id)
     }
 
+    /// The open session, if something was said in it: what sleep would end.
+    /// `None` when the companion is already asleep or nothing has happened yet,
+    /// so a host that sleeps at its own conversation boundaries never calls
+    /// the model over an empty night.
+    pub fn session_in_progress(&self) -> Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT s.id FROM sessions s WHERE s.ended_at IS NULL
+                 AND EXISTS (SELECT 1 FROM turns WHERE session_id = s.id)
+                 ORDER BY s.id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// Not gated by the freeze: the doctor ends sessions while writes are frozen.
     pub fn end_session(&mut self, session: i64, by: SessionEnd) -> Result<()> {
         let now = self.deps.clock.now_ms();

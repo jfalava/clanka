@@ -10,6 +10,10 @@ A general plugin on Hermes's public plugin API only:
   so the companion's memory is written by the same model it chats with.
 - Tools ``recall_memory`` and ``go_to_sleep``. Sleep waits until the reply is
   recorded, then consolidates the conversation.
+- ``on_session_reset`` (``/new``, ``/reset``, a session-reset policy plugin):
+  the companion sleeps on whatever was said since it last slept, so a
+  conversation the user walked away from still becomes a memory. Nothing
+  happens when nothing was said.
 
 The companion is the soul.md named by ``plugins.entries.clanka.settings.soul``
 in the profile's config.yaml (``$CLANKA_SOUL`` as a fallback). Put its persona in
@@ -113,6 +117,14 @@ class _Plugin:
             target=run, args=(self._after_turn, turns, sleep), name="clanka-reflect"
         ).start()
 
+    def on_session_reset(self, reason="", **_):
+        # Off the hook thread: Hermes gives a hook callback 30s, and sleep is
+        # a model call plus a pass over memory. The work lock keeps it after
+        # the reflection on the last exchange.
+        logger.info("clanka: session reset (%s): sleeping", reason or "unknown")
+        run = contextvars.copy_context().run
+        threading.Thread(target=run, args=(self._after_turn, None, True), name="clanka-sleep").start()
+
     def _after_turn(self, turns, sleep):
         with self._work_lock:
             c = self.companion()
@@ -153,6 +165,7 @@ def register(ctx):
     plugin = _Plugin(ctx)
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
+    ctx.register_hook("on_session_reset", plugin.on_session_reset)
     ctx.register_tool(
         name="recall_memory",
         toolset="clanka",

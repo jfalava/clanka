@@ -24,6 +24,14 @@ clanka=${CLANKA:-$root/target/release/clanka}
 
 [ -d "$home/profiles/$profile" ] || hermes profile create "$profile"
 h() { hermes -p "$profile" "$@"; }
+# A profile sees only its own plugins directory, so the plugin hermes/install.sh
+# put under $home/plugins is copied in, the extension renamed into place as
+# there (a running gateway keeps its mapped copy).
+plugin=$home/profiles/$profile/plugins/clanka
+mkdir -p "$plugin"
+cp "$home/plugins/clanka/plugin.yaml" "$home/plugins/clanka/__init__.py" "$plugin/"
+cp "$home/plugins/clanka/_clanka.abi3.so" "$plugin/.clanka.so.new"
+mv -f "$plugin/.clanka.so.new" "$plugin/_clanka.abi3.so"
 h plugins enable clanka
 h config set plugins.entries.clanka.settings.soul "$soul"
 for platform in cli telegram discord slack whatsapp whatsapp_cloud signal bluebubbles email \

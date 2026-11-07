@@ -83,6 +83,10 @@ pub struct Context {
     /// Session turns left out for lack of budget.
     pub omitted_turns: usize,
     pub fatigue: Fatigue,
+    /// Fatigue as it was for the previous exchange of this session, so a host
+    /// that replays its history ([`Companion::keep_new`]) shows each step
+    /// (tired, then sleepy) once instead of on every turn after it.
+    pub fatigue_before: Fatigue,
     /// At the pushback limit: the companion should let the next opinion clash go.
     pub let_go: bool,
     /// Estimated tokens of everything included, the current message and the
@@ -159,18 +163,14 @@ impl Companion {
         turns.reverse();
 
         let traits = &self.soul.traits;
-        let fill = if session_budget == 0 {
-            f64::INFINITY
-        } else {
-            session_tokens as f64 / session_budget as f64
-        };
-        let fatigue = if fill >= traits.sleep_at {
-            Fatigue::Sleepy
-        } else if fill >= traits.tired_at {
-            Fatigue::Tired((fill - traits.tired_at) / (traits.sleep_at - traits.tired_at))
-        } else {
-            Fatigue::Rested
-        };
+        let now = fatigue(traits, session_tokens, session_budget);
+        // The previous exchange saw the session up to your last message.
+        let last_user = session.iter().rposition(|t| t.speaker == Speaker::User);
+        let before: usize = session[..last_user.unwrap_or(0)]
+            .iter()
+            .map(|t| estimate_tokens(&t.content))
+            .sum();
+        let fatigue_before = fatigue(traits, before, session_budget);
 
         let (pushbacks, limit) = self.pushback_pressure()?;
         Ok(Context {
@@ -184,7 +184,8 @@ impl Companion {
             omitted_turns: session.len() - turns.len(),
             memories,
             turns,
-            fatigue,
+            fatigue: now,
+            fatigue_before,
             tokens: left.used,
         })
     }
@@ -233,6 +234,10 @@ impl Companion {
             .retain(|m| m.last_recalled_session != Some(session));
         ctx.memories
             .retain(|r| r.memory.last_recalled_session != Some(session));
+        // A step of tiredness is said once; the host's history keeps saying it.
+        if std::mem::discriminant(&ctx.fatigue) == std::mem::discriminant(&ctx.fatigue_before) {
+            ctx.fatigue = Fatigue::Rested;
+        }
         Ok(())
     }
 
@@ -318,6 +323,23 @@ impl Companion {
             })
         })?;
         Ok(turns.collect::<rusqlite::Result<_>>()?)
+    }
+}
+
+/// How tired `session_tokens` of conversation make the companion, out of the
+/// `session_budget` the fixed parts left it.
+fn fatigue(traits: &crate::soul::Traits, session_tokens: usize, session_budget: usize) -> Fatigue {
+    let fill = if session_budget == 0 {
+        f64::INFINITY
+    } else {
+        session_tokens as f64 / session_budget as f64
+    };
+    if fill >= traits.sleep_at {
+        Fatigue::Sleepy
+    } else if fill >= traits.tired_at {
+        Fatigue::Tired((fill - traits.tired_at) / (traits.sleep_at - traits.tired_at))
+    } else {
+        Fatigue::Rested
     }
 }
 

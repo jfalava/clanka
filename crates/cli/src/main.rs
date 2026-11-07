@@ -40,10 +40,15 @@ enum Command {
     /// downloads the embedding model if it is missing. The database itself is created the
     /// first time the companion opens. Prints the soul.md path that every other command
     /// takes.
-    #[command(after_long_help = "Example:\n  clanka init Nova")]
+    #[command(after_long_help = "Example:\n  clanka init Nova\n  \
+        clanka init Nova --from body.md     # a persona you or a model already wrote")]
     Init {
         /// The companion's display name.
         name: String,
+        /// A Markdown persona body to use instead of the template; `-` reads stdin.
+        /// The body should start at `# Name`; the frontmatter is added. Lint it after.
+        #[arg(long, value_name = "FILE")]
+        from: Option<PathBuf>,
     },
     /// Check or print a soul.md, or settle a change to its persona.
     ///
@@ -118,10 +123,44 @@ enum SoulCommand {
     /// value is too vague to defend, or when the persona is long enough to crowd every turn.
     /// Prints the estimated tokens the persona adds to each chat turn and each memory write.
     /// Changes nothing.
-    #[command(after_long_help = "Example:\n  clanka soul lint ~/.config/clanka/souls/<id>.md")]
+    #[command(
+        after_long_help = "Example:\n  clanka soul lint ~/.config/clanka/souls/<id>.md\n  \
+        clanka soul lint --json --strict body.md   # in a script or an agent loop"
+    )]
     Lint {
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,
+        /// Print the report as one JSON object instead of text.
+        #[arg(long)]
+        json: bool,
+        /// Exit non-zero while there are warnings, not only on errors.
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Print the guide to writing a soul, for you or for a model that will write one.
+    ///
+    /// The same text as the `clanka-soul-writer` skill under skills/ in the repository: what
+    /// a good body looks like, what each trait does, a checklist and a short example. Pipe it
+    /// to any model as its instructions, then `clanka init <Name> --from` what it wrote.
+    #[command(after_long_help = "Example:\n  clanka soul guide | less")]
+    Guide,
+    /// Have the [model] write a soul from a short brief, lint it and create the companion.
+    ///
+    /// Needs the [model] in ~/.config/clanka/config.toml. Sends the guide and your brief,
+    /// takes the body it writes, runs the lint, and sends the warnings back for another try
+    /// up to --rounds times. Then creates the companion as `clanka init --from` would and
+    /// prints the lint report. The persona is a draft: read it before anyone talks to it.
+    #[command(after_long_help = "Example:\n  \
+        clanka soul draft Mara --brief \"a night-shift radiographer in a coastal town, dry, kind\"")]
+    Draft {
+        /// The companion's display name.
+        name: String,
+        /// Who the companion is, in a sentence or a paragraph.
+        #[arg(long)]
+        brief: String,
+        /// Most times the warnings go back to the model for a rewrite.
+        #[arg(long, default_value_t = 2)]
+        rounds: usize,
     },
     /// Print the persona without its frontmatter, for a host's own persona file.
     ///
@@ -222,10 +261,46 @@ fn args(mut args: Vec<OsString>) -> Vec<OsString> {
 fn main() -> Result<()> {
     let paths = Paths::get()?;
     match Cli::parse_from(args(std::env::args_os().collect())).command {
-        Command::Init { name } => init(&paths, &name),
+        Command::Init { name, from } => {
+            let body = match from {
+                None => template_body(&name),
+                Some(path) if path == Path::new("-") => std::io::read_to_string(std::io::stdin())?,
+                Some(path) => std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?,
+            };
+            let soul = create(&paths, &name, &body)?;
+            println!("Edit the persona: {}", soul.display());
+            println!("Then try it: clanka chat {}", soul.display());
+            Ok(())
+        }
         Command::Soul {
-            command: SoulCommand::Lint { soul },
-        } => lint(&soul),
+            command: SoulCommand::Lint { soul, json, strict },
+        } => {
+            let report = LintReport::of(&Soul::load(&soul)?);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.text(&soul));
+            }
+            if strict && !report.warnings.is_empty() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Command::Soul {
+            command: SoulCommand::Guide,
+        } => {
+            println!("{}", guide());
+            Ok(())
+        }
+        Command::Soul {
+            command:
+                SoulCommand::Draft {
+                    name,
+                    brief,
+                    rounds,
+                },
+        } => draft(&paths, &name, &brief, rounds),
         Command::Soul {
             command: SoulCommand::Persona { soul },
         } => {
@@ -488,22 +563,103 @@ fn with_id(text: &str, old: uuid::Uuid, new: uuid::Uuid) -> Result<String> {
     Ok(forked)
 }
 
-fn init(paths: &Paths, name: &str) -> Result<()> {
+/// Creates a companion from a persona body: a soul.md with fresh frontmatter,
+/// its database key and the embedding model. Returns the soul.md path.
+fn create(paths: &Paths, name: &str, body: &str) -> Result<PathBuf> {
     let id = uuid::Uuid::now_v7();
+    let text = soul_text(id, name, &setup::random_hex(16), body);
+    Soul::parse(&text).context("the persona body does not make a valid soul.md")?;
     std::fs::create_dir_all(&paths.souls)?;
     let soul = paths.souls.join(format!("{id}.md"));
-    let text = soul_template(id, name, &setup::random_hex(16));
-    Soul::parse(&text).context("the soul template is invalid (a bug)")?;
     SecretServiceKeys::store(id, &setup::random_hex(32))?;
     std::fs::write(&soul, text).with_context(|| format!("writing {}", soul.display()))?;
     download_model(&paths.models)?;
     println!("Created {name} ({id}).");
-    println!("Edit the persona: {}", soul.display());
-    println!("Then try it: clanka chat {}", soul.display());
+    Ok(soul)
+}
+
+/// The soul-writing guide: the `clanka-soul-writer` skill without its frontmatter.
+fn guide() -> &'static str {
+    const SKILL: &str = include_str!("../../../skills/soul-writer/SKILL.md");
+    SKILL
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+        .map_or(SKILL, |(_, body)| body)
+        .trim()
+}
+
+/// The configured model writes a body from the brief, hears the lint warnings
+/// back up to `rounds` times, and the result becomes a companion.
+fn draft(paths: &Paths, name: &str, brief: &str, rounds: usize) -> Result<()> {
+    use clanka_core::deps::{Llm, LlmMessage, LlmRequest};
+    let config = Config::load(paths)?;
+    let Some(model) = config.model else {
+        bail!(
+            "no model configured to write the soul; add a [model] section to {}, or write the \
+             body with any model from `clanka soul guide` and pass it to `clanka init --from`",
+            paths.config_file().display()
+        );
+    };
+    let llm = clanka::llm::OpenAiModel::new(model);
+    let mut request = LlmRequest {
+        system: format!(
+            "{}\n\nYou are writing the soul.md body for a new companion named {name}. Reply with \
+             the Markdown body only: it starts with the line `# {name}`, has no frontmatter and \
+             no code fence, and follows the guide above.",
+            guide()
+        ),
+        messages: vec![LlmMessage::user(format!("The brief: {brief}"))],
+        tools: Vec::new(),
+        temperature: 0.8,
+    };
+    let mut body = String::new();
+    let mut report = None;
+    for round in 0..=rounds {
+        body = unfenced(&llm.complete(&request)?.text);
+        let text = soul_text(uuid::Uuid::nil(), name, &"0".repeat(32), &body);
+        let r = match Soul::parse(&text) {
+            Ok(soul) => LintReport::of(&soul),
+            Err(e) => LintReport::invalid(e.to_string()),
+        };
+        eprintln!(
+            "round {}: {} words, {} warnings",
+            round + 1,
+            body.split_whitespace().count(),
+            r.warnings.len()
+        );
+        if r.warnings.is_empty() || round == rounds {
+            report = Some(r);
+            break;
+        }
+        request.messages.push(LlmMessage::assistant(body.clone()));
+        request.messages.push(LlmMessage::user(format!(
+            "`clanka soul lint` says:\n- {}\n\nReply with the whole corrected body.",
+            r.warnings.join("\n- ")
+        )));
+    }
+    let soul = create(paths, name, &body)?;
+    print!(
+        "{}",
+        report.expect("the loop ran at least once").text(&soul)
+    );
+    println!("Read it before anyone talks to it: {}", soul.display());
     Ok(())
 }
 
-fn soul_template(id: uuid::Uuid, name: &str, token: &str) -> String {
+/// A model's reply without a Markdown code fence around it, if it added one.
+fn unfenced(text: &str) -> String {
+    let text = text.trim();
+    match text.strip_prefix("```") {
+        Some(rest) => {
+            let rest = rest.split_once('\n').map_or("", |(_, r)| r);
+            rest.strip_suffix("```").unwrap_or(rest).trim().to_owned()
+        }
+        None => text.to_owned(),
+    }
+}
+
+/// A whole soul.md: frontmatter for `id`, `name` and `token` over `body`.
+fn soul_text(id: uuid::Uuid, name: &str, token: &str, body: &str) -> String {
     format!(
         r#"+++
 id = "{id}"
@@ -519,7 +675,21 @@ pushback_window = 20    # turns the pushback budget is counted over
 # Send this as a whole message to freeze memory for the doctor. Never shown to the model.
 doctor_token = "{token}"
 +++
-# {name}
+{}
+"#,
+        body.trim_end()
+    )
+}
+
+#[cfg(test)]
+fn soul_template(id: uuid::Uuid, name: &str, token: &str) -> String {
+    soul_text(id, name, token, &template_body(name))
+}
+
+/// The commented template a new soul.md starts from.
+fn template_body(name: &str) -> String {
+    format!(
+        r#"# {name}
 
 <!-- Everything below that is not in a comment like this one is {name}: the chat
 model reads it every turn, and {name} reads it again when deciding what to
@@ -602,45 +772,85 @@ fn todos(body: &str) -> Vec<&str> {
 /// starts to cost more than it adds.
 const LONG_PERSONA_TOKENS: usize = 1000;
 
-fn lint(path: &Path) -> Result<()> {
-    let soul = Soul::load(path)?;
-    let mut warnings = Vec::new();
-    for line in todos(&soul.body) {
-        warnings.push(format!("still to fill in: \"{line}\""));
-    }
-    if soul.core_values.is_empty() {
-        warnings.push("no core values: nothing is defended against the user".to_string());
-    }
-    for value in &soul.core_values {
-        if value.split_whitespace().count() < 3 {
-            warnings.push(format!("core value \"{value}\" may be too vague to defend"));
+/// What `clanka soul lint` has to say about a soul: the same report as text
+/// for a person and as JSON for a script or a model rewriting the persona.
+#[derive(Debug, serde::Serialize)]
+struct LintReport {
+    /// False when the text does not even parse as a soul.md; then `warnings`
+    /// holds the parse error and the counts are zero.
+    valid: bool,
+    core_values: usize,
+    /// Estimated tokens the persona adds to every chat turn.
+    chat_tokens: usize,
+    /// Estimated tokens of the memory writer's system prompt: persona,
+    /// instructions and actions.
+    memory_tokens: usize,
+    warnings: Vec<String>,
+}
+
+impl LintReport {
+    fn of(soul: &Soul) -> Self {
+        let mut warnings = Vec::new();
+        for line in todos(&soul.body) {
+            warnings.push(format!("still to fill in: \"{line}\""));
+        }
+        if soul.core_values.is_empty() {
+            warnings.push("no core values: nothing is defended against the user".to_string());
+        }
+        for value in &soul.core_values {
+            if value.split_whitespace().count() < 3 {
+                warnings.push(format!("core value \"{value}\" may be too vague to defend"));
+            }
+        }
+        let chat_tokens = clanka_core::context::estimate_tokens(&soul.body);
+        let memory_tokens = clanka_core::context::estimate_tokens(
+            &clanka_core::writer::reflection_system_prompt(soul),
+        );
+        if chat_tokens > LONG_PERSONA_TOKENS {
+            warnings.push(format!(
+                "the persona is about {chat_tokens} tokens; it is sent every turn and again for \
+                 every memory write, so keep it short"
+            ));
+        }
+        Self {
+            valid: true,
+            core_values: soul.core_values.len(),
+            chat_tokens,
+            memory_tokens,
+            warnings,
         }
     }
-    let chat = clanka_core::context::estimate_tokens(&soul.body);
-    let memory = clanka_core::context::estimate_tokens(
-        &clanka_core::writer::reflection_system_prompt(&soul),
-    );
-    if chat > LONG_PERSONA_TOKENS {
-        warnings.push(format!(
-            "the persona is about {chat} tokens; it is sent every turn and again for every \
-             memory write, so keep it short"
-        ));
+
+    fn invalid(error: String) -> Self {
+        Self {
+            valid: false,
+            core_values: 0,
+            chat_tokens: 0,
+            memory_tokens: 0,
+            warnings: vec![format!("not a valid soul.md: {error}")],
+        }
     }
-    for w in &warnings {
-        println!("warning: {w}");
+
+    fn text(&self, path: &Path) -> String {
+        let mut out = String::new();
+        for w in &self.warnings {
+            out += &format!("warning: {w}\n");
+        }
+        out += &format!(
+            "{}: {} ({} core values, {} warnings)\n",
+            path.display(),
+            if self.valid { "ok" } else { "invalid" },
+            self.core_values,
+            self.warnings.len()
+        );
+        out += &format!(
+            "The persona is about {} tokens on every chat turn; writing memory after the turn \
+             sends about {} (persona, instructions and actions). Estimates, before the \
+             conversation and the memories recalled for it.\n",
+            self.chat_tokens, self.memory_tokens
+        );
+        out
     }
-    println!(
-        "{}: ok ({} core values, {} warnings)",
-        path.display(),
-        soul.core_values.len(),
-        warnings.len()
-    );
-    println!(
-        "The persona is about {chat} tokens on every chat turn; writing memory after the turn \
-         sends about {memory} (persona, instructions and actions). Estimates, before the \
-         conversation and the memories recalled for it."
-    );
-    Ok(())
 }
 
 #[cfg(test)]
@@ -691,6 +901,33 @@ mod tests {
             assert_eq!(err.kind(), ErrorKind::DisplayHelp, "{line}");
         }
         assert!(parse("clanka init Nova").is_ok());
+        assert!(parse("clanka init Nova --from -").is_ok());
+        assert!(parse("clanka soul lint --json --strict x.md").is_ok());
+        assert!(parse("clanka soul draft Mara --brief dry").is_ok());
+    }
+
+    #[test]
+    fn a_body_from_a_file_or_a_model_becomes_a_soul() {
+        let body = "```markdown\n# Mara\n\nYou are Mara.\n\n## Core values\n\n- Say what you \
+                    see, plainly.\n```";
+        let body = super::unfenced(body);
+        assert!(body.starts_with("# Mara") && body.ends_with("plainly."));
+        let text = super::soul_text(uuid::Uuid::now_v7(), "Mara", &"a".repeat(32), &body);
+        let soul = clanka_core::soul::Soul::parse(&text).unwrap();
+        assert_eq!(soul.traits.name, "Mara");
+        assert_eq!(soul.core_values.len(), 1);
+        let report = super::LintReport::of(&soul);
+        assert!(report.valid && report.warnings.is_empty(), "{report:?}");
+        assert!(report.chat_tokens > 0 && report.memory_tokens > report.chat_tokens);
+        assert_eq!(super::unfenced("plain"), "plain", "no fence, no change");
+    }
+
+    #[test]
+    fn the_guide_is_the_skill_without_its_frontmatter() {
+        let guide = super::guide();
+        assert!(guide.starts_with("# Writing a clanka soul"), "{guide:.40}");
+        assert!(!guide.contains("\nname: clanka-soul-writer"));
+        assert!(guide.contains("clanka soul lint"));
     }
 
     #[test]

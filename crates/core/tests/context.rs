@@ -174,6 +174,48 @@ fn the_companion_tires_as_the_session_fills_its_share() {
 }
 
 #[test]
+fn a_replaying_host_hears_each_step_of_tiredness_once() {
+    let f = fixture(); // tired_at = 0.7, sleep_at = 0.9
+    let mut c = open(&f, "k").unwrap();
+    let (mut turns, _) = furnished(&mut c);
+    // One more short exchange: the session the last reply saw (`before`) is
+    // then most of the session but not all, so a budget can sit the two on
+    // different sides of a step, or the same side.
+    let s = c.session_in_progress().unwrap().unwrap();
+    for (speaker, text) in [
+        (Speaker::User, "ok, and then what did she say?"),
+        (Speaker::Companion, "Nothing. That was the point."),
+    ] {
+        c.record_turn(s, speaker, text).unwrap();
+        turns.push(text.into());
+    }
+    let session = turns.iter().map(|t| estimate_tokens(t)).sum::<usize>() as f64;
+    let before = turns[..turns.len() - 2]
+        .iter()
+        .map(|t| estimate_tokens(t))
+        .sum::<usize>() as f64;
+    let fixed = assemble(&c, 100_000).tokens - session as usize;
+    let kept = |session_budget: f64| {
+        let mut ctx = assemble(&c, fixed + session_budget.round() as usize);
+        let now = ctx.fatigue;
+        c.keep_new(&mut ctx).unwrap();
+        (now, ctx.fatigue)
+    };
+
+    // Tiredness began with this exchange: the hint is new, so it stays.
+    let (now, after) = kept((before / 0.7 + session / 0.7) / 2.0);
+    assert!(matches!(now, Fatigue::Tired(_)), "{now:?}");
+    assert_eq!(after, now);
+    // Already tired before this exchange: the host's history still says so.
+    let (now, after) = kept((before / 0.7 + session / 0.9) / 2.0);
+    assert!(matches!(now, Fatigue::Tired(_)), "{now:?}");
+    assert_eq!(after, Fatigue::Rested);
+    // Tired then, sleepy now: a new step, said once more.
+    let (now, after) = kept((before / 0.9 + session / 0.9) / 2.0);
+    assert_eq!((now, after), (Fatigue::Sleepy, Fatigue::Sleepy));
+}
+
+#[test]
 fn a_changed_persona_blocks_assembly() {
     let f = fixture();
     open(&f, "k").unwrap();

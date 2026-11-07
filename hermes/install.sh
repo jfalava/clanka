@@ -1,7 +1,10 @@
 #!/bin/sh
 # Builds the clanka extension for Hermes's Python and installs the plugin into
 # $HERMES_HOME/plugins/clanka (default ~/.hermes), along with the clanka CLI
-# that hermes/profile.sh uses to set up a companion's profile.
+# that hermes/profile.sh uses to set up a companion's profile, and the
+# soul-writer skill into ~/.agents/skills so any agent on this machine
+# (Hermes, Amp, Claude Code…) can write a soul the same way `clanka soul
+# guide` describes.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 home=${HERMES_HOME:-$HOME/.hermes}
@@ -15,6 +18,9 @@ cp "$root/hermes/clanka/plugin.yaml" "$root/hermes/clanka/__init__.py" "$dest/"
 # A new file renamed over the old one leaves the running copy intact.
 cp "$root/target/release/lib_clanka.so" "$dest/.clanka.so.new"
 mv -f "$dest/.clanka.so.new" "$dest/_clanka.abi3.so"
-echo "Installed to $dest"
+skills=${AGENT_SKILLS_HOME:-$HOME/.agents/skills}/clanka-soul-writer
+mkdir -p "$skills"
+cp "$root/skills/soul-writer/SKILL.md" "$skills/SKILL.md"
+echo "Installed to $dest; the soul-writer skill to $skills"
 echo "Set up a companion's profile: $root/hermes/profile.sh <profile> <soul.md>"
 echo "A gateway that already loaded clanka keeps running the old native code until it restarts."
