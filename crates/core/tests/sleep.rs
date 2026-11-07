@@ -298,7 +298,7 @@ fn close(a: f64, b: f64) -> bool {
 }
 
 #[test]
-fn time_away_warms_or_cools_her_and_fades_as_you_talk() {
+fn time_away_warms_or_cools_the_companion_and_fades_as_you_talk() {
     let f = fixture(); // time_sense = true
     let time = clock();
     let mut c = parting(&f, &time, 0.5, 0.2);
@@ -326,7 +326,7 @@ fn time_away_warms_or_cools_her_and_fades_as_you_talk() {
 }
 
 #[test]
-fn a_bad_parting_cools_her_but_never_past_the_floor() {
+fn a_bad_parting_cools_the_companion_but_never_past_the_floor() {
     let f = fixture();
     let time = clock();
     let c = parting(&f, &time, -0.5, -0.2);

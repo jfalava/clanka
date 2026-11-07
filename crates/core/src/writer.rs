@@ -7,6 +7,7 @@
 //! back to the model, so it can correct itself (supersede a near-duplicate,
 //! for example) in the next round.
 
+use crate::actions;
 use crate::companion::ensure_writable;
 use crate::deps::{LlmMessage, LlmRequest, Role, ToolCall, ToolSpec};
 use crate::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
@@ -17,6 +18,9 @@ use serde_json::{Map, Value, json};
 
 /// Model calls per reflection. A model that keeps calling tools is cut off here.
 pub const MAX_ROUNDS: usize = 4;
+
+/// The [`ToolOutcome::name`] recorded for a JSON reply that was refused whole.
+pub const INVALID_REPLY: &str = "(invalid reply)";
 
 /// The writer is a careful bookkeeper, not a performer.
 const TEMPERATURE: f32 = 0.2;
@@ -66,6 +70,13 @@ impl Companion {
         tools: Vec<ToolSpec>,
         mut run: impl FnMut(&mut Self, &ToolCall) -> Result<String>,
     ) -> Result<Reflection> {
+        // A text-only model gets the tools in the system prompt and answers in JSON.
+        let json = !self.deps.llm.tool_calls();
+        let system = if json {
+            format!("{system}\n\n{}", actions::protocol(&tools))
+        } else {
+            system
+        };
         let mut messages = vec![LlmMessage::user(prompt)];
         let mut calls = Vec::new();
         let mut rounds = 0;
@@ -74,20 +85,45 @@ impl Companion {
             let request = LlmRequest {
                 system: system.clone(),
                 messages: messages.clone(),
-                tools: tools.clone(),
+                tools: if json { Vec::new() } else { tools.clone() },
                 temperature: TEMPERATURE,
             };
             let response = self.deps.llm.complete(&request)?;
-            if response.tool_calls.is_empty() {
+            let round_calls = if json {
+                match actions::parse(&response.text, &tools) {
+                    Ok(found) => found,
+                    // Nothing runs; the model is told why and may answer again.
+                    Err(why) => {
+                        messages.push(LlmMessage::assistant(response.text));
+                        messages.push(LlmMessage::user(format!(
+                            "Nothing was done: {why}. Reply again with only the JSON object."
+                        )));
+                        calls.push(ToolOutcome {
+                            name: INVALID_REPLY.into(),
+                            ok: false,
+                            result: format!("error: {why}"),
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                response.tool_calls.clone()
+            };
+            if round_calls.is_empty() {
                 break;
             }
             messages.push(LlmMessage {
                 role: Role::Assistant,
                 content: response.text,
-                tool_calls: response.tool_calls.clone(),
+                tool_calls: if json {
+                    Vec::new()
+                } else {
+                    round_calls.clone()
+                },
                 tool_call_id: None,
             });
-            for call in &response.tool_calls {
+            let mut results = Vec::new();
+            for call in &round_calls {
                 let outcome = match run(self, call) {
                     Ok(done) => ToolOutcome {
                         name: call.name.clone(),
@@ -102,13 +138,23 @@ impl Companion {
                         result: format!("error: {e}"),
                     },
                 };
-                messages.push(LlmMessage {
-                    role: Role::Tool,
-                    content: outcome.result.clone(),
-                    tool_calls: Vec::new(),
-                    tool_call_id: Some(call.id.clone()),
-                });
+                if json {
+                    results.push(format!("- {}: {}", call.name, outcome.result));
+                } else {
+                    messages.push(LlmMessage {
+                        role: Role::Tool,
+                        content: outcome.result.clone(),
+                        tool_calls: Vec::new(),
+                        tool_call_id: Some(call.id.clone()),
+                    });
+                }
                 calls.push(outcome);
+            }
+            if json {
+                messages.push(LlmMessage::user(format!(
+                    "Results:\n{}\nReply with more actions, or {{\"actions\": []}} if you are done.",
+                    results.join("\n")
+                )));
             }
         }
         Ok(Reflection { rounds, calls })

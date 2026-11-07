@@ -420,7 +420,7 @@ fn update_persona_reinterprets_under_the_new_soul_and_unfreezes() {
 }
 
 #[test]
-fn a_fork_archives_her_and_starts_anew_without_deleting() {
+fn a_fork_archives_the_companion_and_starts_anew_without_deleting() {
     let f = fixture();
     let mut c = open(&f, "k").unwrap();
     c.write(

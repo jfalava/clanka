@@ -152,7 +152,7 @@ fn shrinking_the_budget_drops_the_least_important_first() {
 }
 
 #[test]
-fn she_tires_as_the_session_fills_its_share() {
+fn the_companion_tires_as_the_session_fills_its_share() {
     let f = fixture(); // tired_at = 0.7, sleep_at = 0.9
     let mut c = open(&f, "k").unwrap();
     let (turns, _) = furnished(&mut c);
@@ -186,7 +186,7 @@ fn a_changed_persona_blocks_assembly() {
 }
 
 #[test]
-fn she_lets_go_at_her_pushback_limit_but_never_on_core_values() {
+fn the_companion_lets_go_at_its_pushback_limit_but_never_on_core_values() {
     let f = fixture(); // contrariness 0.6, pushback_window 20: 3 per 20 turns
     let mut c = open(&f, "k").unwrap();
     let s = c.open_session().unwrap();

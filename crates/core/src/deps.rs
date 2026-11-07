@@ -22,6 +22,14 @@ pub struct Deps {
 /// Blocking: an async front end wraps the core, not the other way round.
 pub trait Llm: Send + Sync {
     fn complete(&self, request: &LlmRequest) -> Result<LlmResponse>;
+
+    /// Whether the model takes `tools` and answers with `tool_calls`. A host
+    /// whose model API only returns text says no; the core then asks for the
+    /// same calls as one JSON object of actions and runs them through the same
+    /// guarded handlers (see `actions`).
+    fn tool_calls(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,8 +52,16 @@ pub struct LlmMessage {
 
 impl LlmMessage {
     pub fn user(content: impl Into<String>) -> Self {
+        Self::text(Role::User, content)
+    }
+
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self::text(Role::Assistant, content)
+    }
+
+    fn text(role: Role, content: impl Into<String>) -> Self {
         Self {
-            role: Role::User,
+            role,
             content: content.into(),
             tool_calls: Vec::new(),
             tool_call_id: None,

@@ -4,7 +4,7 @@ use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
 use clanka_core::model::{Actor, Level, MemoryType, Section, Speaker, Status};
 use clanka_core::writer::MAX_ROUNDS;
 use clanka_core::{Companion, Error, MemoryDraft, Ranking};
-use common::{count, fixture, open, open_with_llm, raw};
+use common::{count, fixture, open, open_text_only, open_with_llm, raw};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -145,7 +145,7 @@ fn one_reflection_reaches_every_kind_of_state() {
 }
 
 #[test]
-fn a_failed_call_goes_back_so_she_can_correct_it() {
+fn a_failed_call_goes_back_so_the_model_can_correct_it() {
     let f = fixture();
     let mut c = open(&f, "k").unwrap();
     let existing = c
@@ -261,7 +261,7 @@ fn there_is_no_way_around_the_guardrails() {
 }
 
 #[test]
-fn malformed_arguments_are_an_error_she_sees() {
+fn malformed_arguments_are_an_error_the_model_sees() {
     let f = fixture();
     let mut c = open_with_llm(&f, |r: &LlmRequest| {
         let call = ToolCall {
@@ -309,7 +309,7 @@ fn a_model_that_never_stops_is_cut_off() {
 }
 
 #[test]
-fn a_freeze_stops_her_before_and_during_reflection() {
+fn a_freeze_stops_the_writer_before_and_during_reflection() {
     let f = fixture();
     let mut c = open(&f, "k").unwrap(); // its model panics if called
     let (said, replied) = exchange(&mut c, "Hi", "Hey");
@@ -357,4 +357,104 @@ fn a_freeze_stops_her_before_and_during_reflection() {
         ),
         0
     );
+}
+
+/// A text-only model's replies, one per round, as raw text.
+fn text_script(replies: Vec<String>) -> (impl FnMut(&LlmRequest) -> LlmResponse + Send, Requests) {
+    let requests: Requests = Arc::default();
+    let seen = requests.clone();
+    let model = move |request: &LlmRequest| {
+        let mut seen = seen.lock().unwrap();
+        seen.push(request.clone());
+        LlmResponse {
+            text: replies.get(seen.len() - 1).cloned().unwrap_or_default(),
+            tool_calls: Vec::new(),
+        }
+    };
+    (model, requests)
+}
+
+#[test]
+fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
+    let f = fixture();
+    let mut c = open_text_only(&f, |_| LlmResponse::default());
+    let seared = c
+        .write(
+            Actor::Writer,
+            &MemoryDraft::new(
+                MemoryType::Episode,
+                Level::Seared,
+                "The night with Sam's dad",
+            ),
+        )
+        .unwrap();
+    drop(c);
+
+    let remember = json!({ "tool": "remember", "arguments": { "type": "user_fact",
+        "level": "normal", "interpretation": "Sam's sister Laura moved to Lisbon",
+        "facts": { "sister": "Laura" } } });
+    let lower_seared = json!({ "tool": "raise_level",
+        "arguments": { "memory_id": seared, "level": "faint" } });
+    let replies = vec![
+        // Prose, then a valid action next to one for a tool that isn't offered: nothing runs.
+        "Sure, I'll remember Laura.".to_string(),
+        json!({ "actions": [remember, { "tool": "delete_memory", "arguments": { "memory_id": seared } }] })
+            .to_string(),
+        // Valid shape: each action goes through the guarded handlers on its own.
+        format!("```json\n{}\n```", json!({ "actions": [remember, lower_seared] })),
+        r#"{"actions": []}"#.to_string(),
+    ];
+    let (model, requests) = text_script(replies);
+    let mut c = open_text_only(&f, model);
+    let (said, replied) = exchange(&mut c, "Laura moved to Lisbon.", "Lisbon suits her.");
+
+    let reflection = c.reflect(said, replied).unwrap();
+    let outcomes: Vec<(&str, bool)> = reflection
+        .calls
+        .iter()
+        .map(|o| (o.name.as_str(), o.ok))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            (clanka_core::writer::INVALID_REPLY, false),
+            (clanka_core::writer::INVALID_REPLY, false),
+            ("remember", true),
+            ("raise_level", false),
+        ]
+    );
+    assert_eq!(reflection.rounds, 4);
+    assert!(reflection.calls[1].result.contains("delete_memory"));
+
+    // The tools went into the system prompt, never as native tools.
+    let requests = requests.lock().unwrap();
+    assert!(requests.iter().all(|r| r.tools.is_empty()));
+    assert!(requests[0].system.contains("- remember:"));
+    assert!(
+        requests[1]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .starts_with("Nothing was done")
+    );
+    assert!(
+        requests[3]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("- raise_level: error:")
+    );
+
+    // Exactly one memory came of it, and the seared one is untouched.
+    let db = raw(c.db_path(), "k");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM memories WHERE type = 'user_fact'"
+        ),
+        1
+    );
+    assert_eq!(c.memory(seared).unwrap().level, Level::Seared);
 }

@@ -79,6 +79,27 @@ impl Llm for FnLlm {
     }
 }
 
+/// A model like [`FnLlm`] that only returns text, as a host's plugin model API
+/// with no function calling does, so the core asks it for JSON actions.
+pub struct TextOnlyLlm(FnLlm);
+impl Llm for TextOnlyLlm {
+    fn complete(&self, request: &LlmRequest) -> Result<LlmResponse> {
+        self.0.complete(request)
+    }
+    fn tool_calls(&self) -> bool {
+        false
+    }
+}
+
+pub fn open_text_only(
+    f: &Fixture,
+    llm: impl FnMut(&LlmRequest) -> LlmResponse + Send + 'static,
+) -> Companion {
+    let mut deps = deps("k", "model-a");
+    deps.llm = Box::new(TextOnlyLlm(FnLlm(Mutex::new(Box::new(llm)))));
+    Companion::open(f.dir.path(), &f.soul, deps).unwrap()
+}
+
 pub fn open_with_llm(
     f: &Fixture,
     llm: impl FnMut(&LlmRequest) -> LlmResponse + Send + 'static,
