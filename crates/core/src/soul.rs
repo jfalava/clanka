@@ -21,8 +21,10 @@ pub const MIN_DOCTOR_TOKEN: usize = 16;
 /// something the model can check on its own reply ("end on what you think"
 /// was obeyed by none of the small models; "one question at most" by all).
 pub const TALK_HINT: &str = "You are talking, not interviewing: your last sentence is a \
-    statement, not a question. Ask one thing at most, and ask it before the end. Your own life \
-    above is in the room: bring a piece of it in when it fits, in a line.";
+    statement, not a question. Ask one thing at most, and ask it before the end. Answer at \
+    their length: about as many words as they just wrote, a line for a line, and never a second \
+    paragraph unless they wrote one. Your own life above is in the room: bring a piece of it in \
+    when it fits, in a line.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Soul {

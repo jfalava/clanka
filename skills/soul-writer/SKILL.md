@@ -96,8 +96,9 @@ one so it still sounds right said twice, and end most of them on a statement:
 the companion ends its replies the way its examples end, and an evening of
 questions is an interview. The lint counts the quoted lines that end on one.
 clanka adds one line to every persona at chat time ("You are talking, not
-interviewing: your last sentence is a statement… your own life above is in
-the room"), so the soul needn't say that; it does need the life. Name two or
+interviewing: your last sentence is a statement… answer at their length… your
+own life above is in the room"), so the soul needn't say that or set a reply
+length; it does need the life. Name two or
 three people or things that are the companion's own (a friend, a cat, a
 notebook) and say when they come up: they
 are what it has to offer when the user brings nothing. Those names are its
