@@ -1,23 +1,23 @@
-//! The writer model: any OpenAI-compatible `/chat/completions` endpoint with
-//! tool calls. The chat model the user talks to is the host's business; this
-//! is only the model the companion reflects and sleeps with.
+//! The companion's model over any OpenAI-compatible `/chat/completions`
+//! endpoint with tool calls. The same client serves conversation (`clanka
+//! chat`) and memory writing (the writer, sleep and the doctor).
 
-use crate::setup::WriterConfig;
+use crate::setup::ModelConfig;
 use clanka_core::deps::{Llm, LlmRequest, LlmResponse, Role, ToolCall};
 use clanka_core::{Error, Result};
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// Most a reflection's replies run to; tool arguments are short.
+/// Most one reply or reflection round runs to.
 const MAX_TOKENS: u32 = 2048;
 
-pub struct OpenAiWriter {
-    config: WriterConfig,
+pub struct OpenAiModel {
+    config: ModelConfig,
     agent: ureq::Agent,
 }
 
-impl OpenAiWriter {
-    pub fn new(config: WriterConfig) -> Self {
+impl OpenAiModel {
+    pub fn new(config: ModelConfig) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(180)))
             .http_status_as_error(false)
@@ -27,11 +27,11 @@ impl OpenAiWriter {
     }
 }
 
-impl Llm for OpenAiWriter {
+impl Llm for OpenAiModel {
     fn complete(&self, request: &LlmRequest) -> Result<LlmResponse> {
         let key = std::env::var(&self.config.api_key_env).map_err(|_| {
             Error::Llm(format!(
-                "the writer's API key isn't set: export {}",
+                "the companion model's API key isn't set: export {}",
                 self.config.api_key_env
             ))
         })?;
@@ -150,13 +150,14 @@ fn parse(text: &str) -> Result<LlmResponse> {
     })
 }
 
-/// Stands in when no writer is configured, so the error says how to fix it.
-pub struct NoWriter;
+/// Stands in when no companion model is configured, so the error says how to fix it.
+pub struct NoModel;
 
-impl Llm for NoWriter {
+impl Llm for NoModel {
     fn complete(&self, _: &LlmRequest) -> Result<LlmResponse> {
         Err(Error::Llm(
-            "no writer model configured; add a [writer] section to ~/.config/clanka/config.toml"
+            "no companion model configured; add a [model] section to \
+             ~/.config/clanka/config.toml naming the model the companion chats with"
                 .into(),
         ))
     }

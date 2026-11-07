@@ -1,5 +1,6 @@
 //! `clanka`: set up companions, check their souls and serve them over MCP.
 
+mod chat;
 mod llm;
 mod mcp;
 mod setup;
@@ -33,7 +34,15 @@ enum Command {
         #[command(subcommand)]
         command: SoulCommand,
     },
-    /// Serve a companion to an MCP host over stdio.
+    /// Talk with a companion in the terminal, on its [model].
+    Chat {
+        /// The companion's soul.md.
+        soul: PathBuf,
+        /// Estimated tokens the memory context may use per turn.
+        #[arg(long, default_value_t = 6000)]
+        budget: usize,
+    },
+    /// Serve a companion to an MCP host over stdio, for trying it out.
     Mcp {
         /// The companion's soul.md.
         soul: PathBuf,
@@ -56,23 +65,59 @@ fn main() -> Result<()> {
         Command::Soul {
             command: SoulCommand::Lint { soul },
         } => lint(&soul),
-        Command::Mcp { soul, budget } => {
+        Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
-            let embedder = SharedEmbedder::load(&paths)?;
-            let chat = setup::open(&paths, &soul, embedder.clone(), config.writer.as_ref())?;
-            if let clanka_core::PersonaStatus::Changed { .. } = chat.persona_status() {
+            if config.model.is_none() {
                 bail!(
-                    "{} changed since its memories were written; choose continue, update or fork first",
-                    soul.display()
+                    "no companion model configured; add a [model] section to {}",
+                    paths.config_file().display()
                 );
             }
-            let writer = match &config.writer {
-                Some(w) => Some(setup::open(&paths, &soul, embedder, Some(w))?),
-                None => None,
-            };
+            let (chat, writer) = open_pair(&paths, &soul, &config)?;
+            chat::run(chat, writer.expect("a model is configured"), budget)
+        }
+        Command::Mcp { soul, budget } => {
+            let config = Config::load(&paths)?;
+            match &config.model {
+                // stdout is the MCP channel; notes go to stderr.
+                Some(m) => eprintln!(
+                    "clanka: memory is written by {} at {}. Set your MCP host to chat with the \
+                     same model; clanka can't see which one it uses.",
+                    m.model, m.base_url
+                ),
+                None => eprintln!(
+                    "clanka: no [model] in {}, so turns are recorded but never reflected on and \
+                     sleep is unavailable.",
+                    paths.config_file().display()
+                ),
+            }
+            let (chat, writer) = open_pair(&paths, &soul, &config)?;
             mcp::serve(chat, writer, budget)
         }
     }
+}
+
+/// Two handles to one companion on the same model: one for the hot path and
+/// one for reflection and sleep, so a slow reflection never blocks a turn.
+/// The second is `None` without a model.
+fn open_pair(
+    paths: &Paths,
+    soul: &Path,
+    config: &Config,
+) -> Result<(clanka_core::Companion, Option<clanka_core::Companion>)> {
+    let embedder = SharedEmbedder::load(paths)?;
+    let chat = setup::open(paths, soul, embedder.clone(), config.model.as_ref())?;
+    if let clanka_core::PersonaStatus::Changed { .. } = chat.persona_status() {
+        bail!(
+            "{} changed since its memories were written; choose continue, update or fork first",
+            soul.display()
+        );
+    }
+    let writer = match &config.model {
+        Some(m) => Some(setup::open(paths, soul, embedder, Some(m))?),
+        None => None,
+    };
+    Ok((chat, writer))
 }
 
 fn init(paths: &Paths, name: &str) -> Result<()> {
@@ -86,7 +131,7 @@ fn init(paths: &Paths, name: &str) -> Result<()> {
     download_model(&paths.models)?;
     println!("Created {name} ({id}).");
     println!("Edit the persona: {}", soul.display());
-    println!("Then try it: clanka mcp {}", soul.display());
+    println!("Then try it: clanka chat {}", soul.display());
     Ok(())
 }
 

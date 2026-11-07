@@ -1,7 +1,7 @@
 //! Where things live and how a companion handle is put together: the key from
-//! the Secret Service, the local embedding model and the writer model.
+//! the Secret Service, the local embedding model and the companion's model.
 
-use crate::llm::{NoWriter, OpenAiWriter};
+use crate::llm::{NoModel, OpenAiModel};
 use anyhow::{Context, Result, bail};
 use clanka_core::deps::{Embedder, EmbeddingModel, FastEmbedder, KeySource, Rng, SystemClock};
 use clanka_core::{Companion, Deps};
@@ -57,14 +57,17 @@ impl Paths {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub writer: Option<WriterConfig>,
+    pub model: Option<ModelConfig>,
 }
 
-/// The model the writer, sleep and the doctor call: any OpenAI-compatible
-/// chat completions endpoint with tool calls.
+/// The model that powers the companion: one definition for every role.
+/// `clanka chat` talks with it, and the writer, sleep and the doctor call it.
+/// Under `clanka mcp` the host does the talking, so this must name the same
+/// model the host is set to; clanka can't see or check the host's model.
+/// Any OpenAI-compatible chat completions endpoint with tool calls.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WriterConfig {
+pub struct ModelConfig {
     /// Up to and including `/v1`, e.g. `https://api.example.com/v1`.
     pub base_url: String,
     pub model: String,
@@ -74,7 +77,7 @@ pub struct WriterConfig {
 }
 
 fn default_key_env() -> String {
-    "CLANKA_WRITER_API_KEY".into()
+    "CLANKA_MODEL_API_KEY".into()
 }
 
 impl Config {
@@ -176,18 +179,18 @@ impl Embedder for SharedEmbedder {
     }
 }
 
-/// Opens a companion. With a writer config, its model backs the writer, sleep
-/// and the doctor; without one, those fail with a message saying how to set it.
+/// Opens a companion backed by its model. Without one, the writer, sleep and
+/// the doctor fail with a message saying how to set it.
 pub fn open(
     paths: &Paths,
     soul: &Path,
     embedder: SharedEmbedder,
-    writer: Option<&WriterConfig>,
+    model: Option<&ModelConfig>,
 ) -> Result<Companion> {
     std::fs::create_dir_all(&paths.data)?;
-    let llm: Box<dyn clanka_core::deps::Llm> = match writer {
-        Some(w) => Box::new(OpenAiWriter::new(w.clone())),
-        None => Box::new(NoWriter),
+    let llm: Box<dyn clanka_core::deps::Llm> = match model {
+        Some(m) => Box::new(OpenAiModel::new(m.clone())),
+        None => Box::new(NoModel),
     };
     let deps = Deps {
         llm,

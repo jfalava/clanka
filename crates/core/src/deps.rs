@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 /// The dependencies one [`crate::Companion`] handle uses.
 pub struct Deps {
+    /// The companion's own model; see [`Llm`].
     pub llm: Box<dyn Llm>,
     pub embedder: Box<dyn Embedder>,
     pub clock: Box<dyn Clock>,
@@ -13,8 +14,12 @@ pub struct Deps {
     pub keys: Box<dyn KeySource>,
 }
 
-/// A chat model call. Used by the writer, sleep, doctor re-interpretation and
-/// linter warnings. Blocking: an async front end wraps the core, not the other way round.
+/// The companion's own model: the same model, provider and identity the
+/// companion chats with, never a separate "writer model". The writer, sleep and
+/// doctor re-interpretation are separate calls to it, made in the companion's
+/// voice. A front end backs this with the host's model client when the host
+/// exposes one (with tool calls), or with the one model it chats with itself.
+/// Blocking: an async front end wraps the core, not the other way round.
 pub trait Llm: Send + Sync {
     fn complete(&self, request: &LlmRequest) -> Result<LlmResponse>;
 }

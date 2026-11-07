@@ -52,7 +52,7 @@ pub struct Server {
     /// Serves the hot path: recording turns and assembling context.
     chat: Arc<Mutex<Companion>>,
     /// A second handle for the writer and sleep, so a reflection still running
-    /// never blocks the next begin_turn. `None` without a writer model.
+    /// never blocks the next begin_turn. `None` without a companion model.
     writer: Option<Arc<Mutex<Companion>>>,
     pending: Arc<Mutex<Option<Pending>>>,
     budget: usize,
@@ -143,10 +143,11 @@ impl Server {
         .await?;
         let Some(writer) = writer else {
             return Ok(
-                "Saved. (No writer model is configured, so nothing was reflected on.)".into(),
+                "Saved. (No companion model is configured for clanka, so nothing was reflected on.)"
+                    .into(),
             );
         };
-        // Reflection calls the writer model and can take seconds: never on the hot path.
+        // Reflection calls the companion's model and can take seconds: never on the hot path.
         tokio::task::spawn_blocking(move || {
             if let Err(e) = lock(&writer).reflect(user_turn, companion_turn) {
                 eprintln!("clanka: reflection on turns {user_turn}–{companion_turn} failed: {e}");
@@ -188,8 +189,8 @@ impl Server {
     async fn sleep(&self) -> Result<String, String> {
         let Some(writer) = self.writer.clone() else {
             return Err(
-                "Can't sleep: no writer model is configured. Add a [writer] section to \
-                ~/.config/clanka/config.toml."
+                "Can't sleep: no companion model is configured. Add a [model] section to \
+                ~/.config/clanka/config.toml naming the model you run on."
                     .into(),
             );
         };
