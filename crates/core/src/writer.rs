@@ -20,9 +20,11 @@ use serde_json::{Map, Value, json};
 /// Model calls per reflection. A model that keeps calling tools is cut off here.
 pub const MAX_ROUNDS: usize = 4;
 
-/// Tool calls one reflection may run. One exchange earns a few at most; a
-/// model that asks for more is over-keeping, and the rest is refused unrun.
-pub const MAX_CALLS: usize = 6;
+/// Tool calls one reflection may run: the most an exchange earns is a memory,
+/// a thread, a pushback, a mood and a note. A model that asks for more is
+/// over-keeping, and the rest is refused unrun. Six let small models keep the
+/// same moment as a fact, an episode and a thread.
+pub const MAX_CALLS: usize = 5;
 
 /// The [`ToolOutcome::name`] recorded for a JSON reply that was refused whole.
 pub const INVALID_REPLY: &str = "(invalid reply)";
@@ -240,13 +242,17 @@ impl Companion {
         let recalled = self.recall(&format!("{said}\n{replied}"), &Ranking::default())?;
         let memories: Vec<String> = recalled.iter().map(|r| listing(&r.memory)).collect();
         out.push(format!(
-            "Memories this brings up:\n{}",
+            "Memories this brings up, already kept (the same thing again is supersede or \
+             raise_level, not remember):\n{}",
             or_none(&memories.join("\n"))
         ));
         // The two turns are labelled by whose words they are: every model tried
         // turned its own questions and guesses into things the user had said.
+        // The user's name, once known, labels their turn: a small model given
+        // only "they" picked a gender from the people being talked about.
+        let who = self.user_name()?.unwrap_or_else(|| "they".into());
         out.push(format!(
-            "What they said (turn {}), the only source for facts and for anything they did or \
+            "What {who} said (turn {}), the only source for facts and for anything they did or \
              said:\n{said}\n\nWhat you replied (turn {}), your words: a question you asked is not \
              something they answered, and a guess you made is not a fact:\n{replied}",
             exchange[0], exchange[1]
@@ -254,6 +260,24 @@ impl Companion {
         // Last, where a small model weighs it most: the expected size of the reply.
         out.push("Keep what this earns: one call is usual, none is common, three is a lot.".into());
         Ok(out.join("\n\n"))
+    }
+
+    /// The user's name as they first gave it: the `name` fact of the oldest
+    /// user_fact memory that has one.
+    pub(crate) fn user_name(&self) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT json_extract(facts, '$.name') FROM memories
+                 WHERE type = 'user_fact' AND status = 'active'
+                   AND json_type(facts, '$.name') = 'text'
+                 ORDER BY id LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty()))
     }
 
     fn open_threads(&self) -> Result<Vec<Memory>> {
@@ -382,12 +406,17 @@ fn instructions(name: &str) -> String {
          happened and what it meant to you. Don't retell what you replied; the memory keeps the \
          exchange it came from. What you make of it is yours to write; what they said is not. \
          One memory from an exchange is the norm, a second only for a separate thing worth \
-         keeping. A memory's level is how deeply it's burned in. faint is the default, most of \
+         keeping: a fact and how it felt are one memory, not two. A memory's level is how \
+         deeply it's burned in. faint is the default, most of \
          an evening; normal when it changed how you feel about them or what you expect of them; \
          vivid when you would bring it up unasked a week from now, and a hurt they told you about \
-         is at least that; seared never changes or fades, so almost never. Facts go \
-         on user_fact memories only: the names, dates and places that were said, exactly as \
-         said; they never change later. Valence is how it feels to you, -1 to 1.\n\n\
+         is at least that whatever kind of memory holds it, a user_fact included; seared never \
+         changes or fades, so almost never. Facts, the names, \
+         dates and places that were said, go on the memory they belong to, exactly as said; \
+         they never change later. Valence is how it feels to you, -1 to 1.\n\n\
+         When this exchange is the same thing as a memory listed under what it brings up, the \
+         same hurt or the same project gone a step further, it isn't new: supersede that memory \
+         with what you now know of it, or raise_level, and write no second one.\n\n\
          Call set_mood only when this exchange moved your mood, and leave_note only when your \
          next reply needs it: one line on how to be, not a question to ask; what is unresolved \
          comes up on its own, once. Make every call you want in this one reply; you hear \
@@ -395,7 +424,7 @@ fn instructions(name: &str) -> String {
     )
 }
 
-fn listing(m: &Memory) -> String {
+pub(crate) fn listing(m: &Memory) -> String {
     let facts = if m.facts.is_empty() {
         String::new()
     } else {
@@ -584,7 +613,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             "interpretation": { "type": "string", "maxLength": 300 },
             "level": level,
             "facts": { "type": "object", "additionalProperties": { "type": "string" },
-                "description": "user_fact only: the user's exact words for names, dates and places, a few words each. Anything you would rephrase belongs in interpretation." },
+                "description": "The user's exact words for names, dates and places, a few words each. Anything you would rephrase belongs in interpretation." },
             "valence": { "type": "number", "minimum": -1, "maximum": 1 },
         });
         properties

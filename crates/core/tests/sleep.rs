@@ -174,6 +174,12 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
     );
     assert!(prompt.contains("(user) Laura called again"), "{prompt}");
     assert!(
+        prompt.contains(&format!(
+            "Kept tonight, already:\n#{tonight} [episode, normal] Laura wants Sam at her concert"
+        )),
+        "{prompt}"
+    );
+    assert!(
         !prompt.contains("My sister Laura called"),
         "an earlier night's conversation isn't tonight's:\n{prompt}"
     );
@@ -185,9 +191,13 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         c.section(Section::AboutUser).unwrap().as_deref(),
         Some("Has a sister, Laura, who calls")
     );
+    let offered = prompt
+        .split("Memories that came up tonight:")
+        .nth(1)
+        .unwrap();
     for absent in [seared, unrecalled, tonight] {
         assert!(
-            !prompt.contains(&format!("#{absent} [")),
+            !offered.contains(&format!("#{absent} [")),
             "{absent} offered:\n{prompt}"
         );
     }
@@ -469,5 +479,33 @@ fn about_user_never_borrows_from_the_companions_own_life() {
     assert_eq!(
         c.section(Section::AboutUser).unwrap().as_deref(),
         Some("Has a mate called Jonas")
+    );
+}
+
+#[test]
+fn a_long_episode_is_a_retelling_and_goes_back_to_be_shortened() {
+    let f = fixture();
+    let long = ["word"; 56].join(" ");
+    let mut c = open_full(
+        &f,
+        move |r: &LlmRequest| LlmResponse {
+            text: String::new(),
+            tool_calls: if r.messages.len() == 1 {
+                vec![episode(&long)]
+            } else {
+                vec![episode("A good night, and I said so.")]
+            },
+        },
+        clock(),
+    );
+    let s = c.open_session().unwrap();
+    c.record_turn(s, Speaker::User, "Night").unwrap();
+    c.record_turn(s, Speaker::Companion, "Night, Sam").unwrap();
+
+    let report = c.sleep(s).unwrap();
+    assert_eq!(report.rounds, 2, "the short episode was taken on the retry");
+    assert_eq!(
+        c.memory(report.episode).unwrap().interpretation,
+        "A good night, and I said so."
     );
 }

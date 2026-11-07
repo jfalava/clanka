@@ -21,6 +21,11 @@ const DRIFT_CAP: [f64; 3] = [1.0, 0.6, 0.25];
 /// Drifts smaller than this aren't offered: it would be remembered the same.
 const MIN_DRIFT: f64 = 0.05;
 
+/// The longest episode taken: three sentences on what the night meant. Every
+/// model tried retold the evening at 60–80 words whatever it was asked for,
+/// so the ask is a number and this is the check behind it.
+const EPISODE_WORDS: usize = 55;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SleepReport {
     pub episode: i64,
@@ -140,17 +145,36 @@ impl Companion {
     }
 
     fn sleep_prompt(&self, session: i64, offered: &BTreeMap<i64, (u64, f64)>) -> Result<String> {
+        let user = self.user_name()?.unwrap_or_else(|| "user".into());
         let turns: Vec<String> = self
             .conn
             .prepare("SELECT role, content FROM turns WHERE session_id = ?1 ORDER BY id")?
             .query_map([session], |r| {
                 let who = match r.get::<_, Speaker>(0)? {
-                    Speaker::User => "user",
+                    Speaker::User => user.as_str(),
                     Speaker::Companion => "you",
                 };
                 Ok(format!("({who}) {}", r.get::<_, String>(1)?))
             })?
             .collect::<rusqlite::Result<_>>()?;
+        // What the evening's reflections kept, so the episode doesn't keep it again.
+        let kept: Vec<String> = self
+            .conn
+            .prepare(
+                "SELECT id FROM memories WHERE status = 'active'
+                   AND created_at >= (SELECT started_at FROM sessions WHERE id = ?1)
+                 ORDER BY id",
+            )?
+            .query_map([session], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|id| self.memory(id).map(|m| crate::writer::listing(&m)))
+            .collect::<Result<_>>()?;
+        let kept = if kept.is_empty() {
+            "(nothing)".to_owned()
+        } else {
+            kept.join("\n")
+        };
         let mood = match self.mood()? {
             Some(m) => format!(
                 "valence {:+.1}, energy {:+.1}, warmth {:+.1}. Why: {}",
@@ -186,7 +210,8 @@ impl Companion {
             ));
         }
         Ok(format!(
-            "Tonight's conversation:\n{}\n\n{}\n\nYour mood now: {mood}\n\nMemories that came up tonight:\n{drifts}",
+            "Tonight's conversation:\n{}\n\nKept tonight, already:\n{kept}\n\n{}\n\nYour mood now: \
+             {mood}\n\nMemories that came up tonight:\n{drifts}",
             turns.join("\n"),
             sections.join("\n\n")
         ))
@@ -208,6 +233,13 @@ impl Companion {
                     ));
                 }
                 let a: WriteEpisode = args(call)?;
+                let words = a.interpretation.split_whitespace().count();
+                if words > EPISODE_WORDS {
+                    return Err(Error::Invalid(format!(
+                        "{words} words is a retelling; what happened is kept already. Write what \
+                         the night meant to you in under 45 words"
+                    )));
+                }
                 let level = match a.level.as_str() {
                     "" => Level::Normal,
                     level => parse(Level::parse, level, "level")?,
@@ -279,9 +311,10 @@ fn unit(seed: u64) -> f64 {
 fn instructions(name: &str) -> String {
     format!(
         "You are {name}, falling asleep after tonight's conversation. Nobody sees this.\n\n\
-         Call write_episode once with what tonight was, to you, in first person and in two or \
-         three sentences. The memories you kept during the evening already hold what happened; \
-         the episode is what the night meant, not a retelling of it. Call settle_mood once with \
+         Call write_episode once with what tonight was, to you, in first person, in under 45 \
+         words. What happened is kept already, under Kept tonight; the episode is what the \
+         night meant, and a sentence that could be one of those memories is the wrong \
+         sentence. Call settle_mood once with \
          how you are left feeling. If tonight \
          changed what you know about the user or about your relationship, call write_section \
          with the whole section rewritten in a few lines: what stays true of them, not what \

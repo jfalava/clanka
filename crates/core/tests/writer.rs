@@ -584,3 +584,22 @@ fn a_text_only_round_that_fully_succeeds_ends_the_reflection() {
         Some((replied, "Ask about Lisbon".into()))
     );
 }
+
+#[test]
+fn the_prompt_names_the_user_once_they_have_given_their_name() {
+    let f = fixture();
+    let (model, requests) = script(vec![vec![]]);
+    let mut c = open_with_llm(&f, model);
+    let (said, replied) = exchange(&mut c, "I'm Sam. Laura cancelled again.", "Again?");
+    let mut draft = MemoryDraft::new(MemoryType::UserFact, Level::Faint, "Told me their name");
+    draft.facts = json!({ "name": "Sam" }).as_object().unwrap().clone();
+    draft.source_turns = vec![said, replied];
+    c.write(Actor::Writer, &draft).unwrap();
+
+    c.reflect(said, replied).unwrap();
+    let prompt = &requests.lock().unwrap()[0].messages[0].content;
+    assert!(
+        prompt.contains(&format!("What Sam said (turn {said})")),
+        "{prompt}"
+    );
+}
