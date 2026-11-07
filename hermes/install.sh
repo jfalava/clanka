@@ -10,5 +10,10 @@ PYO3_PYTHON=$python cargo build --release -p clanka-py --manifest-path "$root/Ca
 dest=$home/plugins/clanka
 mkdir -p "$dest"
 cp "$root/hermes/clanka/plugin.yaml" "$root/hermes/clanka/__init__.py" "$dest/"
-cp "$root/target/release/lib_clanka.so" "$dest/_clanka.abi3.so"
+# Never overwrite the extension in place: a running gateway has it mapped into
+# memory, and rewriting that file crashes the gateway on its next call into it.
+# A new file renamed over the old one leaves the running copy intact.
+cp "$root/target/release/lib_clanka.so" "$dest/.clanka.so.new"
+mv -f "$dest/.clanka.so.new" "$dest/_clanka.abi3.so"
 echo "Installed to $dest"
+echo "A gateway that already loaded clanka keeps running the old native code until it restarts."

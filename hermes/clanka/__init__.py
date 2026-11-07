@@ -11,7 +11,8 @@ A general plugin on Hermes's public plugin API only:
 - Tools ``recall_memory`` and ``go_to_sleep``. Sleep waits until the reply is
   recorded, then consolidates the conversation.
 
-The companion is the soul.md named by ``$CLANKA_SOUL``. Put its persona in
+The companion is the soul.md named by ``plugins.entries.clanka.settings.soul``
+in the profile's config.yaml (``$CLANKA_SOUL`` as a fallback). Put its persona in
 Hermes's SOUL.md with ``clanka soul persona <soul.md>``; never copy the whole
 file, whose frontmatter holds the doctor token.
 """
@@ -46,9 +47,13 @@ class _Plugin:
             if self._companion is None:
                 from . import _clanka
 
-                soul = os.environ.get("CLANKA_SOUL")
+                # Profile config first: under Hermes's multiplexed gateway a
+                # profile's .env doesn't reach a plugin's os.environ.
+                soul = self._ctx.get_config("soul") or os.environ.get("CLANKA_SOUL")
                 if not soul:
-                    raise RuntimeError("set CLANKA_SOUL to the companion's soul.md")
+                    raise RuntimeError(
+                        "set plugins.entries.clanka.settings.soul to the companion's soul.md"
+                    )
                 self._companion = _clanka.Companion(soul, self._model)
             return self._companion
 
