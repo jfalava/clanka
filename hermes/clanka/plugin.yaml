@@ -1,0 +1,3 @@
+name: clanka
+version: "0.1.0"
+description: Long-term memory for a chat companion, written by the same model it chats with.

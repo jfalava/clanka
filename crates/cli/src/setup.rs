@@ -3,7 +3,7 @@
 
 use crate::llm::{NoModel, OpenAiModel};
 use anyhow::{Context, Result, bail};
-use clanka_core::deps::{Embedder, EmbeddingModel, FastEmbedder, KeySource, Rng, SystemClock};
+use clanka_core::deps::{Embedder, EmbeddingModel, FastEmbedder, KeySource, Llm, Rng, SystemClock};
 use clanka_core::{Companion, Deps};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -187,11 +187,22 @@ pub fn open(
     embedder: SharedEmbedder,
     model: Option<&ModelConfig>,
 ) -> Result<Companion> {
-    std::fs::create_dir_all(&paths.data)?;
-    let llm: Box<dyn clanka_core::deps::Llm> = match model {
+    let llm: Box<dyn Llm> = match model {
         Some(m) => Box::new(OpenAiModel::new(m.clone())),
         None => Box::new(NoModel),
     };
+    open_with(paths, soul, embedder, llm)
+}
+
+/// Opens a companion on a model the host supplies, e.g. a plugin's handle on
+/// the host's own active model.
+pub fn open_with(
+    paths: &Paths,
+    soul: &Path,
+    embedder: SharedEmbedder,
+    llm: Box<dyn Llm>,
+) -> Result<Companion> {
+    std::fs::create_dir_all(&paths.data)?;
     let deps = Deps {
         llm,
         embedder: Box::new(embedder),

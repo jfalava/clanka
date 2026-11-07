@@ -1,14 +1,11 @@
 //! `clanka`: set up companions, check their souls and serve them over MCP.
 
-mod chat;
-mod llm;
-mod mcp;
-mod setup;
-
 use anyhow::{Context, Result, bail};
+use clanka::setup::{
+    self, Config, MODEL_FILES, MODEL_REPO, Paths, SecretServiceKeys, SharedEmbedder,
+};
 use clanka_core::soul::Soul;
 use clap::{Parser, Subcommand};
-use setup::{Config, MODEL_FILES, MODEL_REPO, Paths, SecretServiceKeys, SharedEmbedder};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -56,6 +53,10 @@ enum Command {
 enum SoulCommand {
     /// Check a soul.md for errors.
     Lint { soul: PathBuf },
+    /// Print the persona without its frontmatter, for a host's own persona
+    /// file such as Hermes's SOUL.md. The frontmatter holds the doctor token,
+    /// which must never reach the model.
+    Persona { soul: PathBuf },
 }
 
 fn main() -> Result<()> {
@@ -65,6 +66,12 @@ fn main() -> Result<()> {
         Command::Soul {
             command: SoulCommand::Lint { soul },
         } => lint(&soul),
+        Command::Soul {
+            command: SoulCommand::Persona { soul },
+        } => {
+            println!("{}", Soul::load(&soul)?.body.trim());
+            Ok(())
+        }
         Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
@@ -74,7 +81,7 @@ fn main() -> Result<()> {
                 );
             }
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
-            chat::run(chat, writer.expect("a model is configured"), budget)
+            clanka::chat::run(chat, writer.expect("a model is configured"), budget)
         }
         Command::Mcp { soul, budget } => {
             let config = Config::load(&paths)?;
@@ -92,7 +99,7 @@ fn main() -> Result<()> {
                 ),
             }
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
-            mcp::serve(chat, writer, budget)
+            clanka::mcp::serve(chat, writer, budget)
         }
     }
 }

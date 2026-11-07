@@ -1,0 +1,16 @@
+[package]
+name = "clanka-py"
+version = "0.1.0"
+description = "Python bindings for clanka companions, for host plugins such as Hermes Agent."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "_clanka"
+crate-type = ["cdylib"]
+
+[dependencies]
+clanka = { path = "../cli" }
+clanka-core = { path = "../core", features = ["fastembed"] }
+pyo3 = { version = "0.30", features = ["abi3-py311", "extension-module"] }

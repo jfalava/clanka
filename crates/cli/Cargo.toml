@@ -6,6 +6,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "clanka"
+path = "src/lib.rs"
+
+[[bin]]
+name = "clanka"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 clanka-core = { path = "../core", features = ["fastembed"] }
@@ -22,3 +30,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync"] }
 ureq = "3.5"
 uuid = { version = "1.29", features = ["v7"] }
+
+[dev-dependencies]
+tempfile = "3"

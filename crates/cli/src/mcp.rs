@@ -3,9 +3,9 @@
 //! current model can follow it, plus the persona as an MCP prompt. The doctor
 //! is never a tool: the doctor token freezes memory and the CLI does the rest.
 
+use crate::turn::{self, Begin, Pending};
 use anyhow::Result;
-use clanka_core::model::Speaker;
-use clanka_core::{Companion, Context, Ranking};
+use clanka_core::{Companion, Ranking};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, PromptMessage, Role, ServerCapabilities, ServerConfig};
 use rmcp::{
@@ -38,13 +38,6 @@ pub struct EndTurn {
 pub struct RecallQuery {
     /// What you are trying to remember, in a few words.
     query: String,
-}
-
-/// The turn begin_turn opened and end_turn closes.
-struct Pending {
-    session: i64,
-    user_turn: i64,
-    recalled: Vec<i64>,
 }
 
 #[derive(Clone)]
@@ -82,37 +75,26 @@ impl Server {
     ) -> Result<String, String> {
         let (chat, pending, budget) = (self.chat.clone(), self.pending.clone(), self.budget);
         blocking(move || {
-            let mut c = lock(&chat);
-            if c.soul().is_doctor_token(&message) {
-                c.set_frozen(true).map_err(|e| e.to_string())?;
-                *lock(&pending) = None;
-                return Ok(
+            let begun =
+                turn::begin(&mut lock(&chat), &message, budget).map_err(|e| e.to_string())?;
+            Ok(match begun {
+                Begin::Doctor => {
+                    *lock(&pending) = None;
                     "Doctor mode: memory is now frozen and this message was not recorded. \
-                    Reply only: \"Memory frozen.\" Do not call end_turn."
-                        .into(),
-                );
-            }
-            if c.is_frozen().map_err(|e| e.to_string())? {
-                return Ok(
-                    "Memory is frozen by the doctor, so nothing is recorded. Reply without \
-                    memories and do not call end_turn."
-                        .into(),
-                );
-            }
-            let context = c
-                .assemble(&message, budget, &Ranking::default())
-                .map_err(|e| e.to_string())?;
-            let session = c.open_session().map_err(|e| e.to_string())?;
-            let user_turn = c
-                .record_turn(session, Speaker::User, &message)
-                .map_err(|e| e.to_string())?;
-            let recalled = context.memories.iter().map(|r| r.memory.id).collect();
-            *lock(&pending) = Some(Pending {
-                session,
-                user_turn,
-                recalled,
-            });
-            Ok(render(context))
+                     Reply only: \"Memory frozen.\" Do not call end_turn."
+                        .into()
+                }
+                Begin::Frozen => "Memory is frozen by the doctor, so nothing is recorded. Reply \
+                     without memories and do not call end_turn."
+                    .into(),
+                Begin::Open {
+                    context,
+                    pending: p,
+                } => {
+                    *lock(&pending) = Some(p);
+                    context
+                }
+            })
         })
         .await
     }
@@ -132,13 +114,7 @@ impl Server {
                     "No turn is open: call begin_turn with the user's message first.".into(),
                 );
             };
-            let mut c = lock(&chat);
-            let turn = c
-                .record_turn(p.session, Speaker::Companion, &reply)
-                .map_err(|e| e.to_string())?;
-            c.mark_recalled(p.session, &p.recalled)
-                .map_err(|e| e.to_string())?;
-            Ok((p.user_turn, turn))
+            turn::end(&mut lock(&chat), p, &reply).map_err(|e| e.to_string())
         })
         .await?;
         let Some(writer) = writer else {
@@ -238,23 +214,6 @@ impl ServerHandler for Server {
         )
         .with_server_info(Implementation::new("clanka", env!("CARGO_PKG_VERSION")))
         .with_instructions(INSTRUCTIONS)
-    }
-}
-
-/// The turn's context without the persona (the host holds it) or the session's
-/// turns (the host keeps its own history).
-fn render(context: Context) -> String {
-    let text = Context {
-        persona: String::new(),
-        turns: Vec::new(),
-        ..context
-    }
-    .render();
-    let text = text.trim();
-    if text.is_empty() {
-        "Nothing comes to mind; this is all new to you.".into()
-    } else {
-        text.into()
     }
 }
 
