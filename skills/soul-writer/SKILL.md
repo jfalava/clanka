@@ -30,8 +30,15 @@ changes the companion's identity, so leave notes freely.
    keeps every memory as it was felt; `clanka soul update` has the companion
    re-read them under the new persona (one model call per batch); `clanka soul fork`
    starts over with no memories.
-5. Hermes hosts keep the persona in their own SOUL.md: run
-   `hermes/profile.sh <profile> <soul.md>` again (or `clanka soul persona <soul.md> > SOUL.md`).
+5. On Hermes the companion is a profile of its own:
+   `clanka hermes profile <profile> <soul.md>` makes it, and run again
+   refreshes the profile's SOUL.md after a persona change (other hosts take
+   `clanka soul persona <soul.md>`). Then `hermes -p <profile> chat`.
+
+`clanka hermes nightshade` sets up Nightshade, a Hermes agent that does all of
+this as a conversation: it interviews you about the companion in rounds until
+nothing is left assumed, writes and lints the soul, and makes the profile.
+`hermes -p nightshade chat`.
 
 ## The brief
 

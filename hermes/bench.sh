@@ -4,7 +4,7 @@
 # companion said, what the turns cost, what its memory writer spent, and what
 # it kept (`clanka memories`) after it slept.
 #
-#   hermes/bench.sh <profile> <soul.md> [turns.txt]     after hermes/profile.sh
+#   hermes/bench.sh <profile> <soul.md> [turns.txt]     after clanka hermes profile
 #
 # turns.txt is one user message per line; without it the six turns below run.
 # Results land in $BENCH_OUT (default ./bench/<profile>-<time>): transcript.md,
@@ -23,13 +23,17 @@ soul=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 turns=${3:-}
 root=$(cd "$(dirname "$0")/.." && pwd)
 home=${HERMES_HOME:-$HOME/.hermes}
+# `hermes -p <profile>` exports HERMES_HOME as that profile's directory, so an
+# agent running this from inside Hermes would look under the profile; the
+# shared plugins and profiles live in the root above it.
+case $home in */profiles/*) home=${home%/profiles/*} ;; esac
 clanka=${CLANKA:-$root/target/release/clanka}
 [ -x "$clanka" ] || clanka=clanka
 out=${BENCH_OUT:-$PWD/bench/$profile-$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$out"
 log=$home/profiles/$profile/logs/agent.log
 db=$home/profiles/$profile/state.db
-[ -d "$home/profiles/$profile" ] || { echo "no profile $profile; run hermes/profile.sh first" >&2; exit 1; }
+[ -d "$home/profiles/$profile" ] || { echo "no profile $profile; run clanka hermes profile first" >&2; exit 1; }
 
 # Where the log stood before, so only this evening's writer calls are counted.
 touch "$log"

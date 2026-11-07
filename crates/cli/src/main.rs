@@ -10,6 +10,8 @@ use clap::{Parser, Subcommand};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+mod hermes;
+
 #[derive(Parser)]
 #[command(
     name = "clanka",
@@ -60,7 +62,7 @@ enum Command {
     #[command(after_long_help = "Example, after editing the persona:\n  \
         clanka soul lint ~/.config/clanka/souls/<id>.md\n  \
         clanka soul continue ~/.config/clanka/souls/<id>.md\n  \
-        clanka soul persona ~/.config/clanka/souls/<id>.md > SOUL.md   # for Hermes")]
+        clanka hermes profile nova ~/.config/clanka/souls/<id>.md   # refresh its SOUL.md")]
     Soul {
         #[command(subcommand)]
         command: SoulCommand,
@@ -120,9 +122,66 @@ enum Command {
         #[arg(long, default_value_t = 6000)]
         budget: usize,
     },
+    /// Run companions on Hermes: a profile per companion, and Nightshade, the agent that
+    /// interviews you and makes one.
+    ///
+    /// Needs the clanka plugin that hermes/install.sh builds and installs under
+    /// ~/.hermes/plugins/clanka, and `hermes` on PATH. Both commands drive the Hermes CLI
+    /// and are safe to run again: they set the same values and rewrite the profile's
+    /// SOUL.md. They work the same from a shell and from an agent's terminal inside Hermes.
+    #[command(after_long_help = "Example:\n  \
+        clanka hermes profile nova ~/.config/clanka/souls/<id>.md\n  \
+        hermes -p nova chat\n  \
+        clanka hermes nightshade --model claude-opus-5-5\n  \
+        hermes -p nightshade chat")]
+    Hermes {
+        #[command(subcommand)]
+        command: HermesCommand,
+    },
 }
 
 const SOUL_HELP: &str = "The companion's soul.md, as printed by `clanka init`";
+
+#[derive(Subcommand)]
+enum HermesCommand {
+    /// Make a Hermes profile that is one companion and nothing else.
+    ///
+    /// clanka's two tools are the only toolset on every platform, listed directly rather
+    /// than behind Hermes's tool-search bridge; Hermes's own memory, user profile, coding
+    /// brief, toolchain probe and agent-style guidance are off; the terminal and Telegram
+    /// notes are a line each; and SOUL.md is the persona. Each turn then carries the
+    /// persona and the conversation instead of Hermes's whole toolbox: on Haiku the system
+    /// prompt and tools went from about 19k tokens on a stock profile to about 1.2k. Run it
+    /// again after editing the persona to refresh SOUL.md. A gateway already serving the
+    /// profile re-reads its config on its own.
+    #[command(after_long_help = "Example:\n  \
+        clanka hermes profile nova ~/.config/clanka/souls/<id>.md\n  \
+        hermes -p nova chat")]
+    Profile {
+        /// The Hermes profile to make or refresh (lower case, one word).
+        profile: String,
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
+    /// Make the Nightshade profile: an agent that interviews you about the companion you
+    /// want, writes its soul.md, lints it and wires it in with `clanka hermes profile`.
+    ///
+    /// It is the soul-writer skill as a person to talk to. The terminal and file tools are
+    /// all it has, and hermes/nightshade/SOUL.md is the whole of what it knows, with the
+    /// path of this binary filled in. Without --model it runs on the Hermes default; a
+    /// stronger model interviews better and the session is short.
+    #[command(after_long_help = "Example:\n  \
+        clanka hermes nightshade --model claude-opus-5-5\n  \
+        hermes -p nightshade chat")]
+    Nightshade {
+        /// The Hermes profile to make or refresh.
+        #[arg(long, default_value = "nightshade")]
+        profile: String,
+        /// The model it runs on, as Hermes names it; the Hermes default when unset.
+        #[arg(long)]
+        model: Option<String>,
+    },
+}
 
 #[derive(Subcommand)]
 enum SoulCommand {
@@ -345,6 +404,12 @@ fn main() -> Result<()> {
             command: DoctorCommand::DeleteAll { soul },
         } => doctor(&paths, &soul, DoctorAction::DeleteAll),
         Command::Memories { soul } => memories(&paths, &soul),
+        Command::Hermes {
+            command: HermesCommand::Profile { profile, soul },
+        } => hermes::profile(&profile, &soul),
+        Command::Hermes {
+            command: HermesCommand::Nightshade { profile, model },
+        } => hermes::nightshade(&profile, model.as_deref()),
         Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
