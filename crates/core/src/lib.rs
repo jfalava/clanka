@@ -22,6 +22,7 @@ pub mod writer;
 pub use companion::{Companion, PersonaStatus};
 pub use context::{Context, Fatigue, TimeAway, Turn};
 pub use deps::Deps;
+pub use doctor::DeleteAll;
 pub use error::{Error, Result};
 pub use memory::{Deleted, Memory, MemoryDraft};
 pub use recall::{Ranking, Recalled};

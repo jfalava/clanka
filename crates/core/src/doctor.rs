@@ -46,6 +46,22 @@ pub struct Rollback {
     pub state_rows: usize,
 }
 
+/// What `delete_all_memory` did. `failed` keeps the IDs it could not remove, so
+/// one broken memory never hides the rest of the wipe.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DeleteAll {
+    /// Memories hard-deleted, including seared ones.
+    pub memories: usize,
+    /// Source turns no other memory cited, removed with them.
+    pub turns: usize,
+    /// Leftover turns nothing cited, and every session, removed afterwards.
+    /// Both stay 0 when any memory failed.
+    pub leftover_turns: usize,
+    pub sessions: usize,
+    /// Memories that refused to delete, with the reason.
+    pub failed: Vec<(i64, String)>,
+}
+
 /// A fact that its source turns don't back up.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FactIssue {
@@ -190,6 +206,67 @@ impl Companion {
             "reopened": report.reopened.len(), "kept_seared": report.kept_seared,
         });
         log(&tx, "doctor", "rollback", "companion", None, &summary, now)?;
+        tx.commit()?;
+        Ok(report)
+    }
+
+    /// Wipes every memory, seared ones included, then the transcript and the
+    /// sessions, so the companion starts blank. Needs the freeze: nothing else
+    /// may write between the deletes. Each memory goes through
+    /// [`Companion::delete_memory`], newest first, so a memory that replaced
+    /// another can be restored before its replacement is gone. A memory that
+    /// fails is recorded and the rest still go, but then the transcript, state
+    /// and sessions are kept; run it again once the failure is fixed.
+    pub fn delete_all_memory(&mut self) -> Result<DeleteAll> {
+        ensure_doctor(&self.conn)?;
+        let ids: Vec<i64> = self
+            .conn
+            .prepare("SELECT id FROM memories ORDER BY id DESC")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut report = DeleteAll::default();
+        for id in ids {
+            match self.delete_memory(id) {
+                Ok(deleted) => {
+                    report.memories += 1;
+                    report.turns += deleted.turns.len();
+                }
+                Err(e) => report.failed.push((id, e.to_string())),
+            }
+        }
+        let now = self.deps.clock.now_ms();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Another process may have unfrozen while the memories went; the sweep
+        // would then take turns written since.
+        ensure_doctor(&tx)?;
+        // A memory that survived still cites its turns and may point at a
+        // session, so the transcript stays until a later run removes it too.
+        if report.failed.is_empty() {
+            // The leftover turns (their notes and pushbacks cascade), then the
+            // state, then the sessions: turns and mood states point at sessions,
+            // and nothing cascades from one.
+            report.leftover_turns = tx.execute("DELETE FROM turns", [])?;
+            for table in ["mood_states", "soul_section_versions"] {
+                tx.execute(&format!("DELETE FROM {table}"), [])?;
+            }
+            report.sessions = tx.execute("DELETE FROM sessions", [])?;
+        }
+        let summary = json!({
+            "memories": report.memories, "turns": report.turns,
+            "leftover_turns": report.leftover_turns, "sessions": report.sessions,
+            "failed": report.failed.len(),
+        });
+        log(
+            &tx,
+            "doctor",
+            "delete_all",
+            "companion",
+            None,
+            &summary,
+            now,
+        )?;
         tx.commit()?;
         Ok(report)
     }

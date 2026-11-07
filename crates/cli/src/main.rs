@@ -31,6 +31,11 @@ enum Command {
         #[command(subcommand)]
         command: SoulCommand,
     },
+    /// The doctor's tools for when a companion's memory goes wrong.
+    Doctor {
+        #[command(subcommand)]
+        command: DoctorCommand,
+    },
     /// Talk with a companion in the terminal, on its [model].
     Chat {
         /// The companion's soul.md.
@@ -59,6 +64,16 @@ enum SoulCommand {
     Persona { soul: PathBuf },
 }
 
+#[derive(Subcommand)]
+enum DoctorCommand {
+    /// Stop every write to the memory while the doctor works.
+    Freeze { soul: PathBuf },
+    /// Let writes through again.
+    Unfreeze { soul: PathBuf },
+    /// Delete every stored memory, seared ones included. Refuses unless frozen.
+    DeleteAll { soul: PathBuf },
+}
+
 fn main() -> Result<()> {
     let paths = Paths::get()?;
     match Cli::parse().command {
@@ -72,6 +87,15 @@ fn main() -> Result<()> {
             println!("{}", Soul::load(&soul)?.body.trim());
             Ok(())
         }
+        Command::Doctor {
+            command: DoctorCommand::Freeze { soul },
+        } => doctor(&paths, &soul, DoctorAction::Freeze),
+        Command::Doctor {
+            command: DoctorCommand::Unfreeze { soul },
+        } => doctor(&paths, &soul, DoctorAction::Unfreeze),
+        Command::Doctor {
+            command: DoctorCommand::DeleteAll { soul },
+        } => doctor(&paths, &soul, DoctorAction::DeleteAll),
         Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
@@ -125,6 +149,70 @@ fn open_pair(
         None => None,
     };
     Ok((chat, writer))
+}
+
+enum DoctorAction {
+    Freeze,
+    Unfreeze,
+    DeleteAll,
+}
+
+/// The doctor opens the companion without a model: none of its work calls one.
+fn doctor(paths: &Paths, soul: &Path, action: DoctorAction) -> Result<()> {
+    let embedder = SharedEmbedder::load(paths)?;
+    let mut companion = setup::open(paths, soul, embedder, None)?;
+    match action {
+        DoctorAction::Freeze => {
+            companion.set_frozen(true)?;
+            println!(
+                "Frozen {}. Nothing writes to its memory until you unfreeze.",
+                soul.display()
+            );
+        }
+        DoctorAction::Unfreeze => {
+            companion.set_frozen(false)?;
+            println!("Unfrozen {}. Writes go through again.", soul.display());
+        }
+        DoctorAction::DeleteAll => {
+            if !companion.is_frozen()? {
+                bail!(
+                    "{} is not frozen; run `clanka doctor freeze {}` first, so nothing writes \
+                     to the memory while it is deleted",
+                    soul.display(),
+                    soul.display()
+                );
+            }
+            let report = companion.delete_all_memory()?;
+            if report.failed.is_empty() {
+                println!(
+                    "Deleted {} memories and {} turns, then {} leftover turns and {} sessions, \
+                     from {}.",
+                    report.memories,
+                    report.turns,
+                    report.leftover_turns,
+                    report.sessions,
+                    soul.display()
+                );
+                return Ok(());
+            }
+            println!(
+                "Deleted {} memories and {} turns from {}.",
+                report.memories,
+                report.turns,
+                soul.display()
+            );
+            for (id, why) in &report.failed {
+                println!("  #{id}: {why}");
+            }
+            bail!(
+                "{} memories failed to delete, so the transcript and sessions were kept; \
+                 fix the failures and run `clanka doctor delete-all {}` again",
+                report.failed.len(),
+                soul.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn init(paths: &Paths, name: &str) -> Result<()> {

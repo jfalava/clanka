@@ -549,6 +549,128 @@ fn reembed_rebuilds_every_vector_or_none() {
 }
 
 #[test]
+fn delete_all_wipes_seared_memories_and_needs_the_freeze() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let s = c.open_session().unwrap();
+    let shared = c
+        .record_turn(s, Speaker::User, "Laura and my dad came to the concert")
+        .unwrap();
+    let own = c
+        .record_turn(s, Speaker::User, "I live in Madrid, Laura")
+        .unwrap();
+    let _spare = c.record_turn(s, Speaker::User, "Anyway").unwrap();
+    let mut shared_fact = draft(MemoryType::UserFact, Level::Normal, "Sam's dad came");
+    shared_fact.source_turns = vec![shared];
+    let dad = c.write(Actor::Writer, &shared_fact).unwrap();
+    let mut madrid = draft(MemoryType::UserFact, Level::Normal, "Sam lives in Madrid");
+    madrid.source_turns = vec![own];
+    let madrid = c.write(Actor::Writer, &madrid).unwrap();
+    // Seared, and the reason rollback alone isn't enough.
+    let mut lisbon = draft(MemoryType::UserFact, Level::Seared, "Sam moved for Laura");
+    lisbon.source_turns = vec![own];
+    let lisbon = c.supersede(Actor::Writer, madrid, &lisbon).unwrap();
+    let mut thread = draft(MemoryType::OpenThread, Level::Normal, "Ask about Laura");
+    thread.source_turns = vec![shared];
+    thread.urgency = Some(Urgency::Hot);
+    let thread = c.write(Actor::Writer, &thread).unwrap();
+
+    assert!(matches!(c.delete_all_memory(), Err(Error::NotFrozen)));
+    c.set_mood(Actor::Writer, &mood("the ledger")).unwrap();
+    c.write_section(Actor::Writer, Section::AboutUser, "Has a sister, Laura")
+        .unwrap();
+
+    c.set_frozen(true).unwrap();
+    let report = c.delete_all_memory().unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.memories, 4, "the superseded memory goes too");
+    // `own` was cited by both madrid and lisbon but only goes with the last of them.
+    assert_eq!(report.turns, 2);
+    // `spare` cited nothing, so it outlives the memories and falls in the sweep.
+    assert_eq!(report.leftover_turns, 1);
+    assert_eq!(report.sessions, 1);
+
+    let db = raw(c.db_path(), "k");
+    for sql in [
+        "SELECT count(*) FROM memories",
+        "SELECT count(*) FROM memory_versions",
+        "SELECT count(*) FROM memory_sources",
+        "SELECT count(*) FROM memory_vectors",
+        "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'laura'",
+    ] {
+        assert_eq!(count(&db, sql), 0, "{sql}");
+    }
+    for gone in [dad, madrid, lisbon, thread] {
+        assert!(matches!(c.memory(gone), Err(Error::NotFound(_))), "#{gone}");
+    }
+    let turns: Vec<i64> = db
+        .prepare("SELECT id FROM turns ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(turns, Vec::<i64>::new(), "the whole transcript goes");
+    assert_eq!(count(&db, "SELECT count(*) FROM sessions"), 0);
+    assert_eq!(count(&db, "SELECT count(*) FROM mood_states"), 0);
+    assert_eq!(count(&db, "SELECT count(*) FROM soul_section_versions"), 0);
+
+    // Deleting again is harmless, and unfreezing leaves it empty.
+    assert_eq!(
+        c.delete_all_memory().unwrap(),
+        clanka_core::DeleteAll::default()
+    );
+    c.set_frozen(false).unwrap();
+    assert_eq!(
+        count(&raw(c.db_path(), "k"), "SELECT count(*) FROM memories"),
+        0
+    );
+}
+
+#[test]
+fn delete_all_keeps_the_transcript_while_a_memory_refuses() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let s = c.open_session().unwrap();
+    let stuck_turn = c.record_turn(s, Speaker::User, "I live in Madrid").unwrap();
+    let tea_turn = c.record_turn(s, Speaker::User, "I like tea").unwrap();
+    let mut stuck = draft(MemoryType::UserFact, Level::Normal, "Sam lives in Madrid");
+    stuck.source_turns = vec![stuck_turn];
+    let stuck = c.write(Actor::Writer, &stuck).unwrap();
+    let mut tea = draft(MemoryType::Preference, Level::Normal, "Sam likes tea");
+    tea.source_turns = vec![tea_turn];
+    let tea = c.write(Actor::Writer, &tea).unwrap();
+    // Recall points the stuck memory at the session, which then can't go.
+    c.mark_recalled(s, &[stuck]).unwrap();
+    raw(c.db_path(), "k")
+        .execute_batch(&format!(
+            "CREATE TRIGGER stuck BEFORE DELETE ON memories WHEN OLD.id = {stuck}
+             BEGIN SELECT RAISE(ABORT, 'stuck'); END;"
+        ))
+        .unwrap();
+    c.set_frozen(true).unwrap();
+
+    let report = c.delete_all_memory().unwrap();
+    assert_eq!(report.failed.len(), 1);
+    assert_eq!(report.failed[0].0, stuck);
+    assert!(report.failed[0].1.contains("stuck"), "{:?}", report.failed);
+    assert_eq!((report.memories, report.turns), (1, 1));
+    assert_eq!((report.leftover_turns, report.sessions), (0, 0));
+    assert!(matches!(c.memory(tea), Err(Error::NotFound(_))));
+    assert_eq!(c.memory(stuck).unwrap().source_turns, vec![stuck_turn]);
+    let db = raw(c.db_path(), "k");
+    assert_eq!(count(&db, "SELECT count(*) FROM sessions"), 1);
+
+    db.execute_batch("DROP TRIGGER stuck").unwrap();
+    let report = c.delete_all_memory().unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!((report.memories, report.turns), (1, 1));
+    assert_eq!((report.leftover_turns, report.sessions), (0, 1));
+    assert_eq!(count(&db, "SELECT count(*) FROM memories"), 0);
+    assert_eq!(count(&db, "SELECT count(*) FROM turns"), 0);
+}
+
+#[test]
 fn the_doctor_token_is_exact_and_required() {
     let id = Uuid::now_v7();
     let soul = Soul::parse(&soul_text(id, 0.7, &["a"])).unwrap();
