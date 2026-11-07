@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use clanka::setup::{
     self, Config, MODEL_FILES, MODEL_REPO, Paths, SecretServiceKeys, SharedEmbedder,
 };
+use clanka_core::PersonaStatus;
 use clanka_core::soul::Soul;
 use clap::{Parser, Subcommand};
 use std::ffi::OsString;
@@ -44,7 +45,17 @@ enum Command {
         /// The companion's display name.
         name: String,
     },
-    /// Check or print a soul.md.
+    /// Check or print a soul.md, or settle a change to its persona.
+    ///
+    /// The persona is the soul.md's Markdown body: who the companion is. Editing it makes
+    /// chat, MCP and Hermes refuse the companion until you choose what its memories do:
+    /// `continue`, `update` or `fork`. Editing the frontmatter (traits such as drift or
+    /// tired_at, or the doctor token) is not a persona change; it applies the next time the
+    /// companion opens. Either way, restart anything that has the companion open.
+    #[command(after_long_help = "Example, after editing the persona:\n  \
+        clanka soul lint ~/.config/clanka/souls/<id>.md\n  \
+        clanka soul continue ~/.config/clanka/souls/<id>.md\n  \
+        clanka soul persona ~/.config/clanka/souls/<id>.md > SOUL.md   # for Hermes")]
     Soul {
         #[command(subcommand)]
         command: SoulCommand,
@@ -121,6 +132,42 @@ enum SoulCommand {
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,
     },
+    /// Accept an edited persona and keep every memory as it was felt.
+    ///
+    /// Old memories stay as they were written under the old persona; new ones are written
+    /// under the new one. Instant, and calls no model. Does nothing if the persona did not
+    /// change.
+    #[command(after_long_help = "Example:\n  clanka soul continue ~/.config/clanka/souls/<id>.md")]
+    Continue {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
+    /// Accept an edited persona and have the companion re-read its memories under it.
+    ///
+    /// Needs the [model] in ~/.config/clanka/config.toml. Freezes writes, accepts the
+    /// persona, then asks the model to re-interpret every active memory that cites what was
+    /// said, in batches, from the transcript. Seared memories never change. Unfreezes when
+    /// it is done, unless the companion was frozen before. If it fails, the persona is
+    /// already accepted and the companion stays frozen: run it again to retry, or `clanka
+    /// doctor unfreeze` to keep the memories as they are. Takes a model call per batch.
+    /// Does nothing if the persona did not change and the companion is not frozen.
+    #[command(after_long_help = "Example:\n  clanka soul update ~/.config/clanka/souls/<id>.md")]
+    Update {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
+    /// Start a new companion from this soul.md and archive the old one.
+    ///
+    /// Archives the companion's database, which keeps everything but becomes read-only for
+    /// good, then gives the soul.md a new ID and a new database key in the Secret Service.
+    /// The next open starts the new companion with no memories, under the soul.md as it is
+    /// now. Nothing is deleted. Works whether or not the persona changed; if it stops
+    /// halfway, run it again.
+    #[command(after_long_help = "Example:\n  clanka soul fork ~/.config/clanka/souls/<id>.md")]
+    Fork {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -183,6 +230,15 @@ fn main() -> Result<()> {
             println!("{}", Soul::load(&soul)?.body.trim());
             Ok(())
         }
+        Command::Soul {
+            command: SoulCommand::Continue { soul },
+        } => persona_continue(&paths, &soul),
+        Command::Soul {
+            command: SoulCommand::Update { soul },
+        } => persona_update(&paths, &soul),
+        Command::Soul {
+            command: SoulCommand::Fork { soul },
+        } => fork(&paths, &soul),
         Command::Doctor {
             command: DoctorCommand::Freeze { soul },
         } => doctor(&paths, &soul, DoctorAction::Freeze),
@@ -234,9 +290,10 @@ fn open_pair(
 ) -> Result<(clanka_core::Companion, Option<clanka_core::Companion>)> {
     let embedder = SharedEmbedder::load(paths)?;
     let chat = setup::open(paths, soul, embedder.clone(), config.model.as_ref())?;
-    if let clanka_core::PersonaStatus::Changed { .. } = chat.persona_status() {
+    if let PersonaStatus::Changed { .. } = chat.persona_status() {
         bail!(
-            "{} changed since its memories were written; choose continue, update or fork first",
+            "{} changed since its memories were written; run `clanka soul continue`, `update` or \
+             `fork` on it first (`clanka soul help` explains each)",
             soul.display()
         );
     }
@@ -309,6 +366,124 @@ fn doctor(paths: &Paths, soul: &Path, action: DoctorAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The persona choices open the companion as the doctor does, without the
+/// refusal `open_pair` gives a changed persona: settling that is their job.
+fn persona_continue(paths: &Paths, soul: &Path) -> Result<()> {
+    let mut companion = setup::open(paths, soul, SharedEmbedder::load(paths)?, None)?;
+    refuse_archived(&companion, soul)?;
+    if !matches!(companion.persona_status(), PersonaStatus::Changed { .. }) {
+        println!(
+            "{}: the persona has not changed; nothing to do.",
+            soul.display()
+        );
+        return Ok(());
+    }
+    companion.continue_with_persona()?;
+    println!(
+        "Continued {} under its new persona; its memories stay as they were felt. Restart \
+         anything that has it open.",
+        soul.display()
+    );
+    Ok(())
+}
+
+fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
+    let config = Config::load(paths)?;
+    let Some(model) = &config.model else {
+        bail!(
+            "no companion model configured to re-read the memories; add a [model] section to {}, \
+             or use `clanka soul continue`",
+            paths.config_file().display()
+        );
+    };
+    let mut companion = setup::open(paths, soul, SharedEmbedder::load(paths)?, Some(model))?;
+    refuse_archived(&companion, soul)?;
+    // A failed update has already accepted the persona and left it frozen; that
+    // is the one way to need an update with the persona unchanged.
+    if !matches!(companion.persona_status(), PersonaStatus::Changed { .. })
+        && !companion.is_frozen()?
+    {
+        println!(
+            "{}: the persona has not changed; nothing to do.",
+            soul.display()
+        );
+        return Ok(());
+    }
+    let reflections = companion.update_persona()?;
+    let reinterpreted = reflections
+        .iter()
+        .flat_map(|r| &r.calls)
+        .filter(|c| c.name == "reinterpret" && c.ok)
+        .count();
+    let rounds: usize = reflections.iter().map(|r| r.rounds).sum();
+    println!(
+        "Updated {}: {reinterpreted} memories re-read under the new persona in {rounds} model \
+         calls. Restart anything that has it open.",
+        soul.display()
+    );
+    if companion.is_frozen()? {
+        println!(
+            "It is still frozen, as it was before; run `clanka doctor unfreeze {}` when ready.",
+            soul.display()
+        );
+    }
+    Ok(())
+}
+
+fn refuse_archived(companion: &clanka_core::Companion, soul: &Path) -> Result<()> {
+    if companion.is_archived()? {
+        bail!(
+            "{} points at an archived companion; run `clanka soul fork {}` to finish forking it",
+            soul.display(),
+            soul.display()
+        );
+    }
+    Ok(())
+}
+
+/// Archives the companion, then moves the soul.md to a new ID and key. The key
+/// is stored first and the file replaced last, so stopping anywhere leaves
+/// either the old companion or an archived one that another fork finishes.
+fn fork(paths: &Paths, soul: &Path) -> Result<()> {
+    let text =
+        std::fs::read_to_string(soul).with_context(|| format!("reading {}", soul.display()))?;
+    let old = Soul::parse(&text)?.traits.id;
+    let new = uuid::Uuid::now_v7();
+    let forked = with_id(&text, old, new)?;
+    let mut companion = setup::open(paths, soul, SharedEmbedder::load(paths)?, None)?;
+    SecretServiceKeys::store(new, &setup::random_hex(32))?;
+    companion.archive()?;
+    drop(companion);
+    let partial = soul.with_extension("md.part");
+    std::fs::write(&partial, forked).with_context(|| format!("writing {}", partial.display()))?;
+    std::fs::rename(&partial, soul).with_context(|| format!("replacing {}", soul.display()))?;
+    println!(
+        "Forked {}: {old} is archived and read-only, and the soul.md now starts {new} with no \
+         memories. Restart anything that has it open.",
+        soul.display()
+    );
+    Ok(())
+}
+
+/// The soul.md text with its frontmatter `id` changed, and nothing else.
+fn with_id(text: &str, old: uuid::Uuid, new: uuid::Uuid) -> Result<String> {
+    let end = text
+        .get(4..)
+        .and_then(|rest| rest.find("\n+++"))
+        .map(|i| i + 4)
+        .context("the soul.md has no closing `+++` frontmatter line")?;
+    let (front, body) = text.split_at(end);
+    let old = old.to_string();
+    if front.matches(&old).count() != 1 {
+        bail!("can't find the soul.md's id once in its frontmatter; change it by hand");
+    }
+    let forked = format!("{}{body}", front.replacen(&old, &new.to_string(), 1));
+    if Soul::parse(&forked)?.traits.id != new {
+        bail!("rewriting the soul.md's id didn't take; change it by hand");
+    }
+    Ok(forked)
 }
 
 fn init(paths: &Paths, name: &str) -> Result<()> {
@@ -411,6 +586,32 @@ fn lint(path: &Path) -> Result<()> {
 mod tests {
     use clap::Parser;
     use clap::error::ErrorKind;
+
+    #[test]
+    fn a_fork_changes_only_the_frontmatter_id() {
+        let (old, new) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        let text = super::soul_template(old, "Nova", &"a".repeat(32))
+            + &format!("\nNova was born as {old}.\n");
+        let forked = super::with_id(&text, old, new).unwrap();
+        assert_eq!(
+            forked,
+            text.replacen(&format!("id = \"{old}\""), &format!("id = \"{new}\""), 1)
+        );
+        assert!(
+            forked.contains(&format!("born as {old}")),
+            "the body is untouched"
+        );
+        let soul = clanka_core::soul::Soul::parse(&forked).unwrap();
+        assert_eq!(soul.traits.id, new);
+        assert_eq!(
+            soul.hash,
+            clanka_core::soul::Soul::parse(&text).unwrap().hash
+        );
+        assert!(
+            super::with_id(&text, new, old).is_err(),
+            "not this soul's id"
+        );
+    }
 
     #[test]
     fn a_trailing_help_explains_every_command() {

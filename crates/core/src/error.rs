@@ -41,7 +41,10 @@ pub enum Error {
     NotFrozen,
     #[error("this companion is archived and read-only")]
     Archived,
-    #[error("the persona changed; choose to continue, update or fork before writing")]
+    #[error(
+        "the persona changed; resolve it with `clanka soul continue`, `update` or `fork`, then \
+         reopen the companion"
+    )]
     PersonaUnresolved,
     #[error("session {0} has ended")]
     SessionClosed(i64),

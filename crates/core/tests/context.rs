@@ -177,7 +177,7 @@ fn the_companion_tires_as_the_session_fills_its_share() {
 fn a_changed_persona_blocks_assembly() {
     let f = fixture();
     open(&f, "k").unwrap();
-    std::fs::write(&f.soul, soul_text(f.id, 0.5, &["Honesty over comfort"])).unwrap();
+    std::fs::write(&f.soul, soul_text(f.id, 0.7, &["Kindness over comfort"])).unwrap();
     let c = open(&f, "k").unwrap();
     assert!(matches!(
         c.assemble(MESSAGE, 10_000, &Ranking::default()),

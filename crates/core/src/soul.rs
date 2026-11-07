@@ -18,8 +18,13 @@ pub struct Soul {
     pub traits: Traits,
     pub body: String,
     pub core_values: Vec<String>,
-    /// SHA-256 of the whole file, hex. Changes to traits or text both count.
+    /// SHA-256 of the persona body without its outer whitespace, hex: who the
+    /// companion is. Traits and the doctor token are settings, so editing them
+    /// is not a persona change.
     pub hash: String,
+    /// SHA-256 of the whole file, the hash before it covered only the body. A
+    /// database that still holds it for this exact file is upgraded on open.
+    pub(crate) legacy_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -69,15 +74,12 @@ impl Soul {
             )));
         }
 
-        let hash = Sha256::digest(text.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
         Ok(Soul {
             traits,
             body: body.to_owned(),
             core_values,
-            hash,
+            hash: sha256_hex(body.trim()),
+            legacy_hash: sha256_hex(text),
         })
     }
 
@@ -148,4 +150,11 @@ fn core_values(body: &str) -> Vec<String> {
         }
     }
     values
+}
+
+fn sha256_hex(text: &str) -> String {
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }

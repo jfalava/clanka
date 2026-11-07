@@ -349,7 +349,9 @@ impl Companion {
     /// "Update" after a persona change: accept the new persona and re-interpret
     /// every memory that can be, in batches. Freezes writes while it works and
     /// unfreezes when it succeeds; on failure it stays frozen for you to look.
+    /// A freeze that was on before, the doctor's or a failed update's, stays on.
     pub fn update_persona(&mut self) -> Result<Vec<Reflection>> {
+        let was_frozen = self.is_frozen()?;
         self.set_frozen(true)?;
         self.continue_with_persona()?;
         let ids: Vec<i64> = self
@@ -364,7 +366,9 @@ impl Companion {
         for batch in ids.chunks(REINTERPRET_BATCH) {
             reflections.push(self.reinterpret(batch)?);
         }
-        self.set_frozen(false)?;
+        if !was_frozen {
+            self.set_frozen(false)?;
+        }
         Ok(reflections)
     }
 

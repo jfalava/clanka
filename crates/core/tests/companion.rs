@@ -3,6 +3,7 @@ mod common;
 use clanka_core::soul::Soul;
 use clanka_core::{Companion, Error, PersonaStatus};
 use common::{deps, fixture, open, raw, soul_text};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[test]
@@ -15,7 +16,14 @@ fn persona_change_is_detected_until_continued() {
     );
 
     let accepted = Soul::load(&f.soul).unwrap().hash;
+    // Traits are settings, not the persona: no choice needed.
     std::fs::write(&f.soul, soul_text(f.id, 0.5, &["Honesty over comfort"])).unwrap();
+    assert_eq!(
+        open(&f, "k").unwrap().persona_status(),
+        &PersonaStatus::Unchanged
+    );
+
+    std::fs::write(&f.soul, soul_text(f.id, 0.5, &["Kindness over comfort"])).unwrap();
     let mut c = open(&f, "k").unwrap();
     assert_eq!(
         c.persona_status(),
@@ -34,6 +42,53 @@ fn persona_change_is_detected_until_continued() {
         open(&f, "k").unwrap().persona_status(),
         &PersonaStatus::Unchanged
     );
+}
+
+#[test]
+fn a_database_on_the_whole_file_hash_moves_to_the_body_hash_only_for_the_same_file() {
+    let f = fixture();
+    let db = open(&f, "k").unwrap().db_path().to_owned();
+    let text = std::fs::read_to_string(&f.soul).unwrap();
+    let whole: String = Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let store_old_hash = || {
+        raw(&db, "k")
+            .execute(
+                "UPDATE meta SET value = ?1 WHERE key = 'persona_hash'",
+                [&whole],
+            )
+            .unwrap();
+    };
+    let stored = || -> String {
+        raw(&db, "k")
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'persona_hash'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+
+    store_old_hash();
+    assert_eq!(
+        open(&f, "k").unwrap().persona_status(),
+        &PersonaStatus::Unchanged
+    );
+    assert_eq!(stored(), Soul::load(&f.soul).unwrap().hash);
+    assert_ne!(stored(), whole);
+
+    // Any edit since, even to a trait, can't be told apart from a persona edit.
+    store_old_hash();
+    std::fs::write(&f.soul, soul_text(f.id, 0.5, &["Honesty over comfort"])).unwrap();
+    assert_eq!(
+        open(&f, "k").unwrap().persona_status(),
+        &PersonaStatus::Changed {
+            accepted_hash: whole.clone()
+        }
+    );
+    assert_eq!(stored(), whole);
 }
 
 #[test]

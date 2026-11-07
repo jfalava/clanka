@@ -378,7 +378,7 @@ fn update_persona_reinterprets_under_the_new_soul_and_unfreezes() {
         ids.push(c.write(Actor::Writer, &d).unwrap());
     }
     drop(c);
-    std::fs::write(&f.soul, soul_text(f.id, 0.5, &["Honesty over comfort"])).unwrap();
+    std::fs::write(&f.soul, soul_text(f.id, 0.7, &["Kindness over comfort"])).unwrap();
     let new_hash = Soul::load(&f.soul).unwrap().hash;
 
     let prompts = Arc::default();
@@ -413,6 +413,23 @@ fn update_persona_reinterprets_under_the_new_soul_and_unfreezes() {
         2
     );
     assert!(!c.is_frozen().unwrap());
+    assert_eq!(
+        open(&f, "k").unwrap().persona_status(),
+        &PersonaStatus::Unchanged
+    );
+}
+
+#[test]
+fn update_persona_leaves_an_earlier_freeze_on() {
+    let f = fixture();
+    open(&f, "k").unwrap().set_frozen(true).unwrap();
+    std::fs::write(&f.soul, soul_text(f.id, 0.7, &["Kindness over comfort"])).unwrap();
+    let mut c = open(&f, "k").unwrap();
+    c.update_persona().unwrap();
+    assert!(
+        c.is_frozen().unwrap(),
+        "the doctor's freeze is not the update's to lift"
+    );
     assert_eq!(
         open(&f, "k").unwrap().persona_status(),
         &PersonaStatus::Unchanged

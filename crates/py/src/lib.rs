@@ -101,7 +101,7 @@ impl PyCompanion {
             let chat = open(for_chat)?;
             if let clanka_core::PersonaStatus::Changed { .. } = chat.persona_status() {
                 return Err(err(format!(
-                    "{} changed since its memories were written; choose continue, update or fork first",
+                    "{} changed since its memories were written; run `clanka soul continue`, `update` or `fork` on it first",
                     soul.display()
                 )));
             }

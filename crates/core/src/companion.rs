@@ -81,6 +81,21 @@ impl Companion {
                 PersonaStatus::New
             }
             Some(hash) if hash == soul.hash => PersonaStatus::Unchanged,
+            // The same file under the old whole-file hash: nothing changed, so
+            // move the database to the body hash instead of asking.
+            Some(hash) if hash == soul.legacy_hash => {
+                set_meta(&conn, "persona_hash", &soul.hash)?;
+                log(
+                    &conn,
+                    "cli",
+                    "persona_rehashed",
+                    "persona",
+                    None,
+                    &json!({ "hash": soul.hash }),
+                    now,
+                )?;
+                PersonaStatus::Unchanged
+            }
             Some(accepted_hash) => PersonaStatus::Changed { accepted_hash },
         };
 
