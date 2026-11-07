@@ -133,15 +133,17 @@ class _Plugin:
             # reflection on the goodbye would only retell it.
             if turns is not None and not sleep:
                 try:
-                    ok, refused = c.reflect(*turns)
+                    ok, refused, left_out = c.reflect(*turns)
+                    # What the model got wrong, so the protocol can be fixed where it fails.
                     if refused:
-                        # What the model got wrong, so the protocol can be fixed where it fails.
                         logger.warning(
                             "clanka: reflected on %s: %d ok, %d refused: %s",
                             turns, ok, len(refused), " | ".join(refused),
                         )
                     else:
                         logger.info("clanka: reflected on %s: %d ok", turns, ok)
+                    if left_out:
+                        logger.warning("clanka: facts left out: %s", " | ".join(left_out))
                 except Exception:
                     logger.exception("clanka: reflection on %s failed", turns)
             if sleep:

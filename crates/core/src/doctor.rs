@@ -291,12 +291,12 @@ impl Companion {
                 });
                 continue;
             }
-            let said = self.source_text(&memory)?.to_lowercase();
+            let said = self.source_text(&memory)?;
             for (key, value) in &memory.facts {
                 let value = value
                     .as_str()
                     .map_or_else(|| value.to_string(), str::to_owned);
-                if !said.contains(&value.to_lowercase()) {
+                if !crate::writer::said_verbatim(&said, &value) {
                     issues.push(FactIssue {
                         memory: id,
                         fact: Some((key.clone(), value)),
@@ -341,9 +341,13 @@ impl Companion {
             self.soul.body.trim(),
             instructions(&self.soul.traits.name)
         );
-        self.tool_loop(system, listed.join("\n\n"), tool_specs(), |c, call| {
-            c.run_reinterpret(call, &allowed, &mut done)
-        })
+        self.tool_loop(
+            system,
+            listed.join("\n\n"),
+            tool_specs(),
+            crate::actions::MAX_ACTIONS,
+            |c, call| c.run_reinterpret(call, &allowed, &mut done),
+        )
     }
 
     /// "Update" after a persona change: accept the new persona and re-interpret

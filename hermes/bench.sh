@@ -81,7 +81,9 @@ while :; do
     since | grep -qE 'clanka: (Asleep|Already asleep|sleep failed)' && break
     if [ "$(since | grep -cE 'clanka: (reflected on|reflection on .* failed)')" -ge "$n" ] || [ $waited -ge 180 ]; then
         echo "the companion didn't ask to sleep; resetting the session" >&2
-        HERMES_HOME=$home/profiles/$profile hermes --run-module code > "$out/sleep.log" 2>&1 <<'EOF' || echo "sleep failed; see $out/sleep.log" >&2
+        # A hermes process of its own doesn't read the profile's .env, where its model key is.
+        ( set -a; [ ! -f "$home/profiles/$profile/.env" ] || . "$home/profiles/$profile/.env"; set +a
+          HERMES_HOME=$home/profiles/$profile hermes --run-module code ) > "$out/sleep.log" 2>&1 <<'EOF' || echo "sleep failed; see $out/sleep.log" >&2
 import logging, sys, threading
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 from hermes_cli import plugins
@@ -111,6 +113,16 @@ done
         sed -E 's/.*; ([0-9]+) tokens in, ([0-9]+) out.*/\1 \2/' |
         awk '{i += $1; o += $2; n++} END { printf "  %d calls, %d tokens in, %d out\n", n, i, o }'
     { since; cat "$out/sleep.log" 2>/dev/null; } | grep -hE 'clanka: (reflected on|Asleep|sleep failed)' | sed 's/^.*clanka: /  /'
+    # What the writer got wrong, by kind: a reply that wasn't the JSON protocol, more
+    # calls than one exchange earns, or facts that weren't the user's words (written
+    # without them). Each is a line to fix in the protocol or the model, so they get
+    # their own count.
+    refused=$({ since; cat "$out/sleep.log" 2>/dev/null; } | grep -h 'clanka: reflected on' | grep -o 'refused: .*' | sed 's/^refused: //' | tr '|' '\n' | sed 's/^ *//')
+    echo "  refused calls: $(printf '%s' "$refused" | grep -c .) (invalid replies: $(printf '%s' "$refused" | grep -c 'invalid reply'), over the cap: $(printf '%s' "$refused" | grep -c 'not run;'))"
+    printf '%s\n' "$refused" | grep . | sed 's/^/    /' | cut -c1-200
+    left_out=$({ since; cat "$out/sleep.log" 2>/dev/null; } | grep -h 'clanka: facts left out' | sed 's/.*facts left out: //' | tr '|' '\n' | sed 's/^ *//')
+    echo "  writes with facts left out (not the user's words): $(printf '%s' "$left_out" | grep -c .)"
+    printf '%s\n' "$left_out" | grep . | sed 's/^/    /' | cut -c1-200
 } | tee "$out/cost.txt"
 
 "$clanka" memories "$soul" > "$out/memories.txt"

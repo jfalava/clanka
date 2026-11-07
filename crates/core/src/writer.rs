@@ -20,8 +20,15 @@ use serde_json::{Map, Value, json};
 /// Model calls per reflection. A model that keeps calling tools is cut off here.
 pub const MAX_ROUNDS: usize = 4;
 
+/// Tool calls one reflection may run. One exchange earns a few at most; a
+/// model that asks for more is over-keeping, and the rest is refused unrun.
+pub const MAX_CALLS: usize = 6;
+
 /// The [`ToolOutcome::name`] recorded for a JSON reply that was refused whole.
 pub const INVALID_REPLY: &str = "(invalid reply)";
+
+/// In a write's result when facts that weren't the user's words were dropped.
+pub const LEFT_OUT: &str = "left out";
 
 /// The writer is a careful bookkeeper, not a performer.
 const TEMPERATURE: f32 = 0.2;
@@ -53,19 +60,23 @@ impl Companion {
         let exchange = [user_turn, companion_turn];
         let prompt = self.reflection_prompt(&exchange, &said, &replied)?;
         let system = reflection_system(&self.soul);
-        self.tool_loop(system, prompt, tool_specs(), |c, call| {
-            c.run_tool(call, &exchange)
+        let spoken = format!("{said}\n{replied}");
+        self.tool_loop(system, prompt, tool_specs(), MAX_CALLS, |c, call| {
+            c.run_tool(call, &exchange, &spoken)
         })
     }
 
     /// Calls the model with tools for up to [`MAX_ROUNDS`] rounds, running each
     /// call through `run`. One round is the norm: the model is asked for every
     /// call at once and hears back only when one failed, so it can fix it.
+    /// Calls past `max_calls` are refused without running and end the loop:
+    /// a model that over-calls isn't asked to fix anything.
     pub(crate) fn tool_loop(
         &mut self,
         system: String,
         prompt: String,
         tools: Vec<ToolSpec>,
+        max_calls: usize,
         mut run: impl FnMut(&mut Self, &ToolCall) -> Result<String>,
     ) -> Result<Reflection> {
         // A text-only model gets the tools in the system prompt and answers in JSON.
@@ -129,7 +140,21 @@ impl Companion {
             });
             let mut results = Vec::new();
             let mut failed = false;
-            for call in &round_calls {
+            // Only calls that ran count: a model fixing a refused call isn't
+            // charged for the slip, or its correction would be refused as one too many.
+            let room = max_calls.saturating_sub(calls.iter().filter(|o| o.ok).count());
+            let cut = round_calls.len() > room;
+            for (i, call) in round_calls.iter().enumerate() {
+                if i >= room {
+                    calls.push(ToolOutcome {
+                        name: call.name.clone(),
+                        ok: false,
+                        result: format!(
+                            "error: not run; {max_calls} calls is the most one reflection makes"
+                        ),
+                    });
+                    continue;
+                }
                 let outcome = match run(self, call) {
                     Ok(done) => ToolOutcome {
                         name: call.name.clone(),
@@ -160,13 +185,13 @@ impl Companion {
             // The model was asked for every call at once, so a round where all
             // of them worked is the end: asking again only re-sends the whole
             // prompt for an empty reply. It hears back only to fix what failed.
-            if !failed {
+            if !failed || cut {
                 break;
             }
             if json {
                 messages.push(LlmMessage::user(format!(
-                    "Results:\n{}\nReply with actions that fix what failed, or {{\"actions\": []}} \
-                     to leave it.",
+                    "Results:\n{}\nReply with actions that fix what failed (the ones marked ok are \
+                     done; don't repeat them), or {{\"actions\": []}} to leave it.",
                     results.join("\n")
                 )));
             }
@@ -239,8 +264,9 @@ impl Companion {
         ids.into_iter().map(|id| self.memory(id)).collect()
     }
 
-    /// Runs one tool call and says what happened, for the model.
-    fn run_tool(&mut self, call: &ToolCall, exchange: &[i64; 2]) -> Result<String> {
+    /// Runs one tool call and says what happened, for the model. `spoken` is
+    /// the exchange's text, which every fact must be quoted from.
+    fn run_tool(&mut self, call: &ToolCall, exchange: &[i64; 2], spoken: &str) -> Result<String> {
         let w = Actor::Writer;
         match call.name.as_str() {
             "remember" => {
@@ -250,8 +276,8 @@ impl Companion {
                     return Err(Error::Invalid("use open_thread for open threads".into()));
                 }
                 let level = parse(Level::parse, &a.memory.level, "level")?;
-                let draft = a.memory.draft(kind, level, exchange);
-                Ok(format!("memory {}", self.write(w, &draft)?))
+                let (draft, note) = a.memory.draft(kind, level, exchange, spoken)?;
+                Ok(format!("memory {}{note}", self.write(w, &draft)?))
             }
             "supersede" => {
                 let a: Supersede = args(call)?;
@@ -260,10 +286,10 @@ impl Companion {
                     "" => old.level,
                     level => parse(Level::parse, level, "level")?,
                 };
-                let mut draft = a.memory.draft(old.kind, level, exchange);
+                let (mut draft, note) = a.memory.draft(old.kind, level, exchange, spoken)?;
                 draft.urgency = old.urgency;
                 Ok(format!(
-                    "memory {} replaces {}",
+                    "memory {} replaces {}{note}",
                     self.supersede(w, old.id, &draft)?,
                     old.id
                 ))
@@ -276,9 +302,11 @@ impl Companion {
             "open_thread" => {
                 let a: OpenThread = args(call)?;
                 let level = parse(Level::parse, &a.memory.level, "level")?;
-                let mut draft = a.memory.draft(MemoryType::OpenThread, level, exchange);
+                let (mut draft, note) =
+                    a.memory
+                        .draft(MemoryType::OpenThread, level, exchange, spoken)?;
                 draft.urgency = Some(parse(Urgency::parse, &a.urgency, "urgency")?);
-                Ok(format!("thread {}", self.write(w, &draft)?))
+                Ok(format!("thread {}{note}", self.write(w, &draft)?))
             }
             "close_thread" => {
                 let a: MemoryRef = args(call)?;
@@ -405,15 +433,86 @@ struct MemoryArgs {
 
 impl MemoryArgs {
     /// Every memory cites the exchange it came from, so the doctor can check
-    /// its facts and re-interpret it from what was really said.
-    fn draft(self, kind: MemoryType, level: Level, exchange: &[i64; 2]) -> MemoryDraft {
+    /// its facts and re-interpret it from what was really said. A fact that
+    /// isn't in `spoken` is left out here, before anything is written: the
+    /// model paraphrased or invented it, and no prompt wording stops that as
+    /// surely as a check does. The memory is still written with the rest, and
+    /// the note returned with it tells the model what was left out and why:
+    /// refusing the write only bought another model call to requote one fact.
+    fn draft(
+        self,
+        kind: MemoryType,
+        level: Level,
+        exchange: &[i64; 2],
+        spoken: &str,
+    ) -> Result<(MemoryDraft, String)> {
+        let mut facts = Map::new();
+        let mut left_out = Vec::new();
+        for (key, value) in self.facts {
+            let text = value
+                .as_str()
+                .map_or_else(|| value.to_string(), str::to_owned);
+            if said_verbatim(spoken, &text) {
+                facts.insert(key, value);
+            } else {
+                left_out.push(format!("{key:?}"));
+            }
+        }
+        let note = if left_out.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; {LEFT_OUT} {}: not the user's exact words",
+                left_out.join(", ")
+            )
+        };
         let mut draft = MemoryDraft::new(kind, level, self.interpretation);
         draft.source_turns = exchange.to_vec();
-        draft.facts = self.facts;
+        draft.facts = facts;
         draft.valence = self.valence;
         draft.strength = self.strength;
-        draft
+        Ok((draft, note))
     }
+}
+
+/// Whether `fact` was said in `spoken`: its words appear there, ignoring case,
+/// runs of whitespace, and the curly quotes, dashes and full-width punctuation
+/// some models swap in. Names, numbers and places still have to match.
+pub(crate) fn said_verbatim(spoken: &str, fact: &str) -> bool {
+    let fact = plain(fact);
+    !fact.is_empty() && plain(spoken).contains(&fact)
+}
+
+fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut after_space = true;
+    for c in text.chars() {
+        let c = match c {
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{FF02}' => '"',
+            '\u{2018}' | '\u{2019}' | '\u{FF07}' => '\'',
+            '\u{2013}' | '\u{2014}' | '\u{2010}' => '-',
+            '\u{FF0C}' => ',',
+            '\u{3002}' | '\u{FF0E}' => '.',
+            '\u{FF1A}' => ':',
+            '\u{FF1B}' => ';',
+            '\u{FF01}' => '!',
+            '\u{FF1F}' => '?',
+            '\u{FF08}' => '(',
+            '\u{FF09}' => ')',
+            c => c,
+        };
+        if c.is_whitespace() {
+            if !after_space {
+                out.push(' ');
+                after_space = true;
+            }
+        } else {
+            after_space = false;
+            out.extend(c.to_lowercase());
+        }
+    }
+    out.truncate(out.trim_end().len());
+    out
 }
 
 #[derive(Deserialize)]
@@ -477,7 +576,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             "interpretation": { "type": "string", "maxLength": 300 },
             "level": level,
             "facts": { "type": "object", "additionalProperties": { "type": "string" },
-                "description": "user_fact only: names, dates and places as said, a few words each." },
+                "description": "user_fact only: the user's exact words for names, dates and places, a few words each. Anything you would rephrase belongs in interpretation." },
             "valence": { "type": "number", "minimum": -1, "maximum": 1 },
         });
         properties

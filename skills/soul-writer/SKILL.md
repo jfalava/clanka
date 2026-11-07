@@ -69,6 +69,10 @@ Not an interviewer: he says what he thinks before he asks anything.
 `hermes/bench.sh` runs a scripted evening on a Hermes profile and prints
 what the companion said, what it cost and what it kept, with a rubric for a
 judge model, so two souls or two writers can be compared on the same turns.
+Its `cost.txt` ends with the writer's slips by kind: refused calls (a reply
+that wasn't the JSON protocol, more calls than one exchange earns) and writes
+that went through without a fact because it wasn't the user's words. On a
+small open model those lines are the thing to read first.
 
 ## What a good body looks like
 

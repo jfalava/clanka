@@ -47,9 +47,15 @@ impl Companion {
         );
         let mut episode = None;
         let mut drifted = Vec::new();
-        let reflection = self.tool_loop(system, prompt, tool_specs(), |c, call| {
-            c.run_sleep_tool(call, session, &offered, &mut episode, &mut drifted)
-        })?;
+        // A night makes as many calls as it has memories to drift; only the
+        // reply's own cap applies.
+        let reflection = self.tool_loop(
+            system,
+            prompt,
+            tool_specs(),
+            crate::actions::MAX_ACTIONS,
+            |c, call| c.run_sleep_tool(call, session, &offered, &mut episode, &mut drifted),
+        )?;
         let episode = episode.ok_or_else(|| {
             Error::Llm("sleep ended without an episode; the session stays open".into())
         })?;

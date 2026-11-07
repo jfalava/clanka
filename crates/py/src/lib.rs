@@ -162,27 +162,31 @@ impl PyCompanion {
     }
 
     /// Reflects on one exchange with the host model, as the companion. Slow:
-    /// call it off the hot path. Returns the count of actions that succeeded
-    /// and, for each that was refused (including a reply that wasn't valid JSON
-    /// actions), `"<action>: <error>"`.
+    /// call it off the hot path. Returns the count of actions that succeeded;
+    /// for each that was refused (including a reply that wasn't valid JSON
+    /// actions), `"<action>: <error>"`; and for each write that left facts
+    /// out because they weren't the user's words, `"<action>: <result>"`.
     fn reflect(
         &self,
         py: Python<'_>,
         user_turn: i64,
         companion_turn: i64,
-    ) -> PyResult<(usize, Vec<String>)> {
+    ) -> PyResult<(usize, Vec<String>, Vec<String>)> {
         py.detach(|| {
             let r = lock(&self.writer)
                 .reflect(user_turn, companion_turn)
                 .map_err(err)?;
             let ok = r.calls.iter().filter(|o| o.ok).count();
-            let refused = r
+            let describe =
+                |o: &clanka_core::writer::ToolOutcome| format!("{}: {}", o.name, o.result);
+            let refused = r.calls.iter().filter(|o| !o.ok).map(describe).collect();
+            let left_out = r
                 .calls
                 .iter()
-                .filter(|o| !o.ok)
-                .map(|o| format!("{}: {}", o.name, o.result))
+                .filter(|o| o.ok && o.result.contains(clanka_core::writer::LEFT_OUT))
+                .map(describe)
                 .collect();
-            Ok((ok, refused))
+            Ok((ok, refused, left_out))
         })
     }
 

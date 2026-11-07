@@ -460,6 +460,94 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
     assert_eq!(c.memory(seared).unwrap().level, Level::Seared);
 }
 
+/// A fact is the user's words. One that isn't in the exchange is left out of
+/// the write, whatever the prompt said, and the model is told so in the
+/// result instead of being asked again; the glyphs a model swaps in (curly
+/// quotes, full-width punctuation, case) don't make a quote wrong.
+#[test]
+fn a_fact_that_was_not_said_is_left_out_and_a_requoted_one_is_kept() {
+    let f = fixture();
+    // Three types: the fixture's embedder makes same-type writes near-duplicates.
+    let remember = |kind: &str, facts: Value| {
+        json!({ "tool": "remember", "arguments": { "type": kind, "level": "normal",
+            "interpretation": "Sam's sister is in Lisbon", "facts": facts } })
+    };
+    let reply = json!({ "actions": [
+        remember("user_fact", json!({ "sister": "Laura Smith", "city": "Lisbon" })),
+        remember("episode", json!({ "sister": "\u{201C}laura\u{201D}", "city": "lisbon\u{FF0C}" })),
+        remember("relationship", json!({ "sister": "" })),
+    ] });
+    let (model, requests) = text_script(vec![reply.to_string()]);
+    let mut c = open_text_only(&f, model);
+    let (said, replied) = exchange(
+        &mut c,
+        "My sister \"Laura\" moved to Lisbon,  for good.",
+        "Lisbon suits her.",
+    );
+
+    let reflection = c.reflect(said, replied).unwrap();
+    // Every write went through, so there is no round to fix anything.
+    assert_eq!(requests.lock().unwrap().len(), 1, "{:#?}", reflection.calls);
+    assert!(
+        reflection.calls.iter().all(|o| o.ok),
+        "{:#?}",
+        reflection.calls
+    );
+    assert!(
+        reflection.calls[0]
+            .result
+            .ends_with("; left out \"sister\": not the user's exact words"),
+        "{}",
+        reflection.calls[0].result
+    );
+    assert!(!reflection.calls[1].result.contains("left out"));
+    let db = raw(c.db_path(), "k");
+    let facts: Vec<String> = db
+        .prepare("SELECT facts FROM memories ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        facts,
+        [
+            r#"{"city":"Lisbon"}"#,
+            "{\"city\":\"lisbon\u{FF0C}\",\"sister\":\"\u{201C}laura\u{201D}\"}",
+            "{}"
+        ]
+    );
+}
+
+/// A model that asks for more than a reflection can earn runs the first few
+/// and hears that the rest were not run, once, with no round to "fix" them.
+#[test]
+fn calls_past_the_cap_are_refused_unrun_and_end_the_reflection() {
+    use clanka_core::writer::MAX_CALLS;
+    let f = fixture();
+    let notes: Vec<Value> = (0..MAX_CALLS + 2)
+        .map(|i| json!({ "tool": "leave_note", "arguments": { "note": format!("note {i}") } }))
+        .collect();
+    let (model, requests) = text_script(vec![json!({ "actions": notes }).to_string()]);
+    let mut c = open_text_only(&f, model);
+    let (said, replied) = exchange(&mut c, "hm", "hm?");
+
+    let reflection = c.reflect(said, replied).unwrap();
+    assert_eq!(reflection.rounds, 1);
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "no round to fix a refusal"
+    );
+    let ok = reflection.calls.iter().filter(|o| o.ok).count();
+    assert_eq!((ok, reflection.calls.len()), (MAX_CALLS, MAX_CALLS + 2));
+    assert!(reflection.calls[MAX_CALLS].result.contains("not run"));
+    assert_eq!(
+        c.last_turn_note().unwrap(),
+        Some((replied, format!("note {}", MAX_CALLS - 1)))
+    );
+}
+
 /// A host model that says nothing has nothing to keep; asking again would only
 /// re-send the whole prompt.
 #[test]
