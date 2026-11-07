@@ -32,15 +32,61 @@ pub fn protocol(tools: &[ToolSpec]) -> String {
          {\"actions\": [{\"tool\": \"<tool name>\", \"arguments\": {<arguments>}}]}\n\
          Put every action you want in this one reply; they run in order. You hear back only \
          if one fails, so you can fix it. When there is nothing to do, reply \
-         {\"actions\": []}.\n\nTools:",
+         {\"actions\": []}.\n\nTools, with their arguments as `name: type`. A `?` marks an \
+         optional argument; a field described once means the same wherever it appears.",
     );
+    let mut described: Vec<(String, String)> = Vec::new();
     for t in tools {
-        out.push_str(&format!(
-            "\n- {}: {}\n  arguments (JSON Schema): {}",
-            t.name, t.description, t.parameters
-        ));
+        out.push_str(&format!("\n- {}: {}", t.name, t.description));
+        let schema: Value = serde_json::from_str(&t.parameters).unwrap_or(Value::Null);
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .map(|r| r.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let Some(props) = schema["properties"].as_object() else {
+            continue;
+        };
+        // Required arguments first, so the model sees what it can't leave out.
+        let mut names: Vec<&String> = props.keys().collect();
+        names.sort_by_key(|n| !required.contains(&n.as_str()));
+        for name in names {
+            let p = &props[name];
+            let optional = if required.contains(&name.as_str()) {
+                ""
+            } else {
+                "?"
+            };
+            out.push_str(&format!("\n  {name}{optional}: {}", type_of(p)));
+            if let Some(d) = p["description"].as_str() {
+                let key = (name.clone(), d.to_string());
+                if !described.contains(&key) {
+                    out.push_str(&format!(" — {d}"));
+                    described.push(key);
+                }
+            }
+        }
     }
     out
+}
+
+/// A property's JSON Schema as a short type: `string`, `"a"|"b"`, `number -1..1`, `{"<key>": string, ...}`.
+fn type_of(p: &Value) -> String {
+    if let Some(e) = p["enum"].as_array() {
+        return e.iter().map(Value::to_string).collect::<Vec<_>>().join("|");
+    }
+    let ty = p["type"].as_str().unwrap_or("any");
+    match ty {
+        "object" => match p.get("additionalProperties") {
+            Some(v) if v.is_object() => format!("{{\"<key>\": {}, ...}}", type_of(v)),
+            _ => "object".into(),
+        },
+        "array" => format!("[{}]", type_of(&p["items"])),
+        "number" | "integer" => match (p["minimum"].as_f64(), p["maximum"].as_f64()) {
+            (Some(lo), Some(hi)) => format!("{ty} {lo}..{hi}"),
+            _ => ty.into(),
+        },
+        _ => ty.into(),
+    }
 }
 
 /// The reply's actions as tool calls, or why the whole reply was refused.
@@ -127,5 +173,38 @@ mod tests {
             vec![r#"{"tool": "leave_note", "arguments": {}}"#; MAX_ACTIONS + 1].join(",")
         );
         assert!(parse(&many, &tools()).is_err());
+    }
+
+    #[test]
+    fn the_protocol_keeps_every_argument_constraint_and_describes_shared_fields_once() {
+        let level = r#"{"type":"string","enum":["faint","seared"],"description":"How deep."}"#;
+        let spec = |name: &str, props: String, required: &str| ToolSpec {
+            name: name.into(),
+            description: format!("{name} it."),
+            parameters: format!(
+                r#"{{"type":"object","properties":{{{props}}},"required":[{required}]}}"#
+            ),
+        };
+        let p = protocol(&[
+            spec(
+                "remember",
+                format!(
+                    r#""valence":{{"type":"number","minimum":-1,"maximum":1}},"level":{level},"facts":{{"type":"object","additionalProperties":{{"type":"string"}}}}"#
+                ),
+                r#""level""#,
+            ),
+            spec(
+                "raise_level",
+                format!(r#""memory_id":{{"type":"integer"}},"level":{level}"#),
+                r#""memory_id","level""#,
+            ),
+        ]);
+        let tools = &p[p.find("- remember").unwrap()..];
+        assert_eq!(
+            tools,
+            "- remember: remember it.\n  level: \"faint\"|\"seared\" — How deep.\n  \
+             facts?: {\"<key>\": string, ...}\n  valence?: number -1..1\n\
+             - raise_level: raise_level it.\n  level: \"faint\"|\"seared\"\n  memory_id: integer"
+        );
     }
 }
