@@ -123,6 +123,7 @@ impl Companion {
                 tool_call_id: None,
             });
             let mut results = Vec::new();
+            let mut failed = false;
             for call in &round_calls {
                 let outcome = match run(self, call) {
                     Ok(done) => ToolOutcome {
@@ -138,6 +139,7 @@ impl Companion {
                         result: format!("error: {e}"),
                     },
                 };
+                failed |= !outcome.ok;
                 if json {
                     results.push(format!("- {}: {}", call.name, outcome.result));
                 } else {
@@ -151,8 +153,16 @@ impl Companion {
                 calls.push(outcome);
             }
             if json {
+                // A text-only model was asked for every action at once, so a
+                // round where all of them worked is the end: asking again only
+                // re-sends the whole prompt for an empty reply. It hears back
+                // only to fix what failed.
+                if !failed {
+                    break;
+                }
                 messages.push(LlmMessage::user(format!(
-                    "Results:\n{}\nReply with more actions, or {{\"actions\": []}} if you are done.",
+                    "Results:\n{}\nReply with actions that fix what failed, or {{\"actions\": []}} \
+                     to leave it.",
                     results.join("\n")
                 )));
             }

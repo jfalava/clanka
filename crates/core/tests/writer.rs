@@ -458,3 +458,25 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
     );
     assert_eq!(c.memory(seared).unwrap().level, Level::Seared);
 }
+
+#[test]
+fn a_text_only_round_that_fully_succeeds_ends_the_reflection() {
+    let f = fixture();
+    let reply = json!({ "actions": [{ "tool": "leave_note", "arguments": { "note": "Ask about Lisbon" } }] });
+    let (model, requests) = text_script(vec![reply.to_string(), r#"{"actions": []}"#.into()]);
+    let mut c = open_text_only(&f, model);
+    let (said, replied) = exchange(&mut c, "I moved to Lisbon.", "Lisbon!");
+
+    let reflection = c.reflect(said, replied).unwrap();
+    assert_eq!((reflection.rounds, reflection.calls.len()), (1, 1));
+    assert!(reflection.calls[0].ok);
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "no call just to hear {{\"actions\": []}}"
+    );
+    assert_eq!(
+        c.last_turn_note().unwrap(),
+        Some((replied, "Ask about Lisbon".into()))
+    );
+}

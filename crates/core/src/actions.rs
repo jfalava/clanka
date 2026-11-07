@@ -30,7 +30,8 @@ pub fn protocol(tools: &[ToolSpec]) -> String {
         "You have no function-calling interface here. To use tools, reply with ONLY one JSON \
          object, with no other text and no code fence:\n\
          {\"actions\": [{\"tool\": \"<tool name>\", \"arguments\": {<arguments>}}]}\n\
-         List several actions to run them in order. When there is nothing (more) to do, reply \
+         Put every action you want in this one reply; they run in order. You hear back only \
+         if one fails, so you can fix it. When there is nothing to do, reply \
          {\"actions\": []}.\n\nTools:",
     );
     for t in tools {
