@@ -6,13 +6,24 @@ use clanka::setup::{
 };
 use clanka_core::soul::Soul;
 use clap::{Parser, Subcommand};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
     name = "clanka",
     version,
-    about = "Long-term memory for chat companions"
+    about = "Long-term memory for chat companions",
+    long_about = "Long-term memory for chat companions.\n\n\
+        A companion is a soul.md (its persona and traits) plus an encrypted database of what \
+        it remembers. Start with `clanka init`, edit the soul.md it prints, then talk with \
+        the companion through `clanka chat` or serve it to an MCP host with `clanka mcp`.",
+    after_long_help = "Files (Linux):\n  \
+        ~/.config/clanka/souls/<id>.md   each companion's soul.md\n  \
+        ~/.config/clanka/config.toml     the [model] chat and memory writing run on\n  \
+        ~/.local/share/clanka/           the databases and the embedding model\n\n\
+        Every command explains itself: `clanka help <command>`, `clanka <command> help` or \
+        `clanka <command> --help`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -22,31 +33,62 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Create a new companion: a soul.md to edit, its database key and the embedding model.
+    ///
+    /// Writes a soul.md template under ~/.config/clanka/souls/ with a fresh ID and doctor
+    /// token, stores a random database key in the Secret Service (service "clanka") and
+    /// downloads the embedding model if it is missing. The database itself is created the
+    /// first time the companion opens. Prints the soul.md path that every other command
+    /// takes.
+    #[command(after_long_help = "Example:\n  clanka init Nova")]
     Init {
         /// The companion's display name.
         name: String,
     },
-    /// Soul commands.
+    /// Check or print a soul.md.
     Soul {
         #[command(subcommand)]
         command: SoulCommand,
     },
     /// The doctor's tools for when a companion's memory goes wrong.
+    ///
+    /// Freeze the companion first: while it is frozen nothing writes to its memory, and the
+    /// doctor's destructive commands refuse to run unless it is. Unfreeze when you are done.
+    #[command(after_long_help = "Example:\n  \
+        clanka doctor freeze ~/.config/clanka/souls/<id>.md\n  \
+        clanka doctor delete-all ~/.config/clanka/souls/<id>.md\n  \
+        clanka doctor unfreeze ~/.config/clanka/souls/<id>.md")]
     Doctor {
         #[command(subcommand)]
         command: DoctorCommand,
     },
     /// Talk with a companion in the terminal, on its [model].
+    ///
+    /// Needs a [model] section in ~/.config/clanka/config.toml (base_url, model and
+    /// api_key_env, which names the environment variable holding the key). Type a message
+    /// and press Enter; each reply is remembered in the background. Send /sleep to end the
+    /// conversation and turn it into memories, or send the soul's doctor_token to freeze
+    /// the memory and quit without recording anything. Refuses to start if the persona
+    /// changed since its memories were written.
+    #[command(after_long_help = "Example:\n  clanka chat ~/.config/clanka/souls/<id>.md")]
     Chat {
-        /// The companion's soul.md.
+        #[arg(help = SOUL_HELP)]
         soul: PathBuf,
         /// Estimated tokens the memory context may use per turn.
         #[arg(long, default_value_t = 6000)]
         budget: usize,
     },
     /// Serve a companion to an MCP host over stdio, for trying it out.
+    ///
+    /// The host does the talking and calls the tools: begin_turn before each reply, end_turn
+    /// after it, recall to search memory on purpose, and sleep to end the conversation. The
+    /// persona prompt tells the host's model how to use them. Memory is written by the
+    /// [model] in ~/.config/clanka/config.toml, so set the host to the same model; without
+    /// one, turns are recorded but never turned into memories and sleep is unavailable.
+    /// stdout carries the MCP protocol; notes go to stderr.
+    #[command(after_long_help = "Example, as an MCP server command:\n  \
+        clanka mcp ~/.config/clanka/souls/<id>.md")]
     Mcp {
-        /// The companion's soul.md.
+        #[arg(help = SOUL_HELP)]
         soul: PathBuf,
         /// Estimated tokens the memory context may use per turn.
         #[arg(long, default_value_t = 6000)]
@@ -54,29 +96,83 @@ enum Command {
     },
 }
 
+const SOUL_HELP: &str = "The companion's soul.md, as printed by `clanka init`";
+
 #[derive(Subcommand)]
 enum SoulCommand {
     /// Check a soul.md for errors.
-    Lint { soul: PathBuf },
-    /// Print the persona without its frontmatter, for a host's own persona
-    /// file such as Hermes's SOUL.md. The frontmatter holds the doctor token,
-    /// which must never reach the model.
-    Persona { soul: PathBuf },
+    ///
+    /// Fails if the frontmatter or the persona does not parse. Warns, without failing, when
+    /// there are no core values, when a core value is too vague to defend, or when the
+    /// persona is long enough to crowd every turn. Changes nothing.
+    #[command(after_long_help = "Example:\n  clanka soul lint ~/.config/clanka/souls/<id>.md")]
+    Lint {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
+    /// Print the persona without its frontmatter, for a host's own persona file.
+    ///
+    /// Use it to fill a persona file such as Hermes's SOUL.md. The frontmatter is left out
+    /// because it holds the doctor token, which must never reach the model. Changes nothing.
+    #[command(
+        after_long_help = "Example:\n  clanka soul persona ~/.config/clanka/souls/<id>.md > SOUL.md"
+    )]
+    Persona {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
 enum DoctorCommand {
     /// Stop every write to the memory while the doctor works.
-    Freeze { soul: PathBuf },
+    ///
+    /// Takes effect at once in every process that has the companion open: chat, MCP and
+    /// Hermes turns fail as frozen instead of being recorded. Sending the soul's
+    /// doctor_token in a chat does the same. Lasts until `clanka doctor unfreeze`.
+    Freeze {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
     /// Let writes through again.
-    Unfreeze { soul: PathBuf },
+    ///
+    /// Lifts a freeze from `clanka doctor freeze` or from the doctor token.
+    Unfreeze {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
     /// Delete every stored memory, seared ones included. Refuses unless frozen.
-    DeleteAll { soul: PathBuf },
+    ///
+    /// Irreversible. Deletes every memory, the whole transcript, the mood, the soul
+    /// sections the companion wrote and every session, so the companion starts blank. The
+    /// soul.md, the database key and the write log, which records only that deletes
+    /// happened, are kept. If some memories refuse to delete, it lists them, keeps the
+    /// transcript and sessions and exits non-zero; run it again once they are fixed. The
+    /// companion stays frozen afterwards.
+    DeleteAll {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
+}
+
+/// `clanka <command> help` prints that command's help on every command, not
+/// only on those with subcommands, so `clanka init help` explains init instead
+/// of creating a companion named "help".
+fn args(mut args: Vec<OsString>) -> Vec<OsString> {
+    // `clanka help ...` is clap's own and already names a command.
+    if args.len() > 2
+        && args[1] != "help"
+        && let Some(last) = args.last_mut()
+        && last == "help"
+    {
+        *last = "--help".into();
+    }
+    args
 }
 
 fn main() -> Result<()> {
     let paths = Paths::get()?;
-    match Cli::parse().command {
+    match Cli::parse_from(args(std::env::args_os().collect())).command {
         Command::Init { name } => init(&paths, &name),
         Command::Soul {
             command: SoulCommand::Lint { soul },
@@ -313,6 +409,28 @@ fn lint(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+    use clap::error::ErrorKind;
+
+    #[test]
+    fn a_trailing_help_explains_every_command() {
+        let parse = |line: &str| {
+            let words = line.split(' ').map(Into::into).collect();
+            super::Cli::try_parse_from(super::args(words)).map(|_| ())
+        };
+        for line in [
+            "clanka init help",
+            "clanka chat help",
+            "clanka doctor delete-all help",
+            "clanka soul help",
+            "clanka help soul help",
+        ] {
+            let err = parse(line).expect_err(line);
+            assert_eq!(err.kind(), ErrorKind::DisplayHelp, "{line}");
+        }
+        assert!(parse("clanka init Nova").is_ok());
+    }
+
     #[test]
     fn the_template_is_a_valid_soul() {
         let soul = super::soul_template(uuid::Uuid::now_v7(), "Nova", &"a".repeat(32));
