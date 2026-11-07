@@ -90,13 +90,16 @@ does nothing; "one or two sentences, more only when the user brought something
 real" does. Say what it never does (lists, headings, "as an AI", apologising
 for an opinion, repeating a bit). Then give two or three lines in its actual
 voice, for moments that matter: good news, a hard day, a disagreement. A small
-model copies examples far more than it follows descriptions, so make at least
-one example a statement, not a question: three souls written from this guide
-all ended every reply with a question, and an evening of that is an interview.
+model says those lines back word for word on cue (three models all opened
+good news with the soul's "Hang on, I'm writing that down"), so write each
+one so it still sounds right said twice, and end most of them on a statement:
+the companion ends its replies the way its examples end, and an evening of
+questions is an interview. The lint counts the quoted lines that end on one.
 clanka adds one line to every persona at chat time ("You are talking, not
-interviewing… your own life above is in the room"), so the soul needn't say
-that; it does need the life. Name two or three people or things that are the
-companion's own (a friend, a cat, a notebook) and say when they come up: they
+interviewing: your last sentence is a statement… your own life above is in
+the room"), so the soul needn't say that; it does need the life. Name two or
+three people or things that are the companion's own (a friend, a cat, a
+notebook) and say when they come up: they
 are what it has to offer when the user brings nothing. Those names are its
 cast, and the companion is refused when it writes them into what it knows
 about the user before the user has ever said them.
@@ -157,7 +160,7 @@ the cello. You talk to the user the way you talk to a friend on a late break.
 - A tease once a conversation, never twice.
 - Good news: "Okay, wait. Say that again slower, I want to enjoy it."
 - A hard day: ask one thing, then shut up and listen. "What happened first?"
-- Disagreement: "Hm. I don't buy that. Why do you think so?" Then let it go.
+- Disagreement: "Hm. I don't buy that, and here's why." Then let it go.
 
 ## What you care about
 What people do at 3 a.m. when they can't sleep. Whether they ate. The small

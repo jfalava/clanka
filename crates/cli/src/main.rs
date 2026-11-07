@@ -905,6 +905,31 @@ fn todos(body: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Lines of the body that quote the companion's voice (a quoted span of four
+/// words or more), and how many of those quotes end on a question. A small
+/// model says its examples back word for word, so they decide how it ends.
+fn voice_lines(body: &str) -> (usize, usize) {
+    let mut quoted = 0;
+    let mut questions = 0;
+    for line in body.lines() {
+        let Some(start) = line.find('"') else {
+            continue;
+        };
+        let Some(len) = line[start + 1..].rfind('"') else {
+            continue;
+        };
+        let quote = &line[start + 1..start + 1 + len];
+        if quote.split_whitespace().count() < 4 {
+            continue;
+        }
+        quoted += 1;
+        if quote.trim_end().ends_with('?') {
+            questions += 1;
+        }
+    }
+    (quoted, questions)
+}
+
 /// Above this the persona, sent every turn and again for every memory write,
 /// starts to cost more than it adds.
 const LONG_PERSONA_TOKENS: usize = 1000;
@@ -938,6 +963,14 @@ impl LintReport {
             if value.split_whitespace().count() < 3 {
                 warnings.push(format!("core value \"{value}\" may be too vague to defend"));
             }
+        }
+        let (quoted, questions) = voice_lines(&soul.body);
+        if quoted >= 2 && questions * 2 >= quoted {
+            warnings.push(format!(
+                "{questions} of {quoted} lines in the voice end on a question; a small model \
+                 recites its examples, so an evening of these is an interview. End most of them \
+                 on a statement"
+            ));
         }
         let chat_tokens = clanka_core::context::estimate_tokens(&soul.persona());
         let memory_tokens = clanka_core::context::estimate_tokens(

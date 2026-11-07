@@ -243,8 +243,12 @@ impl Companion {
             "Memories this brings up:\n{}",
             or_none(&memories.join("\n"))
         ));
+        // The two turns are labelled by whose words they are: every model tried
+        // turned its own questions and guesses into things the user had said.
         out.push(format!(
-            "The exchange:\nTurn {} (user): {said}\nTurn {} (you): {replied}",
+            "What they said (turn {}), the only source for facts and for anything they did or \
+             said:\n{said}\n\nWhat you replied (turn {}), your words: a question you asked is not \
+             something they answered, and a guess you made is not a fact:\n{replied}",
             exchange[0], exchange[1]
         ));
         // Last, where a small model weighs it most: the expected size of the reply.
@@ -376,10 +380,9 @@ fn instructions(name: &str) -> String {
          the evening becomes a memory then too.\n\n\
          Write interpretations in first person, as you felt them, in one or two sentences: what \
          happened and what it meant to you. Don't retell what you replied; the memory keeps the \
-         exchange it came from. What you make of it is yours to write; what they said is not: a \
-         guess stays a guess and never turns into something they told you. One memory from an \
-         exchange is the norm, a second only for a \
-         separate thing worth keeping. A memory's level is how deeply it's burned in: faint, \
+         exchange it came from. What you make of it is yours to write; what they said is not. \
+         One memory from an exchange is the norm, a second only for a separate thing worth \
+         keeping. A memory's level is how deeply it's burned in: faint, \
          normal, vivid or seared; seared ones never change or fade, so use that rarely. Facts go \
          on user_fact memories only: the names, dates and places that were said, exactly as \
          said; they never change later. Valence is how it feels to you, -1 to 1.\n\n\

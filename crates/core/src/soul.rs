@@ -17,10 +17,12 @@ pub const MIN_DOCTOR_TOKEN: usize = 16;
 
 /// Added to every persona at chat time. Every model tried, Opus included, ends
 /// most replies with a question and never brings up the people in its own
-/// soul unless told so here, so the soul doesn't have to say it.
-pub const TALK_HINT: &str = "You are talking, not interviewing: end most replies on what you \
-    think, one question at most. Your own life above is in the room: bring a piece of it in \
-    when it fits, in a line.";
+/// soul unless told so here, so the soul doesn't have to say it. Phrased as
+/// something the model can check on its own reply ("end on what you think"
+/// was obeyed by none of the small models; "one question at most" by all).
+pub const TALK_HINT: &str = "You are talking, not interviewing: your last sentence is a \
+    statement, not a question. Ask one thing at most, and ask it before the end. Your own life \
+    above is in the room: bring a piece of it in when it fits, in a line.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Soul {

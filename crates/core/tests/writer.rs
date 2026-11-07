@@ -99,7 +99,8 @@ fn one_reflection_reaches_every_kind_of_state() {
     let prompt = &first.messages[0].content;
     assert!(
         prompt.contains(&format!(
-            "Turn {said} (user): I moved to Lisbon. For Laura."
+            "What they said (turn {said}), the only source for facts and for anything they did \
+             or said:\nI moved to Lisbon. For Laura."
         )),
         "{prompt}"
     );
