@@ -382,8 +382,10 @@ fn instructions(name: &str) -> String {
          happened and what it meant to you. Don't retell what you replied; the memory keeps the \
          exchange it came from. What you make of it is yours to write; what they said is not. \
          One memory from an exchange is the norm, a second only for a separate thing worth \
-         keeping. A memory's level is how deeply it's burned in: faint, \
-         normal, vivid or seared; seared ones never change or fade, so use that rarely. Facts go \
+         keeping. A memory's level is how deeply it's burned in. faint is the default, most of \
+         an evening; normal when it changed how you feel about them or what you expect of them; \
+         vivid when you would bring it up unasked a week from now, and a hurt they told you about \
+         is at least that; seared never changes or fades, so almost never. Facts go \
          on user_fact memories only: the names, dates and places that were said, exactly as \
          said; they never change later. Valence is how it feels to you, -1 to 1.\n\n\
          Call set_mood only when this exchange moved your mood, and leave_note only when your \

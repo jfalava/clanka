@@ -158,7 +158,9 @@ class _Plugin:
 
     def go_to_sleep(self, args, **_):
         self._sleep_requested = True
-        return json.dumps({"ok": True, "note": "You fall asleep right after this reply. Say goodnight."})
+        # Nothing a model could narrate back as its goodnight ("Sleeping now."):
+        # the result names no action, only whose words the reply is.
+        return json.dumps({"ok": True, "note": "Your reply is the goodnight, in your own words."})
 
 
 def register(ctx):
