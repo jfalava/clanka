@@ -151,6 +151,9 @@ mod fastembed_impl {
     use std::path::Path;
     use std::sync::Mutex;
 
+    /// ONNX Runtime threads per embedding.
+    const EMBED_THREADS: usize = 1;
+
     /// fastembed with an ONNX model loaded from a local directory holding
     /// `model.onnx`, `tokenizer.json`, `config.json`, `special_tokens_map.json`
     /// and `tokenizer_config.json`.
@@ -191,11 +194,11 @@ mod fastembed_impl {
             if let Some(pooling) = TextEmbedding::get_default_pooling_method(&model) {
                 user_model = user_model.with_pooling(pooling);
             }
-            let mut inner = TextEmbedding::try_new_from_user_defined(
-                user_model,
-                InitOptionsUserDefined::default(),
-            )
-            .map_err(|e| Error::Embedder(e.to_string()))?;
+            // One text at a time on a small model: more threads than this only
+            // burn CPU on synchronisation (fastembed's default is every core).
+            let options = InitOptionsUserDefined::default().with_intra_threads(EMBED_THREADS);
+            let mut inner = TextEmbedding::try_new_from_user_defined(user_model, options)
+                .map_err(|e| Error::Embedder(e.to_string()))?;
             let dimensions = inner
                 .embed(vec!["probe"], None)
                 .map_err(|e| Error::Embedder(e.to_string()))?[0]
