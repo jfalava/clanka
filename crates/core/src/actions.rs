@@ -91,8 +91,12 @@ fn type_of(p: &Value) -> String {
 
 /// The reply's actions as tool calls, or why the whole reply was refused.
 /// A single wrong action refuses all of them: a malformed reply runs nothing.
+/// An empty reply is nothing to do, not a reply to correct.
 pub fn parse(text: &str, tools: &[ToolSpec]) -> Result<Vec<ToolCall>, String> {
     let text = strip_fence(text.trim());
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
     let reply: Reply = serde_json::from_str(text).map_err(|e| {
         format!("the reply must be exactly {{\"actions\": [...]}} and nothing else ({e})")
     })?;

@@ -227,7 +227,8 @@ fn instructions(name: &str) -> String {
          The memories that came up tonight may shift as you sleep. For each one listed, call \
          drift with how you now remember it, changed by about its drift amount (0 is the same, \
          1 is quite different) and coloured by how tonight felt. Vivid memories only blur in \
-         detail. Never change names, dates or places. Call no tools when you are done."
+         detail. Never change names, dates or places. Make every call in this one reply; you \
+         hear back only if one fails."
     )
 }
 

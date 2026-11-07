@@ -88,8 +88,8 @@ fn one_reflection_reaches_every_kind_of_state() {
 
     let reflection = c.reflect(said, replied).unwrap();
     assert_eq!(
-        reflection.rounds, 2,
-        "one round of tools, one to say it's done"
+        reflection.rounds, 1,
+        "every call worked, so the model isn't asked again"
     );
     assert!(
         reflection.calls.iter().all(|o| o.ok),
@@ -169,7 +169,7 @@ fn a_failed_call_goes_back_so_the_model_can_correct_it() {
     let (said, replied) = exchange(&mut c, "I keep thinking about Laura", "You miss her.");
 
     let reflection = c.reflect(said, replied).unwrap();
-    assert_eq!(reflection.rounds, 3);
+    assert_eq!(reflection.rounds, 2, "the fix worked, so no third round");
     assert!(
         !reflection.calls[0].ok && reflection.calls[1].ok,
         "{:#?}",
@@ -287,7 +287,7 @@ fn malformed_arguments_are_an_error_the_model_sees() {
 }
 
 #[test]
-fn a_model_that_never_stops_is_cut_off() {
+fn a_model_that_never_stops_failing_is_cut_off() {
     let f = fixture();
     let rounds = Arc::new(Mutex::new(0));
     let seen = rounds.clone();
@@ -295,8 +295,8 @@ fn a_model_that_never_stops_is_cut_off() {
         *seen.lock().unwrap() += 1;
         let call = ToolCall {
             id: "n".into(),
-            name: "leave_note".into(),
-            arguments: json!({ "note": "again" }).to_string(),
+            name: "close_thread".into(),
+            arguments: json!({ "memory_id": 999 }).to_string(),
         };
         LlmResponse {
             text: String::new(),
@@ -332,8 +332,14 @@ fn a_freeze_stops_the_writer_before_and_during_reflection() {
             arguments: json!({ "type": "episode", "level": "normal", "interpretation": interp })
                 .to_string(),
         };
+        // A failed call in the first round is what earns a second one.
+        let bad = ToolCall {
+            id: "bad".into(),
+            name: "close_thread".into(),
+            arguments: json!({ "memory_id": 999 }).to_string(),
+        };
         let calls = match r.messages.len() {
-            1 => vec![call(0, "first, before the freeze")],
+            1 => vec![call(0, "first, before the freeze"), bad],
             _ => vec![call(1, "second, after it")],
         };
         LlmResponse {
@@ -396,12 +402,14 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
     let lower_seared = json!({ "tool": "raise_level",
         "arguments": { "memory_id": seared, "level": "faint" } });
     let replies = vec![
-        // Prose, then a valid action next to one for a tool that isn't offered: nothing runs.
+        // Prose: nothing runs, the model is asked once more.
         "Sure, I'll remember Laura.".to_string(),
-        json!({ "actions": [remember, { "tool": "delete_memory", "arguments": { "memory_id": seared } }] })
-            .to_string(),
         // Valid shape: each action goes through the guarded handlers on its own.
         format!("```json\n{}\n```", json!({ "actions": [remember, lower_seared] })),
+        // A valid action next to one for a tool that isn't offered: nothing runs,
+        // and a second refused reply is the end, not another ask.
+        json!({ "actions": [remember, { "tool": "delete_memory", "arguments": { "memory_id": seared } }] })
+            .to_string(),
         r#"{"actions": []}"#.to_string(),
     ];
     let (model, requests) = text_script(replies);
@@ -418,16 +426,17 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
         outcomes,
         [
             (clanka_core::writer::INVALID_REPLY, false),
-            (clanka_core::writer::INVALID_REPLY, false),
             ("remember", true),
             ("raise_level", false),
+            (clanka_core::writer::INVALID_REPLY, false),
         ]
     );
-    assert_eq!(reflection.rounds, 4);
-    assert!(reflection.calls[1].result.contains("delete_memory"));
+    assert_eq!(reflection.rounds, 3);
+    assert!(reflection.calls[3].result.contains("delete_memory"));
 
     // The tools went into the system prompt, never as native tools.
     let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
     assert!(requests.iter().all(|r| r.tools.is_empty()));
     assert!(requests[0].system.contains("- remember:"));
     assert!(
@@ -439,7 +448,7 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
             .starts_with("Nothing was done")
     );
     assert!(
-        requests[3]
+        requests[2]
             .messages
             .last()
             .unwrap()
@@ -457,6 +466,20 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
         1
     );
     assert_eq!(c.memory(seared).unwrap().level, Level::Seared);
+}
+
+/// A host model that says nothing has nothing to keep; asking again would only
+/// re-send the whole prompt.
+#[test]
+fn an_empty_text_reply_is_nothing_to_do() {
+    let f = fixture();
+    let (model, requests) = text_script(vec![String::new()]);
+    let mut c = open_text_only(&f, model);
+    let (said, replied) = exchange(&mut c, "hm", "hm?");
+
+    let reflection = c.reflect(said, replied).unwrap();
+    assert_eq!((reflection.rounds, reflection.calls.len()), (1, 0));
+    assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
 #[test]

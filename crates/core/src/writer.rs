@@ -62,7 +62,8 @@ impl Companion {
     }
 
     /// Calls the model with tools for up to [`MAX_ROUNDS`] rounds, running each
-    /// call through `run` and sending its result back, until it stops calling.
+    /// call through `run`. One round is the norm: the model is asked for every
+    /// call at once and hears back only when one failed, so it can fix it.
     pub(crate) fn tool_loop(
         &mut self,
         system: String,
@@ -80,6 +81,7 @@ impl Companion {
         let mut messages = vec![LlmMessage::user(prompt)];
         let mut calls = Vec::new();
         let mut rounds = 0;
+        let mut corrected = false;
         while rounds < MAX_ROUNDS {
             rounds += 1;
             let request = LlmRequest {
@@ -92,17 +94,23 @@ impl Companion {
             let round_calls = if json {
                 match actions::parse(&response.text, &tools) {
                     Ok(found) => found,
-                    // Nothing runs; the model is told why and may answer again.
+                    // Nothing runs; the model is told why and may answer once
+                    // more. A model that won't speak JSON twice isn't asked a
+                    // third time: each ask re-sends the whole prompt.
                     Err(why) => {
-                        messages.push(LlmMessage::assistant(response.text));
-                        messages.push(LlmMessage::user(format!(
-                            "Nothing was done: {why}. Reply again with only the JSON object."
-                        )));
                         calls.push(ToolOutcome {
                             name: INVALID_REPLY.into(),
                             ok: false,
                             result: format!("error: {why}"),
                         });
+                        if corrected {
+                            break;
+                        }
+                        corrected = true;
+                        messages.push(LlmMessage::assistant(response.text));
+                        messages.push(LlmMessage::user(format!(
+                            "Nothing was done: {why}. Reply again with only the JSON object."
+                        )));
                         continue;
                     }
                 }
@@ -152,14 +160,13 @@ impl Companion {
                 }
                 calls.push(outcome);
             }
+            // The model was asked for every call at once, so a round where all
+            // of them worked is the end: asking again only re-sends the whole
+            // prompt for an empty reply. It hears back only to fix what failed.
+            if !failed {
+                break;
+            }
             if json {
-                // A text-only model was asked for every action at once, so a
-                // round where all of them worked is the end: asking again only
-                // re-sends the whole prompt for an empty reply. It hears back
-                // only to fix what failed.
-                if !failed {
-                    break;
-                }
                 messages.push(LlmMessage::user(format!(
                     "Results:\n{}\nReply with actions that fix what failed, or {{\"actions\": []}} \
                      to leave it.",
@@ -318,8 +325,12 @@ fn instructions(name: &str) -> String {
          something changed, raise how much a memory matters, update your mood, open or close \
          threads, update what you know about the user or about your relationship, record when \
          you pushed back on the user, and leave yourself a short note for your next reply.\n\n\
-         Write interpretations in first person, as you felt them. Facts (names, dates, places) \
-         must be exactly what was said. Keeping nothing is fine. Call no tools when you are done."
+         Write interpretations in first person, as you felt them. A memory's level is how deeply \
+         it's burned in: faint, normal, vivid or seared; seared ones never change or fade, so use \
+         that rarely. Facts (names, dates, places) must be exactly what was said and never change \
+         later. Valence is how it feels to you, -1 to 1.\n\n\
+         Make every call you want in this one reply; you hear back only if one fails. Keeping \
+         nothing is fine: then call nothing."
     )
 }
 
@@ -440,15 +451,14 @@ struct LeaveNote {
 }
 
 fn tool_specs() -> Vec<ToolSpec> {
-    let level = json!({ "type": "string", "enum": ["faint", "normal", "vivid", "seared"],
-        "description": "How deeply it's burned in. Seared memories never change or fade; use it rarely." });
+    // Shared fields are described once, in the instructions.
+    let level = json!({ "type": "string", "enum": ["faint", "normal", "vivid", "seared"] });
     let memory = |extra: Value, required: &[&str]| {
         let mut properties = json!({
-            "interpretation": { "type": "string", "description": "What it means to you, first person." },
+            "interpretation": { "type": "string" },
             "level": level,
-            "facts": { "type": "object", "additionalProperties": { "type": "string" },
-                "description": "Checkable facts exactly as said: names, dates, places. Never changed later." },
-            "valence": { "type": "number", "minimum": -1, "maximum": 1, "description": "How it feels to you." },
+            "facts": { "type": "object", "additionalProperties": { "type": "string" } },
+            "valence": { "type": "number", "minimum": -1, "maximum": 1 },
         });
         properties
             .as_object_mut()
@@ -456,7 +466,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             .extend(extra.as_object().unwrap().clone());
         json!({ "type": "object", "properties": properties, "required": required })
     };
-    let id = json!({ "type": "integer", "description": "The memory's #ID." });
+    let id = json!({ "type": "integer" });
     let tool = |name: &str, description: &str, parameters: Value| ToolSpec {
         name: name.into(),
         description: description.into(),

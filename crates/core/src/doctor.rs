@@ -457,8 +457,8 @@ fn instructions(name: &str) -> String {
     format!(
         "You are {name}. Something went wrong with how you remember some things, so you are \
          re-reading what was really said. For each memory listed, call reinterpret with how \
-         you see it now, in first person and in your own voice. Keep to what was said. Call \
-         no tools when you are done."
+         you see it now, in first person and in your own voice. Keep to what was said. Make \
+         every call in this one reply; you hear back only if one fails."
     )
 }
 
