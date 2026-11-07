@@ -59,17 +59,36 @@ class _Plugin:
 
     def _model(self, system, messages, temperature):
         """The host's active model, for the core's memory writing."""
-        logger.info(
-            "clanka: memory model call, %d chars in %d messages",
-            len(system) + sum(len(m["content"]) for m in messages),
-            len(messages),
-        )
+        # The system prompt (persona, instructions, tools) is the same on every
+        # turn and everything about this exchange is in the messages, so it is
+        # marked for the provider's prompt cache. Hermes leaves a one-shot call
+        # uncached unless the caller marks it, and drops the marker on a
+        # provider without such a cache.
+        prefix = {
+            "role": "system",
+            "content": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        }
         result = self._ctx.llm.complete(
-            [{"role": "system", "content": system}, *messages],
+            [prefix, *messages],
             temperature=temperature,
             max_tokens=MAX_TOKENS,
             purpose="clanka.memory",
         )
+        # Hermes reports a provider's cache reads and writes to a plugin only
+        # on some routes; on Anthropic they are missing and the cached prefix
+        # is simply absent from the input count, so that count is what to watch.
+        u = result.usage
+        logger.info(
+            "clanka: memory model call: %d chars in %d messages; %d tokens in, %d out%s",
+            len(system) + sum(len(m["content"]) for m in messages),
+            len(messages),
+            u.input_tokens,
+            u.output_tokens,
+            f" ({u.cache_read_tokens} read from cache, {u.cache_write_tokens} written)"
+            if u.cache_read_tokens or u.cache_write_tokens
+            else "",
+        )
+        logger.debug("clanka: memory model reply: %s", result.text)
         return result.text
 
     def pre_llm_call(self, user_message="", is_first_turn=True, **_):
@@ -100,7 +119,14 @@ class _Plugin:
             if turns is not None:
                 try:
                     ok, refused = c.reflect(*turns)
-                    logger.info("clanka: reflected on %s: %d ok, %d refused", turns, ok, refused)
+                    if refused:
+                        # What the model got wrong, so the protocol can be fixed where it fails.
+                        logger.warning(
+                            "clanka: reflected on %s: %d ok, %d refused: %s",
+                            turns, ok, len(refused), " | ".join(refused),
+                        )
+                    else:
+                        logger.info("clanka: reflected on %s: %d ok", turns, ok)
                 except Exception:
                     logger.exception("clanka: reflection on %s failed", turns)
             if sleep:

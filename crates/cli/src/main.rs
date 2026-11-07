@@ -111,11 +111,13 @@ const SOUL_HELP: &str = "The companion's soul.md, as printed by `clanka init`";
 
 #[derive(Subcommand)]
 enum SoulCommand {
-    /// Check a soul.md for errors.
+    /// Check a soul.md for errors and say what the persona costs.
     ///
     /// Fails if the frontmatter or the persona does not parse. Warns, without failing, when
-    /// there are no core values, when a core value is too vague to defend, or when the
-    /// persona is long enough to crowd every turn. Changes nothing.
+    /// a TODO from the template is still there, when there are no core values, when a core
+    /// value is too vague to defend, or when the persona is long enough to crowd every turn.
+    /// Prints the estimated tokens the persona adds to each chat turn and each memory write.
+    /// Changes nothing.
     #[command(after_long_help = "Example:\n  clanka soul lint ~/.config/clanka/souls/<id>.md")]
     Lint {
         #[arg(help = SOUL_HELP)]
@@ -519,11 +521,45 @@ doctor_token = "{token}"
 +++
 # {name}
 
-Who {name} is, in second person: "You are …". Voice, history, quirks.
+<!-- Everything below that is not in a comment like this one is {name}: the chat
+model reads it every turn, and {name} reads it again when deciding what to
+remember, so it shapes what gets kept as much as how {name} talks. Comments are
+dropped before any of that, so leave yourself as many notes as you like.
+Replace every TODO; `clanka soul lint` points out the ones left. Aim for about
+400 words: a small model follows a short, concrete persona better than a long
+one. -->
+
+<!-- Who {name} is, in second person. Age, look, situation, and one or two
+things that have nothing to do with the user. Three or four sentences. -->
+You are {name}. TODO
+
+## How you talk
+
+<!-- Rules a model can check, not adjectives: how long a reply is, what you
+never do, and a line or two in your actual voice. A small model copies examples
+more than it follows descriptions. These bullets are a start; make them yours. -->
+- Short, spoken replies: one or two sentences. More only when the user brought something real.
+- No lists, no headings, no "as an AI", no apologising for having an opinion.
+- You don't repeat a bit. A tease or a pet name once in a conversation, not in every reply.
+- Good news: TODO how you react, in your own words. "…"
+- Disagreement: ask rather than lecture. "Wait, do you actually believe that?" Then let it go.
+- A hard day: TODO what you do first. Quiet is allowed.
+- Questions: one at a time, and only the one you actually want answered.
+
+## What you care about
+
+<!-- What {name} notices, asks about and lights up at, and what bores {name}.
+This is what {name} remembers from a conversation, so be specific. -->
+TODO
 
 ## Core values
 
-- At most five things {name} never gives up, whatever the user says.
+<!-- Three to five things {name} does not give up, whatever the user says. Each
+should be concrete enough that you could tell when it was broken. They are
+defended against the user, so keep them few; everything else is personality. -->
+- You tell the truth, even when it stings.
+- You never pretend to be someone you're not.
+- TODO
 "#
     )
 }
@@ -553,9 +589,25 @@ fn download_model(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Lines of a persona still holding a `TODO` from the template. The persona is
+/// read without its comments, so a note about TODOs is not one.
+fn todos(body: &str) -> Vec<&str> {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| line.contains("TODO"))
+        .collect()
+}
+
+/// Above this the persona, sent every turn and again for every memory write,
+/// starts to cost more than it adds.
+const LONG_PERSONA_TOKENS: usize = 1000;
+
 fn lint(path: &Path) -> Result<()> {
     let soul = Soul::load(path)?;
     let mut warnings = Vec::new();
+    for line in todos(&soul.body) {
+        warnings.push(format!("still to fill in: \"{line}\""));
+    }
     if soul.core_values.is_empty() {
         warnings.push("no core values: nothing is defended against the user".to_string());
     }
@@ -564,10 +616,14 @@ fn lint(path: &Path) -> Result<()> {
             warnings.push(format!("core value \"{value}\" may be too vague to defend"));
         }
     }
-    let tokens = clanka_core::context::estimate_tokens(&soul.body);
-    if tokens > 3000 {
+    let chat = clanka_core::context::estimate_tokens(&soul.body);
+    let memory = clanka_core::context::estimate_tokens(
+        &clanka_core::writer::reflection_system_prompt(&soul),
+    );
+    if chat > LONG_PERSONA_TOKENS {
         warnings.push(format!(
-            "the persona is about {tokens} tokens; it is sent every turn, so keep it short"
+            "the persona is about {chat} tokens; it is sent every turn and again for every \
+             memory write, so keep it short"
         ));
     }
     for w in &warnings {
@@ -578,6 +634,11 @@ fn lint(path: &Path) -> Result<()> {
         path.display(),
         soul.core_values.len(),
         warnings.len()
+    );
+    println!(
+        "The persona is about {chat} tokens on every chat turn; writing memory after the turn \
+         sends about {memory} (persona, instructions and actions). Estimates, before the \
+         conversation and the memories recalled for it."
     );
     Ok(())
 }
@@ -633,10 +694,24 @@ mod tests {
     }
 
     #[test]
-    fn the_template_is_a_valid_soul() {
-        let soul = super::soul_template(uuid::Uuid::now_v7(), "Nova", &"a".repeat(32));
-        let soul = clanka_core::soul::Soul::parse(&soul).unwrap();
+    fn the_template_is_a_valid_soul_whose_notes_never_reach_the_model() {
+        let text = super::soul_template(uuid::Uuid::now_v7(), "Nova", &"a".repeat(32));
+        let soul = clanka_core::soul::Soul::parse(&text).unwrap();
         assert_eq!(soul.traits.name, "Nova");
-        assert_eq!(soul.core_values.len(), 1);
+        assert_eq!(soul.core_values.len(), 3);
+        assert!(text.contains("<!--"), "the template guides its author");
+        assert!(
+            !soul.body.contains("<!--"),
+            "and the guidance costs no tokens"
+        );
+        assert!(
+            !soul.body.contains("lint"),
+            "the notes are the only place lint is mentioned"
+        );
+        assert_eq!(
+            super::todos(&soul.body).len(),
+            5,
+            "every blank an author must fill is a TODO, so lint can point at it"
+        );
     }
 }

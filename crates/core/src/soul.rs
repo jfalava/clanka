@@ -2,7 +2,9 @@
 //! writes to it.
 //!
 //! Format: TOML frontmatter between `+++` lines, then Markdown. Core values are
-//! the list items under a `## Core values` heading.
+//! the list items under a `## Core values` heading. HTML comments (`<!-- … -->`)
+//! are notes to whoever writes the soul: they are dropped before the persona is
+//! hashed or shown to a model, so guidance in the file costs nothing per turn.
 
 use crate::{Error, Result};
 use serde::Deserialize;
@@ -66,7 +68,8 @@ impl Soul {
             toml::from_str(front).map_err(|e| Error::Soul(format!("frontmatter: {e}")))?;
         validate(&traits)?;
 
-        let core_values = core_values(body);
+        let body = without_comments(body)?;
+        let core_values = core_values(&body);
         if core_values.len() > MAX_CORE_VALUES {
             return Err(Error::Soul(format!(
                 "{} core values; at most {MAX_CORE_VALUES} keep \"never bend\" meaningful",
@@ -76,9 +79,9 @@ impl Soul {
 
         Ok(Soul {
             traits,
-            body: body.to_owned(),
-            core_values,
             hash: sha256_hex(body.trim()),
+            body,
+            core_values,
             legacy_hash: sha256_hex(text),
         })
     }
@@ -130,6 +133,43 @@ fn validate(t: &Traits) -> Result<()> {
         return Err(Error::Soul("pushback_window must be at least 1".into()));
     }
     Ok(())
+}
+
+/// The body with every `<!-- … -->` removed. A comment takes with it the
+/// whitespace that set it apart on its line, and the whole line when it had
+/// the line to itself, so the same persona with and without its notes is the
+/// same text and keeps its hash.
+fn without_comments(body: &str) -> Result<String> {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(start) = rest.find("<!--") {
+        let end = rest[start..]
+            .find("-->")
+            .map(|i| start + i + 3)
+            .ok_or_else(|| Error::Soul("a `<!--` comment is never closed with `-->`".into()))?;
+        out.push_str(&rest[..start]);
+        let after = &rest[end..];
+        let line_start = out.rfind('\n').map_or(0, |i| i + 1);
+        let line_end = after.find('\n').unwrap_or(after.len());
+        let leads = out[line_start..].trim().is_empty();
+        let trails = after[..line_end].trim().is_empty();
+        rest = match (leads, trails) {
+            (true, true) => {
+                out.truncate(line_start);
+                after.get(line_end + 1..).unwrap_or("")
+            }
+            (true, false) => after.trim_start_matches([' ', '\t']),
+            (false, true) => {
+                out.truncate(out.trim_end_matches([' ', '\t']).len());
+                after
+            }
+            // Mid-sentence: the one space that separated the words stays.
+            (false, false) if out.ends_with([' ', '\t']) => after.trim_start_matches([' ', '\t']),
+            (false, false) => after,
+        };
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 fn core_values(body: &str) -> Vec<String> {

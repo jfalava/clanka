@@ -162,20 +162,27 @@ impl PyCompanion {
     }
 
     /// Reflects on one exchange with the host model, as the companion. Slow:
-    /// call it off the hot path. Returns `(succeeded, refused)` action counts;
-    /// refused includes replies that weren't valid JSON actions.
+    /// call it off the hot path. Returns the count of actions that succeeded
+    /// and, for each that was refused (including a reply that wasn't valid JSON
+    /// actions), `"<action>: <error>"`.
     fn reflect(
         &self,
         py: Python<'_>,
         user_turn: i64,
         companion_turn: i64,
-    ) -> PyResult<(usize, usize)> {
+    ) -> PyResult<(usize, Vec<String>)> {
         py.detach(|| {
             let r = lock(&self.writer)
                 .reflect(user_turn, companion_turn)
                 .map_err(err)?;
             let ok = r.calls.iter().filter(|o| o.ok).count();
-            Ok((ok, r.calls.len() - ok))
+            let refused = r
+                .calls
+                .iter()
+                .filter(|o| !o.ok)
+                .map(|o| format!("{}: {}", o.name, o.result))
+                .collect();
+            Ok((ok, refused))
         })
     }
 

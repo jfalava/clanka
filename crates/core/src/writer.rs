@@ -11,6 +11,7 @@ use crate::actions;
 use crate::companion::ensure_writable;
 use crate::deps::{LlmMessage, LlmRequest, Role, ToolCall, ToolSpec};
 use crate::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
+use crate::soul::Soul;
 use crate::{Companion, Error, Memory, MemoryDraft, Mood, Ranking, Result};
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
@@ -51,11 +52,7 @@ impl Companion {
 
         let exchange = [user_turn, companion_turn];
         let prompt = self.reflection_prompt(&exchange, &said, &replied)?;
-        let system = format!(
-            "{}\n\n{}",
-            self.soul.body.trim(),
-            instructions(&self.soul.traits.name)
-        );
+        let system = reflection_system(&self.soul);
         self.tool_loop(system, prompt, tool_specs(), |c, call| {
             c.run_tool(call, &exchange)
         })
@@ -315,6 +312,28 @@ impl Companion {
             other => Err(Error::Invalid(format!("there is no tool called {other:?}"))),
         }
     }
+}
+
+/// The persona and the reflection instructions: the stable part of every
+/// reflection's system prompt.
+fn reflection_system(soul: &Soul) -> String {
+    format!(
+        "{}\n\n{}",
+        soul.body.trim(),
+        instructions(&soul.traits.name)
+    )
+}
+
+/// What a host without function calling sends as the system prompt of every
+/// reflection: the persona, the instructions and the action protocol. For
+/// telling an author what their persona costs; a host with tools sends the
+/// tools instead of the protocol, which is about as long.
+pub fn reflection_system_prompt(soul: &Soul) -> String {
+    format!(
+        "{}\n\n{}",
+        reflection_system(soul),
+        actions::protocol(&tool_specs())
+    )
 }
 
 fn instructions(name: &str) -> String {

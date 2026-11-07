@@ -247,3 +247,63 @@ fn soul_errors_refuse_to_load() {
     .unwrap();
     assert_eq!(soul.core_values, ["Honesty over comfort", "Never cruel"]);
 }
+
+#[test]
+fn comments_are_notes_to_the_writer_and_never_part_of_the_persona() {
+    let id = Uuid::now_v7();
+    let plain = soul_text(id, 0.7, &["Honesty over comfort"]);
+    let body_of = |text: &str| text.split_once("\n+++\n").unwrap().1.to_owned();
+    // The same persona, with guidance where a soul writer would leave it: on
+    // its own line, indented, inline, and at the very end without a newline.
+    let commented = plain
+        .replace(
+            "# Nova\n\n",
+            "# Nova\n\n<!-- second person: \"You are …\" -->\n  <!-- indented -->  \n",
+        )
+        .replace(
+            "- Honesty over comfort\n",
+            "- Honesty over comfort <!-- a value, not a style -->\n",
+        )
+        .replace("## Voice\n", "<!-- multi\nline --> ## Voice\n")
+        + "<!-- end -->";
+    assert!(commented.contains("<!--"), "{commented}");
+
+    let (a, b) = (
+        Soul::parse(&plain).unwrap(),
+        Soul::parse(&commented).unwrap(),
+    );
+    assert_eq!(b.core_values, ["Honesty over comfort"]);
+    assert_eq!(
+        b.body,
+        body_of(&plain),
+        "every comment is gone, with the space around it and a line it had to itself"
+    );
+    assert_eq!(
+        a.hash, b.hash,
+        "guidance in the file is not a persona change"
+    );
+    assert_eq!(
+        a.body,
+        body_of(&plain),
+        "a body without comments is untouched"
+    );
+    assert_eq!(
+        Soul::parse(&plain.replace("Nova\n", "Nova <!-- a --> <!-- b -->\n"))
+            .unwrap()
+            .body,
+        body_of(&plain),
+        "two comments on one line"
+    );
+    assert_eq!(
+        Soul::parse(&plain.replace("just style", "just <!-- in --> style"))
+            .unwrap()
+            .body,
+        body_of(&plain),
+        "a comment inside a sentence leaves the words one space apart"
+    );
+
+    let err = Soul::parse(&plain.replace("## Voice", "<!-- oops\n## Voice"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("never closed"), "{err}");
+}
