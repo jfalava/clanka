@@ -20,7 +20,8 @@ cp "$root/hermes/clanka/plugin.yaml" "$root/hermes/clanka/__init__.py" "$dest/"
 # Never overwrite the extension in place: a running gateway has it mapped into
 # memory, and rewriting that file crashes the gateway on its next call into it.
 # A new file renamed over the old one leaves the running copy intact.
-cp "$root/target/release/lib_clanka.so" "$dest/.clanka.so.new"
+case $(uname -s) in Darwin) lib=lib_clanka.dylib ;; *) lib=lib_clanka.so ;; esac
+cp "$root/target/release/$lib" "$dest/.clanka.so.new"
 mv -f "$dest/.clanka.so.new" "$dest/_clanka.abi3.so"
 skills=${AGENT_SKILLS_HOME:-$HOME/.agents/skills}/clanka-soul-writer
 mkdir -p "$skills"

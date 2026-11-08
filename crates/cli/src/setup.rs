@@ -93,13 +93,24 @@ impl Config {
     }
 }
 
+/// The Secret Service on Linux; macOS has none, so its login keychain there.
+#[cfg(not(target_os = "macos"))]
+fn os_store() -> keyring_core::Result<std::sync::Arc<keyring_core::CredentialStore>> {
+    Ok(zbus_secret_service_keyring_store::Store::new()?)
+}
+
+#[cfg(target_os = "macos")]
+fn os_store() -> keyring_core::Result<std::sync::Arc<keyring_core::CredentialStore>> {
+    Ok(apple_native_keyring_store::keychain::Store::new()?)
+}
+
 pub struct SecretServiceKeys;
 
 impl SecretServiceKeys {
     fn entry(companion: Uuid) -> Result<keyring_core::Entry> {
         static STORE: std::sync::Once = std::sync::Once::new();
         let mut failed = None;
-        STORE.call_once(|| match zbus_secret_service_keyring_store::Store::new() {
+        STORE.call_once(|| match os_store() {
             Ok(store) => keyring_core::set_default_store(store),
             Err(e) => failed = Some(e),
         });
