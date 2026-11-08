@@ -143,3 +143,49 @@ fn later_turns_carry_only_what_is_new() {
     assert!(again.contains("Likes tea."), "{again}");
     assert!(again.contains("The user drinks tea"), "{again}");
 }
+
+/// `>>N` at the start asks for a longer reply this turn only. It reaches the
+/// model even on a turn with nothing new, and memory sees only the message.
+#[test]
+fn a_leading_stretch_marker_lifts_the_length_rule_for_one_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(dir.path());
+    let (_, pending) = begin(&mut c, "hi", true);
+    turn::end(&mut c, pending, "hello").unwrap();
+
+    let (quiet, pending) = begin(&mut c, " >>3 she ducks under the blade", false);
+    assert_eq!(quiet, turn::stretch_hint(3));
+    turn::end(&mut c, pending, "…").unwrap();
+
+    // Mid-message, or glued to a word, it is just text.
+    let (plain, pending) = begin(&mut c, "a >>3 b", false);
+    assert_eq!(plain, "");
+    turn::end(&mut c, pending, "…").unwrap();
+    let (plain, pending) = begin(&mut c, ">>3rd try", false);
+    assert_eq!(plain, "");
+    turn::end(&mut c, pending, "…").unwrap();
+
+    // Alone it means go on; past the cap it asks for the most there is.
+    let (more, pending) = begin(&mut c, ">>40", false);
+    assert_eq!(more, turn::stretch_hint(turn::MAX_STRETCH));
+    turn::end(&mut c, pending, "…").unwrap();
+
+    let said: Vec<String> = c
+        .assemble("x", 4000, &clanka_core::Ranking::default())
+        .unwrap()
+        .turns
+        .into_iter()
+        .filter(|t| t.speaker == clanka_core::model::Speaker::User)
+        .map(|t| t.content)
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "hi",
+            "she ducks under the blade",
+            "a >>3 b",
+            ">>3rd try",
+            "Go on."
+        ]
+    );
+}

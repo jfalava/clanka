@@ -48,7 +48,12 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
             break;
         }
 
+        let (stretch, message) = crate::turn::stretch(message);
         let context = chat.assemble(message, budget, &Ranking::default())?;
+        let mut system = context.render();
+        if let Some(n) = stretch {
+            system = format!("{system}\n\n{}", crate::turn::stretch_hint(n));
+        }
         let mut messages: Vec<LlmMessage> = context
             .turns
             .iter()
@@ -64,7 +69,7 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
             .collect();
         messages.push(LlmMessage::user(message));
         let reply = chat.deps().llm.complete(&LlmRequest {
-            system: context.render(),
+            system,
             messages,
             tools: Vec::new(),
             temperature: TEMPERATURE,
