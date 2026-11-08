@@ -6,7 +6,7 @@ SECONDS=0
 TIMEFORMAT='Step finished in %3R seconds'
 
 echo 'Checking native build dependencies'
-packages=(build-essential pkg-config perl python3-dev curl ca-certificates)
+packages=(build-essential pkg-config perl libssl-dev curl ca-certificates)
 missing=()
 for package in "${packages[@]}"; do
     if [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true) != 'install ok installed' ]]; then
@@ -65,12 +65,29 @@ if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
     } >> "$HOME/.bash_profile"
 fi
 
+# Orbs only build and test; releases come from macOS and NixOS. Linking
+# Debian's OpenSSL skips compiling the vendored copy, most of a clean build.
+# A fixed PYO3_PYTHON stops pyo3 rebuilding whenever PATH differs between
+# shells. Later shells need the same settings or Cargo rebuilds.
+export OPENSSL_NO_VENDOR=1 PYO3_PYTHON=/usr/bin/python3
+marker="# clanka orb build env: $PWD"
+if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+    {
+        printf '\n%s\n' "$marker"
+        printf 'if [[ "$PWD" == %q || "$PWD" == %q/* ]]; then\n' "$PWD" "$PWD"
+        printf '    export OPENSSL_NO_VENDOR=1 PYO3_PYTHON=%q\n' "$PYO3_PYTHON"
+        printf 'fi\n'
+    } >> "$HOME/.bash_profile"
+fi
+
 echo 'Fetching locked Cargo dependencies'
 time cargo fetch --locked
-echo 'Building the workspace (including SQLCipher/OpenSSL, ONNX Runtime and Python bindings)'
+echo 'Building the workspace (including SQLCipher, ONNX Runtime and Python bindings)'
 time cargo build --workspace --locked
-echo 'Building release artifacts used by hermes/install.sh and hermes/bench.sh'
-time cargo build --workspace --release --locked
+echo 'Building test binaries'
+time cargo test --workspace --no-run --locked
+# No release build: it doubled setup time, and its only users, hermes/install.sh
+# and hermes/bench.sh, need a Hermes install that orbs don't have.
 
 # Leave target/ and the dependency/download caches intact for the orb snapshot.
 echo "Orb setup finished in ${SECONDS}s"
