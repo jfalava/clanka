@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+SECONDS=0
+TIMEFORMAT='Step finished in %3R seconds'
+
+echo 'Checking native build dependencies'
+packages=(build-essential pkg-config perl python3-dev curl ca-certificates)
+missing=()
+for package in "${packages[@]}"; do
+    if [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true) != 'install ok installed' ]]; then
+        missing+=("$package")
+    fi
+done
+if ((${#missing[@]})); then
+    time sudo apt-get update
+    time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+# Keep the compiler aligned with the workspace MSRV, rather than a moving stable.
+rust_version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["rust-version"])')
+if [[ $rust_version =~ ^[0-9]+\.[0-9]+$ ]]; then
+    rust_version+=.0
+fi
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+echo "Checking Rust $rust_version"
+if ! command -v rustup >/dev/null 2>&1; then
+    time curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$rust_version"
+fi
+if ! rustup run "$rust_version" rustc --version >/dev/null 2>&1; then
+    time rustup toolchain install "$rust_version" --profile minimal
+fi
+# The directory override also applies to subsequent cargo commands in new shells.
+rustup override set "$rust_version"
+rustc --version
+
+# ort-sys's static Linux download needs newer glibc/libstdc++ than Debian 12.
+# Microsoft's shared CPU build supports this orb without upgrading its libc.
+echo 'Checking Debian-compatible ONNX Runtime 1.31.0 (x86_64)'
+[[ $(uname -m) == x86_64 ]] || { echo 'This ONNX Runtime archive requires x86_64' >&2; exit 1; }
+export ORT_LIB_PATH=/opt/onnxruntime-linux-x64-1.31.0/lib
+export ORT_PREFER_DYNAMIC_LINK=1
+if [[ ! -f $ORT_LIB_PATH/libonnxruntime.so.1.31.0 ]]; then
+    archive=$(mktemp)
+    trap 'rm -f "$archive"' EXIT
+    time curl -fL --retry 3 -o "$archive" https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-linux-x64-1.31.0.tgz
+    echo "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57  $archive" | sha256sum --check
+    sudo tar -xzf "$archive" -C /opt
+    rm -f "$archive"
+    trap - EXIT
+fi
+echo "$ORT_LIB_PATH" | sudo tee /etc/ld.so.conf.d/clanka-onnxruntime.conf >/dev/null
+sudo ldconfig
+
+# Subsequent non-interactive login shells must use the same library, not fall
+# back to ort-sys's incompatible download. Scope this to this checkout.
+marker="# clanka ONNX Runtime 1.31.0: $PWD"
+if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+    {
+        printf '\n%s\n' "$marker"
+        printf 'if [[ "$PWD" == %q || "$PWD" == %q/* ]]; then\n' "$PWD" "$PWD"
+        printf '    export ORT_LIB_PATH=%q ORT_PREFER_DYNAMIC_LINK=1\n' "$ORT_LIB_PATH"
+        printf 'fi\n'
+    } >> "$HOME/.bash_profile"
+fi
+
+echo 'Fetching locked Cargo dependencies'
+time cargo fetch --locked
+echo 'Building the workspace (including SQLCipher/OpenSSL, ONNX Runtime and Python bindings)'
+time cargo build --workspace --locked
+echo 'Building release artifacts used by hermes/install.sh and hermes/bench.sh'
+time cargo build --workspace --release --locked
+
+# Leave target/ and the dependency/download caches intact for the orb snapshot.
+echo "Orb setup finished in ${SECONDS}s"
