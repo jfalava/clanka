@@ -103,13 +103,12 @@ fn config_get(home: &Path, profile: Option<&str>, key: &str) -> Result<Option<se
         .context("running hermes; is it on PATH?")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {
-        if stdout.contains("Config key not set") {
+        // Hermes has printed this on stdout and, in later versions, on stderr.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stdout.contains("Config key not set") || stderr.contains("Config key not set") {
             return Ok(None);
         }
-        bail!(
-            "hermes config get {key} failed:\n{stdout}{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        bail!("hermes config get {key} failed:\n{stdout}{stderr}");
     }
     let json = stdout.lines().last().unwrap_or_default();
     Ok(Some(serde_json::from_str(json).with_context(|| {
