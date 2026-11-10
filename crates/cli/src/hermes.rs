@@ -117,8 +117,9 @@ fn config_get(home: &Path, profile: Option<&str>, key: &str) -> Result<Option<se
 }
 
 /// Gives the profile the root's own model endpoints: its `providers:` dict,
-/// the aliases that name them and the reasoning effort each model wants, and
-/// the secrets they read. `hermes -p` loads only the profile's .env and drops
+/// the aliases that name them, the reasoning effort each model wants and what
+/// each model can do (`model_overrides`), whether a model is asked to title
+/// sessions, and the secrets they read. `hermes -p` loads only the profile's .env and drops
 /// keys inherited from the shell, so a provider the root reaches is unreachable
 /// from a profile until its key is in the profile's .env too. Nothing is
 /// removed from the profile and existing keys are kept.
@@ -129,15 +130,25 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
     let Some(providers) = providers.as_object().filter(|p| !p.is_empty()) else {
         return Ok(());
     };
-    for (key, value) in [
+    for (key, value, depth) in [
         (
             "providers",
             Some(serde_json::Value::Object(providers.clone())),
+            1,
         ),
-        ("model.aliases", config_get(home, None, "model.aliases")?),
+        ("model.aliases", config_get(home, None, "model.aliases")?, 1),
         (
             "agent.reasoning_overrides",
             config_get(home, None, "agent.reasoning_overrides")?,
+            1,
+        ),
+        // Provider, then model, then setting. Every custom endpoint is the
+        // one provider `custom` here, so a profile's own models under it
+        // must survive the root's.
+        (
+            "model_overrides",
+            config_get(home, None, "model_overrides")?,
+            3,
         ),
     ] {
         let Some(root) = value.as_ref().and_then(|v| v.as_object()) else {
@@ -149,7 +160,7 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
             .and_then(|v| v.as_object().cloned())
             .unwrap_or_default();
         let before = merged.clone();
-        merged.extend(root.clone());
+        merge(&mut merged, root, depth);
         if merged != before {
             let merged = serde_json::Value::Object(merged).to_string();
             hermes(
@@ -158,6 +169,19 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
                 &["config", "set", "--force", key, &merged],
             )?;
         }
+    }
+    // Some endpoints refuse the request that asks a model to title a session.
+    // `config get` fills in Hermes's defaults, so "on" may not be the root's
+    // choice while "off" always is: only "off" is passed on.
+    let off = Some(serde_json::Value::Bool(false));
+    if config_get(home, None, TITLE_BY_MODEL)? == off
+        && config_get(home, Some(profile), TITLE_BY_MODEL)? != off
+    {
+        hermes(
+            home,
+            Some(profile),
+            &["config", "set", TITLE_BY_MODEL, "false"],
+        )?;
     }
     let key_envs: Vec<&str> = providers
         .values()
@@ -196,6 +220,27 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
         .with_context(|| format!("writing {}", env_path.display()))?;
     std::io::Write::write_all(&mut file, env.as_bytes())?;
     Ok(())
+}
+
+/// Whether Hermes replaces a session's instant title with one a model writes.
+const TITLE_BY_MODEL: &str = "auxiliary.title_generation.model_upgrade_enabled";
+
+/// Puts the root's entries into the profile's, where they win. Maps are merged
+/// `depth` levels down; below that a root entry replaces the profile's whole.
+fn merge(
+    profile: &mut serde_json::Map<String, serde_json::Value>,
+    root: &serde_json::Map<String, serde_json::Value>,
+    depth: usize,
+) {
+    use serde_json::Value::Object;
+    for (key, value) in root {
+        match (profile.get_mut(key), value) {
+            (Some(Object(mine)), Object(theirs)) if depth > 1 => merge(mine, theirs, depth - 1),
+            _ => {
+                profile.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 /// The `NAME=value` lines of `root_env` for the `names` that `profile_env`
@@ -465,6 +510,46 @@ mod tests {
             missing_env_lines(root, profile, &["A_KEY", "B_KEY", "C_KEY", "B_KEY_"]);
         assert_eq!(lines, ["A_KEY=1"]);
         assert_eq!(missing, ["C_KEY", "B_KEY_"]);
+    }
+
+    #[test]
+    fn the_roots_entries_win_and_the_profile_keeps_its_own() {
+        let object = |v: serde_json::Value| v.as_object().unwrap().clone();
+        let root = object(serde_json::json!({
+            "custom": { "glm": { "supports_reasoning": false } },
+        }));
+        let profile = serde_json::json!({
+            "custom": {
+                "glm": { "supports_reasoning": true, "context_window": 8192 },
+                "llava": { "supports_vision": true },
+            },
+            "openrouter": { "x": {} },
+        });
+
+        // Model overrides: only the setting the root names changes.
+        let mut deep = object(profile.clone());
+        merge(&mut deep, &root, 3);
+        assert_eq!(
+            serde_json::Value::Object(deep),
+            serde_json::json!({
+                "custom": {
+                    "glm": { "supports_reasoning": false, "context_window": 8192 },
+                    "llava": { "supports_vision": true },
+                },
+                "openrouter": { "x": {} },
+            })
+        );
+
+        // Providers and aliases: the root's entry replaces the profile's whole.
+        let mut shallow = object(profile);
+        merge(&mut shallow, &root, 1);
+        assert_eq!(
+            serde_json::Value::Object(shallow),
+            serde_json::json!({
+                "custom": { "glm": { "supports_reasoning": false } },
+                "openrouter": { "x": {} },
+            })
+        );
     }
 
     #[test]

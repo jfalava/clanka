@@ -257,10 +257,12 @@ enum HermesCommand {
     /// notes are a line each; and SOUL.md is the persona. Each turn then carries the
     /// persona and the conversation instead of Hermes's whole toolbox: on Haiku the system
     /// prompt and tools went from about 19k tokens on a stock profile to about 1.2k. The
-    /// root's own `providers:`, model aliases and reasoning overrides are copied in, and
-    /// the keys those providers read are copied from ~/.hermes/.env into the profile's,
-    /// since a profile loads only its own .env. Run it again after editing the persona to
-    /// refresh SOUL.md; a toolset you added next to clanka on a platform (`hermes -p <profile>
+    /// root's own `providers:`, model aliases, reasoning overrides and `model_overrides`
+    /// are copied in, as is `auxiliary.title_generation.model_upgrade_enabled` when the
+    /// root has it off, and the keys those providers read are copied from ~/.hermes/.env
+    /// into the profile's, since a profile loads only its own .env. Run it again after
+    /// editing the persona to refresh SOUL.md; a toolset you added next to clanka on a
+    /// platform (`hermes -p <profile>
     /// config set platform_toolsets.telegram '[clanka, image_gen]'`) is kept. A gateway
     /// already serving the profile re-reads its config on its own.
     #[command(after_long_help = "Example:\n  \
