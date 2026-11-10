@@ -379,7 +379,7 @@ impl Companion {
         Ok(reflections)
     }
 
-    fn source_text(&self, memory: &Memory) -> Result<String> {
+    pub(crate) fn source_text(&self, memory: &Memory) -> Result<String> {
         let mut lines = Vec::new();
         for turn in &memory.source_turns {
             let (role, content): (String, String) = self.conn.query_row(

@@ -476,7 +476,7 @@ impl Companion {
                     return Err(Error::Invalid("use open_thread for open threads".into()));
                 }
                 let level = parse(Level::parse, &a.memory.level, "level")?;
-                let (draft, note) = a.memory.draft(kind, level, exchange, spoken)?;
+                let (draft, note) = a.memory.draft(kind, level, exchange, spoken, None)?;
                 Ok(format!("memory {}{note}", self.write(w, &draft)?))
             }
             "supersede" => {
@@ -486,7 +486,13 @@ impl Companion {
                     "" => old.level,
                     level => parse(Level::parse, level, "level")?,
                 };
-                let (mut draft, note) = a.memory.draft(old.kind, level, exchange, spoken)?;
+                // The facts the old memory holds were said in the turns it
+                // cites, not in this exchange, and the model copies them over.
+                let earlier = self.source_text(&old)?;
+                let replaced = Some((old.source_turns.as_slice(), earlier.as_str()));
+                let (mut draft, note) = a
+                    .memory
+                    .draft(old.kind, level, exchange, spoken, replaced)?;
                 draft.urgency = old.urgency;
                 Ok(format!(
                     "memory {} replaces {}{note}",
@@ -504,7 +510,7 @@ impl Companion {
                 let level = parse(Level::parse, &a.memory.level, "level")?;
                 let (mut draft, note) =
                     a.memory
-                        .draft(MemoryType::OpenThread, level, exchange, spoken)?;
+                        .draft(MemoryType::OpenThread, level, exchange, spoken, None)?;
                 draft.urgency = Some(parse(Urgency::parse, &a.urgency, "urgency")?);
                 Ok(format!("thread {}{note}", self.write(w, &draft)?))
             }
@@ -654,21 +660,31 @@ impl MemoryArgs {
     /// surely as a check does. The memory is still written with the rest, and
     /// the note returned with it tells the model what was left out and why:
     /// refusing the write only bought another model call to requote one fact.
+    ///
+    /// `replaced` is the memory a supersede replaces: the turns it cites and
+    /// their text. A fact carried over from it was said there, so it is kept,
+    /// and the new memory then cites those turns as well, for the doctor to
+    /// find the fact in.
     fn draft(
         self,
         kind: MemoryType,
         level: Level,
         exchange: &[i64],
         spoken: &str,
+        replaced: Option<(&[i64], &str)>,
     ) -> Result<(MemoryDraft, String)> {
         let mut facts = Map::new();
         let mut left_out = Vec::new();
+        let mut carried = false;
         for (key, value) in self.facts {
             let text = value
                 .as_str()
                 .map_or_else(|| value.to_string(), str::to_owned);
             if said_verbatim(spoken, &text) {
                 facts.insert(key, value);
+            } else if replaced.is_some_and(|(_, said)| said_verbatim(said, &text)) {
+                facts.insert(key, value);
+                carried = true;
             } else {
                 left_out.push(format!("{key:?}"));
             }
@@ -683,6 +699,9 @@ impl MemoryArgs {
         };
         let mut draft = MemoryDraft::new(kind, level, self.interpretation);
         draft.source_turns = exchange.to_vec();
+        if let Some((turns, _)) = replaced.filter(|_| carried) {
+            draft.source_turns.extend(turns);
+        }
         draft.facts = facts;
         draft.valence = self.valence;
         draft.strength = self.strength;

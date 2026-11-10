@@ -462,6 +462,61 @@ fn a_text_only_model_writes_through_the_same_guards_as_tool_calls() {
     assert_eq!(c.memory(seared).unwrap().level, Level::Seared);
 }
 
+/// A supersede copies the old memory's facts over, and those were said in the
+/// turns the old memory cites, not in this exchange. They are kept, and the new
+/// memory cites those turns too, so the doctor still finds every fact in what
+/// was said. A fact said in neither place is left out as before.
+#[test]
+fn a_supersede_keeps_the_facts_it_carries_over_from_the_old_memory() {
+    let f = fixture();
+    let (model, _) = script(vec![
+        vec![(
+            "remember",
+            json!({ "type": "user_fact", "level": "normal", "interpretation": "Sam has a dog",
+                "facts": { "dog name": "Biscuit", "dog breed": "whippet" } }),
+        )],
+        vec![(
+            "supersede",
+            json!({ "memory_id": 1, "interpretation": "Sam walks Biscuit by the canal",
+                "facts": { "dog name": "Biscuit", "dog breed": "whippet",
+                    "walk routine": "canal every morning", "dog age": "three" } }),
+        )],
+    ]);
+    let mut c = open_with_llm(&f, model);
+    let (said, replied) = exchange(&mut c, "My dog Biscuit is a whippet.", "A fast one.");
+    c.reflect(said, replied).unwrap();
+    let (later, answer) = exchange(&mut c, "We walk by the canal every morning.", "Lovely.");
+
+    let reflection = c.reflect(later, answer).unwrap();
+    assert!(
+        reflection.calls[0]
+            .result
+            .ends_with("; left out \"dog age\": not the user's exact words"),
+        "{:#?}",
+        reflection.calls
+    );
+    let new = c.memory(2).unwrap();
+    assert_eq!(
+        Value::Object(new.facts),
+        json!({ "dog name": "Biscuit", "dog breed": "whippet",
+            "walk routine": "canal every morning" })
+    );
+    assert_eq!(new.source_turns, [said, replied, later, answer]);
+    assert_eq!(c.check_facts().unwrap(), []);
+
+    // Nothing carried over: the new memory cites its own exchange only.
+    let (model, _) = script(vec![vec![(
+        "supersede",
+        json!({ "memory_id": 2, "interpretation": "Sam's mornings are by the river now",
+            "facts": { "walk routine": "river" } }),
+    )]]);
+    drop(c);
+    let mut c = open_with_llm(&f, model);
+    let (moved, ok) = exchange(&mut c, "We switched to the river.", "Good.");
+    c.reflect(moved, ok).unwrap();
+    assert_eq!(c.memory(3).unwrap().source_turns, [moved, ok]);
+}
+
 /// A fact is the user's words. One that isn't in the exchange is left out of
 /// the write, whatever the prompt said, and the model is told so in the
 /// result instead of being asked again; the glyphs a model swaps in (curly
