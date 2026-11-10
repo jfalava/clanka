@@ -3,8 +3,9 @@
 A general plugin on Hermes's public plugin API only:
 
 - ``pre_llm_call``: checks for the doctor token (the turn is blocked and memory
-  frozen), blocks every turn while memory is frozen, then records the user's
-  message and adds the turn's memory, mood and notes as context.
+  frozen), blocks every turn while memory is frozen or cannot be opened, then
+  records the user's message and adds the turn's memory, mood and notes as
+  context.
 - ``post_llm_call``: records the reply, then reflects on the exchange on a
   background thread. Reflection runs on ``ctx.llm``, the user's active model,
   so the companion's memory is written by the same model it chats with.
@@ -23,6 +24,7 @@ file, whose frontmatter holds the doctor token.
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextvars
 import json
 import logging
@@ -33,24 +35,35 @@ logger = logging.getLogger(__name__)
 
 # Most one memory-writing reply may run to.
 MAX_TOKENS = 2048
+# Longest a turn waits for memory to open, in seconds. Hermes gives a hook
+# callback 30s, then drops it and lets the model answer with no memory, so the
+# turn has to be blocked before that.
+OPEN_TIMEOUT = 20
+
+
+def _block(message):
+    return {"action": "block", "message": message}
 
 
 class _Plugin:
     def __init__(self, ctx):
         self._ctx = ctx
-        self._companion = None
+        self._opening = None
         self._open_lock = threading.Lock()
         # Reflections and sleep run one at a time, in order, off the turn thread.
         self._work_lock = threading.Lock()
         self._sleep_requested = False
 
     # The companion opens on first use, so a slow Secret Service or model load
-    # never counts against Hermes's plugin load timeout.
-    def companion(self):
+    # never counts against Hermes's plugin load timeout. It opens on a thread
+    # of its own: a caller can stop waiting (macOS asks on screen before a new
+    # program may read the key, and nobody may be there) while the open carries
+    # on, and the next caller waits on the same attempt. One that failed is
+    # tried again by the next caller.
+    def companion(self, timeout=None):
         with self._open_lock:
-            if self._companion is None:
-                from . import _clanka
-
+            opening = self._opening
+            if opening is None or (opening.done() and opening.exception() is not None):
                 # Profile config first: under Hermes's multiplexed gateway a
                 # profile's .env doesn't reach a plugin's os.environ.
                 soul = self._ctx.get_config("soul") or os.environ.get("CLANKA_SOUL")
@@ -58,8 +71,19 @@ class _Plugin:
                     raise RuntimeError(
                         "set plugins.entries.clanka.settings.soul to the companion's soul.md"
                     )
-                self._companion = _clanka.Companion(soul, self._model)
-            return self._companion
+                opening = self._opening = concurrent.futures.Future()
+                threading.Thread(
+                    target=self._open, args=(opening, soul), name="clanka-open", daemon=True
+                ).start()
+        return opening.result(timeout)
+
+    def _open(self, opening, soul):
+        try:
+            from . import _clanka
+
+            opening.set_result(_clanka.Companion(soul, self._model))
+        except BaseException as e:
+            opening.set_exception(e)
 
     def _model(self, system, messages, temperature):
         """The host's active model, for the core's memory writing."""
@@ -99,21 +123,42 @@ class _Plugin:
         # Hermes replays injected context on every later turn, so after the
         # first one only what the model hasn't seen is injected, and nothing
         # at all when nothing is new.
-        kind, context = self.companion().begin_turn(user_message or "", bool(is_first_turn))
+        #
+        # Hermes runs the turn anyway when this hook raises or outlasts its
+        # time limit, and the reply would be one the companion never
+        # remembers. So a memory that cannot take the turn blocks it instead.
+        try:
+            companion = self.companion(OPEN_TIMEOUT)
+            kind, context = companion.begin_turn(user_message or "", bool(is_first_turn))
+        except concurrent.futures.TimeoutError:
+            logger.warning("clanka: memory did not open in %ds; the turn is blocked", OPEN_TIMEOUT)
+            return _block(
+                "Memory has not opened yet, so nothing was sent. On a Mac, choose Always Allow "
+                "on the keychain prompt on its screen, then say that again."
+            )
+        except Exception as e:
+            logger.exception("clanka: memory cannot take the turn; the turn is blocked")
+            return _block(f"Memory is not working, so nothing was sent: {e}")
         if kind == "doctor":
-            return {"action": "block", "message": "Memory frozen."}
+            return _block("Memory frozen.")
         if kind == "frozen":
-            # Answering would be a reply the companion never remembers.
-            return {
-                "action": "block",
-                "message": "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again.",
-            }
+            return _block(
+                "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
+            )
         if kind == "open" and context:
             return {"context": context}
         return None
 
     def post_llm_call(self, assistant_response="", **_):
-        turns = self.companion().end_turn(assistant_response or "")
+        # Hermes calls this for a blocked turn too. One that pre_llm_call
+        # blocked because memory did not open has nothing to record, and
+        # waiting for the open here would hold the blocked reply back until
+        # Hermes drops this hook. A turn that asked for sleep got past
+        # pre_llm_call, so memory is open and the request is not lost here.
+        opening = self._opening
+        if opening is None or not opening.done() or opening.exception() is not None:
+            return
+        turns = opening.result().end_turn(assistant_response or "")
         sleep, self._sleep_requested = self._sleep_requested, False
         if turns is None and not sleep:
             return
