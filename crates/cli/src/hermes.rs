@@ -225,18 +225,46 @@ fn missing_env_lines<'a>(
     (lines, missing)
 }
 
-/// Creates the profile unless it exists. A directory without a config.yaml is
-/// not a profile but stops Hermes from making one, so an empty one is removed.
-fn create_profile(home: &Path, profile: &str) -> Result<PathBuf> {
+/// Creates the profile unless it exists, and says whether it did. A directory
+/// without a config.yaml is not a profile but stops Hermes from making one, so
+/// an empty one is removed.
+fn create_profile(home: &Path, profile: &str) -> Result<(PathBuf, bool)> {
     let dir = home.join("profiles").join(profile);
     if dir.is_dir() && !dir.join("config.yaml").exists() {
         std::fs::remove_dir(&dir)
             .with_context(|| format!("{} is not a profile; remove it", dir.display()))?;
     }
-    if !dir.join("config.yaml").exists() {
+    let created = !dir.join("config.yaml").exists();
+    if created {
         hermes(home, None, &["profile", "create", profile])?;
     }
-    Ok(dir)
+    Ok((dir, created))
+}
+
+/// What a setup that failed part-way leaves behind. A profile this run created
+/// is deleted again: half-made, it would answer as a stock Hermes agent under
+/// the companion's name. One that was there before is kept, and running the
+/// command again finishes it.
+fn or_undo(home: &Path, profile: &str, created: bool, set_up: Result<()>) -> Result<()> {
+    let Err(error) = set_up else {
+        return Ok(());
+    };
+    if !created {
+        return Err(error.context(format!(
+            "the {profile} profile is only partly updated; run this again once the cause is fixed"
+        )));
+    }
+    Err(
+        match hermes(home, None, &["profile", "delete", "--yes", profile]) {
+            Ok(()) => error.context(format!(
+                "setting up the {profile} profile failed, so the new profile was removed again"
+            )),
+            Err(delete) => error.context(format!(
+                "setting up the {profile} profile failed and the half-made profile could not be \
+                 removed ({delete:#}); remove it with `hermes profile delete {profile}`"
+            )),
+        },
+    )
 }
 
 /// The platforms whose toolsets in the profile's `platform_toolsets` do not
@@ -275,7 +303,29 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
             source.display()
         );
     }
-    let dir = create_profile(&home, profile)?;
+    let (dir, created) = create_profile(&home, profile)?;
+    or_undo(
+        &home,
+        profile,
+        created,
+        set_up_companion(&home, profile, &dir, &source, &soul, &soul_path),
+    )?;
+    println!(
+        "Profile {profile} is {}: hermes -p {profile} chat",
+        soul.traits.name
+    );
+    Ok(())
+}
+
+/// Everything `profile` does to the profile once it exists.
+fn set_up_companion(
+    home: &Path,
+    profile: &str,
+    dir: &Path,
+    source: &Path,
+    soul: &Soul,
+    soul_path: &Path,
+) -> Result<()> {
     // A profile sees only its own plugins directory. The extension is renamed
     // into place: a running gateway keeps its mapped copy of the old file, and
     // rewriting that in place would crash it on its next call.
@@ -288,8 +338,8 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
     std::fs::copy(source.join(EXTENSION), &staged)?;
     std::fs::rename(&staged, plugin.join(EXTENSION))?;
 
-    share_providers(&home, profile, &dir)?;
-    let h = |args: &[&str]| hermes(&home, Some(profile), args);
+    share_providers(home, profile, dir)?;
+    let h = |args: &[&str]| hermes(home, Some(profile), args);
     h(&["plugins", "enable", "clanka"])?;
     let soul_str = soul_path
         .to_str()
@@ -300,7 +350,7 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         "plugins.entries.clanka.settings.soul",
         soul_str,
     ])?;
-    let toolsets = config_get(&home, Some(profile), "platform_toolsets")?;
+    let toolsets = config_get(home, Some(profile), "platform_toolsets")?;
     for platform in without_clanka(toolsets.as_ref()) {
         h(&[
             "config",
@@ -324,10 +374,6 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         h(&["config", "set", key, value])?;
     }
     std::fs::write(dir.join("SOUL.md"), format!("{}\n", soul.persona()))?;
-    println!(
-        "Profile {profile} is {}: hermes -p {profile} chat",
-        soul.traits.name
-    );
     Ok(())
 }
 
@@ -337,15 +383,33 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
 /// companion. The root's own providers, model aliases and their keys are shared
 /// with it. Safe to run again. Without `model` the Hermes default stays.
 pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
-    const SOUL: &str = include_str!("../../../hermes/nightshade/SOUL.md");
     let clanka = std::env::current_exe().context("finding this binary's path")?;
     let clanka = clanka
         .to_str()
         .context("this binary's path is not valid UTF-8")?;
     let home = home()?;
-    let dir = create_profile(&home, profile)?;
-    share_providers(&home, profile, &dir)?;
-    let h = |args: &[&str]| hermes(&home, Some(profile), args);
+    let (dir, created) = create_profile(&home, profile)?;
+    or_undo(
+        &home,
+        profile,
+        created,
+        set_up_nightshade(&home, profile, &dir, model, clanka),
+    )?;
+    println!("Profile {profile} is Nightshade: hermes -p {profile} chat");
+    Ok(())
+}
+
+/// Everything `nightshade` does to the profile once it exists.
+fn set_up_nightshade(
+    home: &Path,
+    profile: &str,
+    dir: &Path,
+    model: Option<&str>,
+    clanka: &str,
+) -> Result<()> {
+    const SOUL: &str = include_str!("../../../hermes/nightshade/SOUL.md");
+    share_providers(home, profile, dir)?;
+    let h = |args: &[&str]| hermes(home, Some(profile), args);
     if let Some(model) = model {
         h(&["config", "set", "model.default", model])?;
     }
@@ -370,7 +434,6 @@ pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
         h(&["config", "set", key, value])?;
     }
     std::fs::write(dir.join("SOUL.md"), SOUL.replace("@CLANKA@", clanka))?;
-    println!("Profile {profile} is Nightshade: hermes -p {profile} chat");
     Ok(())
 }
 
