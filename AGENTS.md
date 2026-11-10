@@ -68,3 +68,22 @@ Saved records keep their source and version evidence and their verification boun
 
 Project preference: replace obsolete systems when practical; preserve backwards compatibility only when it is explicitly required.
 <!-- machine-memory:end -->
+
+## Build and test
+
+Rust workspace: `crates/core` (the memory engine), `crates/cli` (the `clanka` binary and the code host plugins share), `crates/py` (Python bindings for the Hermes plugin in `hermes/clanka`).
+
+- Format: `cargo fmt --all`
+- Lint: `cargo clippy --workspace --all-targets -- -D warnings`
+- Test: `cargo test --workspace` (no model provider, keyring, Hermes or network needed)
+- Build the CLI: `cargo build -p clanka` (`target/debug/clanka`)
+
+CI (`.github/workflows/ci.yml`) runs the format check, lint and tests on every push to `main` and every pull request.
+
+To run the CLI without touching real companions or the keyring, point it at a throwaway directory whose `config/clanka/config.toml` holds `[keys]` and `store = "file"`:
+
+```sh
+env XDG_CONFIG_HOME=<dir>/config XDG_DATA_HOME=<dir>/data DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent ./target/debug/clanka ...
+```
+
+A schema change is a new file in `crates/core/src/migrations/`, added to `MIGRATIONS` in `crates/core/src/db.rs`; never edit a migration that has shipped.
