@@ -368,7 +368,8 @@ fn instructions(name: &str) -> String {
          how you are left feeling. If tonight \
          changed what you know about the user or about your relationship, call write_section \
          with the whole section rewritten in a few lines: what stays true of them, not what \
-         happened tonight.\n\n\
+         happened tonight. Unless the user said their own gender, call them by name or \
+         \"they\", never \"he\" or \"she\": the people they talk about don't tell you theirs.\n\n\
          The memories that came up tonight may shift as you sleep. For each one listed, call \
          drift with how you now remember it, changed by about its drift amount (0 is the same, \
          1 is quite different) and coloured by how tonight felt. Vivid memories only blur in \

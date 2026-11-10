@@ -583,6 +583,8 @@ fn instructions(name: &str) -> String {
          Write interpretations in first person, as you felt them, in one or two sentences: what \
          happened and what it meant to you. Don't retell what you replied; the memory keeps the \
          exchange it came from. What you make of it is yours to write; what they said is not. \
+         Unless the user said their own gender, call them by name or \"they\", never \"he\" or \
+         \"she\": the people they talk about don't tell you theirs. \
          One memory from an exchange is the norm, a second only for a separate thing worth \
          keeping: a fact and how it felt are one memory, not two. A memory's level is how \
          deeply it's burned in. faint is the default, most of \
