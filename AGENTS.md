@@ -80,10 +80,18 @@ Rust workspace: `crates/core` (the memory engine), `crates/cli` (the `clanka` bi
 
 CI (`.github/workflows/ci.yml`) runs the format check, lint and tests on every push to `main` and every pull request.
 
-To run the CLI without touching real companions or the keyring, point it at a throwaway directory whose `config/clanka/config.toml` holds `[keys]` and `store = "file"`:
+To run the CLI without touching real companions or the keyring, point it at a throwaway directory whose `config.toml` holds `[keys]` and `store = "file"`.
+
+On Linux the file is `<dir>/config/clanka/config.toml`:
 
 ```sh
 env XDG_CONFIG_HOME=<dir>/config XDG_DATA_HOME=<dir>/data DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent ./target/debug/clanka ...
+```
+
+On macOS config and data both live in `$HOME/Library/Application Support/clanka`, so the file is `<dir>/Library/Application Support/clanka/config.toml`:
+
+```sh
+env HOME=<dir> ./target/debug/clanka ...
 ```
 
 A schema change is a new file in `crates/core/src/migrations/`, added to `MIGRATIONS` in `crates/core/src/db.rs`; never edit a migration that has shipped.
