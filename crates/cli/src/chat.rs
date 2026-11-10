@@ -18,18 +18,38 @@ const TEMPERATURE: f32 = 0.8;
 /// Said after a reply failed. Not "say it again": that would record it twice.
 const KEPT: &str = "Your message was kept; go on and the next reply answers it too.";
 
-pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> {
+pub fn run(chat: Companion, writer: Companion, budget: usize) -> Result<()> {
+    converse(
+        chat,
+        writer,
+        budget,
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+        std::io::stderr(),
+    )
+}
+
+/// [`run`] on any streams: lines come from `input`, replies go to `out`, and
+/// the prompt and clanka's own notes go to `notes`.
+pub fn converse(
+    mut chat: Companion,
+    writer: Companion,
+    budget: usize,
+    input: impl BufRead,
+    mut out: impl Write,
+    notes: impl Write + Send + 'static,
+) -> Result<()> {
     if chat.is_frozen()? {
         bail!("memory is frozen by the doctor; unfreeze it before chatting");
     }
+    let notes = Notes(Arc::new(Mutex::new(Box::new(notes))));
     let writer = Arc::new(Mutex::new(writer));
     let mut reflections: Vec<JoinHandle<()>> = Vec::new();
     let name = chat.soul().traits.name.clone();
-    let stdin = std::io::stdin();
-    let mut lines = stdin.lock().lines();
+    let mut lines = input.lines();
     loop {
         // The terminal or pipe is gone: the conversation is over.
-        if !tell("you> ", false) {
+        if !notes.tell("you> ", false) {
             break;
         }
         let Some(line) = lines.next() else { break };
@@ -42,7 +62,7 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
             finish(&mut reflections);
             let session = chat.open_session()?;
             let report = lock(&writer).sleep(session)?;
-            say(&format!(
+            notes.say(&format!(
                 "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
                 report.drifted.len(),
                 report.escalated.len()
@@ -52,7 +72,7 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
 
         let open = match turn::open(&mut chat, message, budget, true)? {
             Opened::Doctor => {
-                say("Memory frozen for the doctor. Nothing was recorded.");
+                notes.say("Memory frozen for the doctor. Nothing was recorded.");
                 break;
             }
             Opened::Frozen => bail!("memory is frozen by the doctor; unfreeze it before chatting"),
@@ -99,7 +119,6 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
             temperature: TEMPERATURE,
         };
         // The reply is printed as the model writes it.
-        let mut out = std::io::stdout().lock();
         let mut started = false;
         let reply = chat.deps().llm.stream(&request, &mut |piece| {
             let piece = if started { piece } else { piece.trim_start() };
@@ -116,26 +135,25 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
         if started {
             let _ = writeln!(out);
         }
-        drop(out);
         let reply = match reply {
             Ok(reply) if !reply.text.trim().is_empty() => reply.text.trim().to_owned(),
             // The message is already recorded: the next reply answers both,
             // and the reflection on that exchange reads both.
             Ok(_) => {
-                say(&format!("clanka: the model sent an empty reply. {KEPT}"));
+                notes.say(&format!("clanka: the model sent an empty reply. {KEPT}"));
                 continue;
             }
             Err(e) => {
-                say(&format!("clanka: no reply: {e}\nclanka: {KEPT}"));
+                notes.say(&format!("clanka: no reply: {e}\nclanka: {KEPT}"));
                 continue;
             }
         };
         let (user_turn, companion_turn) = turn::end(&mut chat, open.pending, &reply)?;
         // Same model, separate call, off the hot path.
-        let writer = writer.clone();
+        let (writer, notes) = (writer.clone(), notes.clone());
         reflections.push(std::thread::spawn(move || {
             if let Err(e) = lock(&writer).reflect(user_turn, companion_turn) {
-                say(&format!(
+                notes.say(&format!(
                     "clanka: reflection on turns {user_turn}–{companion_turn} failed: {e}"
                 ));
             }
@@ -146,19 +164,26 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
     Ok(())
 }
 
-/// Writes to stderr, and says whether anyone is still there to read it.
-/// `eprintln!` panics on a closed terminal or pipe, and a panic here would end
-/// the process under a reflection that is still writing.
-fn tell(text: &str, line: bool) -> bool {
-    let mut err = std::io::stderr().lock();
-    let end = if line { "\n" } else { "" };
-    write!(err, "{text}{end}")
-        .and_then(|()| err.flush())
-        .is_ok()
-}
+/// Where the prompt and clanka's notes go: stderr in a terminal. Shared with
+/// the reflections, which report their failures from their own threads.
+#[derive(Clone)]
+struct Notes(Arc<Mutex<Box<dyn Write + Send>>>);
 
-fn say(text: &str) {
-    tell(text, true);
+impl Notes {
+    /// Writes the text, and says whether anyone is still there to read it.
+    /// `eprintln!` panics on a closed terminal or pipe, and a panic here would
+    /// end the process under a reflection that is still writing.
+    fn tell(&self, text: &str, line: bool) -> bool {
+        let mut notes = lock(&self.0);
+        let end = if line { "\n" } else { "" };
+        write!(notes, "{text}{end}")
+            .and_then(|()| notes.flush())
+            .is_ok()
+    }
+
+    fn say(&self, text: &str) {
+        self.tell(text, true);
+    }
 }
 
 /// Waits for reflections still running, so none is cut off at exit or sleep.

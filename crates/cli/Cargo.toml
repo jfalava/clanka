@@ -38,4 +38,7 @@ zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 [dev-dependencies]
+# The MCP tests talk to the server as a client, over an in-memory pipe.
+rmcp = { version = "3.9", features = ["client"] }
 tempfile.workspace = true
+tokio = { version = "1", features = ["io-util"] }

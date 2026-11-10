@@ -68,6 +68,21 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+impl Server {
+    /// A server for one companion. `writer` is a second handle to the same
+    /// companion, on its model; without one, turns are recorded but never
+    /// reflected on.
+    pub fn new(chat: Companion, writer: Option<Companion>, budget: usize) -> Self {
+        Self {
+            chat: Arc::new(Mutex::new(chat)),
+            writer: writer.map(|w| Arc::new(Mutex::new(w))),
+            pending: Arc::default(),
+            seen: Arc::default(),
+            budget,
+        }
+    }
+}
+
 #[tool_router]
 impl Server {
     #[tool(
@@ -235,13 +250,7 @@ impl ServerHandler for Server {
 }
 
 pub fn serve(chat: Companion, writer: Option<Companion>, budget: usize) -> Result<()> {
-    let server = Server {
-        chat: Arc::new(Mutex::new(chat)),
-        writer: writer.map(|w| Arc::new(Mutex::new(w))),
-        pending: Arc::default(),
-        seen: Arc::default(),
-        budget,
-    };
+    let server = Server::new(chat, writer, budget);
     // One thread serves stdio; core work runs on the blocking pool.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

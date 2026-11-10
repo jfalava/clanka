@@ -1,67 +1,9 @@
+mod common;
+
 use clanka::turn::{self, Begin};
-use clanka_core::deps::{Clock, Embedder, KeySource, Llm, LlmRequest, LlmResponse, Rng};
 use clanka_core::model::{Actor, Level, MemoryType, Section};
-use clanka_core::{Companion, Deps, MemoryDraft, Result};
-use std::sync::atomic::{AtomicI64, Ordering};
-
-struct Dummy;
-impl Llm for Dummy {
-    fn complete(&self, _: &LlmRequest) -> Result<LlmResponse> {
-        Ok(LlmResponse::default())
-    }
-}
-impl Embedder for Dummy {
-    fn model_id(&self) -> &str {
-        "dummy"
-    }
-    fn dimensions(&self) -> usize {
-        2
-    }
-    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
-    }
-}
-/// Every reading is one millisecond later than the last.
-struct Ticking(AtomicI64);
-impl Clock for Ticking {
-    fn now_ms(&self) -> i64 {
-        self.0.fetch_add(1, Ordering::Relaxed)
-    }
-}
-impl Rng for Dummy {
-    fn next_seed(&self) -> u64 {
-        1
-    }
-}
-impl KeySource for Dummy {
-    fn key(&self, _: uuid::Uuid) -> Result<String> {
-        Ok("k".into())
-    }
-}
-
-const TOKEN: &str = "0123456789abcdef0123";
-
-fn open(dir: &std::path::Path) -> Companion {
-    let soul = dir.join("soul.md");
-    std::fs::write(
-        &soul,
-        format!(
-            "+++\nid = \"{}\"\nname = \"Nova\"\ncontrariness = 0.5\npersistence = 0.5\n\
-             time_sense = false\nrecall_window = 2\ndrift = 0.3\ntired_at = 0.7\nsleep_at = 0.9\n\
-             pushback_window = 20\ndoctor_token = \"{TOKEN}\"\n+++\n# Nova\n",
-            uuid::Uuid::now_v7()
-        ),
-    )
-    .unwrap();
-    let deps = Deps {
-        llm: Box::new(Dummy),
-        embedder: Box::new(Dummy),
-        clock: Box::new(Ticking(AtomicI64::new(1))),
-        rng: Box::new(Dummy),
-        keys: Box::new(Dummy),
-    };
-    Companion::open(dir, &soul, deps).unwrap()
-}
+use clanka_core::{Companion, MemoryDraft};
+use common::{TOKEN, open};
 
 fn begin(c: &mut Companion, message: &str, first: bool) -> (String, turn::Pending) {
     match turn::begin(c, message, 4000, first).unwrap() {
