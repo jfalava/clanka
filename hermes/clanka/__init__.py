@@ -184,7 +184,12 @@ class _Plugin:
             # reflection on the goodbye would only retell it.
             if turns is not None and not sleep:
                 try:
-                    ok, refused, left_out = c.reflect(*turns)
+                    ok, refused, left_out, caught_up = c.reflect(*turns)
+                    if caught_up:
+                        logger.info(
+                            "clanka: caught up on %d earlier exchange(s) before %s",
+                            caught_up, turns,
+                        )
                     # What the model got wrong, so the protocol can be fixed where it fails.
                     if refused:
                         logger.warning(

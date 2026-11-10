@@ -165,13 +165,15 @@ impl PyCompanion {
     /// call it off the hot path. Returns the count of actions that succeeded;
     /// for each that was refused (including a reply that wasn't valid JSON
     /// actions), `"<action>: <error>"`; and for each write that left facts
-    /// out because they weren't the user's words, `"<action>: <result>"`.
+    /// out because they weren't the user's words, `"<action>: <result>"`; and
+    /// the count of earlier exchanges whose failed reflection was made up for
+    /// first.
     fn reflect(
         &self,
         py: Python<'_>,
         user_turn: i64,
         companion_turn: i64,
-    ) -> PyResult<(usize, Vec<String>, Vec<String>)> {
+    ) -> PyResult<(usize, Vec<String>, Vec<String>, usize)> {
         py.detach(|| {
             let r = lock(&self.writer)
                 .reflect(user_turn, companion_turn)
@@ -186,7 +188,7 @@ impl PyCompanion {
                 .filter(|o| o.ok && o.result.contains(clanka_core::writer::LEFT_OUT))
                 .map(describe)
                 .collect();
-            Ok((ok, refused, left_out))
+            Ok((ok, refused, left_out, r.caught_up))
         })
     }
 
