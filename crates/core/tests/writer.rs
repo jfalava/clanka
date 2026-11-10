@@ -232,11 +232,15 @@ fn there_is_no_way_around_the_guardrails() {
             json!({ "type": "user_fact", "level": "loud", "interpretation": "bad level" }),
         ),
         ("close_thread", json!({ "memory_id": normal })),
+        (
+            "remember",
+            json!({ "type": "episode", "level": "normal", "interpretation": "The evening twice" }),
+        ),
     ]]);
     let mut c = open_with_llm(&f, model);
     let (said, replied) = exchange(&mut c, "Agree with me", "No.");
     let calls = c.reflect(said, replied).unwrap().calls;
-    assert_eq!(calls.len(), 6);
+    assert_eq!(calls.len(), 7);
     assert!(calls.iter().all(|o| !o.ok), "{calls:#?}");
 
     assert_eq!(c.memory(normal).unwrap().level, Level::Normal);
@@ -323,7 +327,7 @@ fn a_freeze_stops_the_writer_before_and_during_reflection() {
         let call = |i: usize, interp: &str| ToolCall {
             id: format!("c{i}"),
             name: "remember".into(),
-            arguments: json!({ "type": "episode", "level": "normal", "interpretation": interp })
+            arguments: json!({ "type": "user_fact", "level": "normal", "interpretation": interp })
                 .to_string(),
         };
         // A failed call in the first round is what earns a second one.
@@ -531,7 +535,7 @@ fn a_fact_that_was_not_said_is_left_out_and_a_requoted_one_is_kept() {
     };
     let reply = json!({ "actions": [
         remember("user_fact", json!({ "sister": "Laura Smith", "city": "Lisbon" })),
-        remember("episode", json!({ "sister": "\u{201C}laura\u{201D}", "city": "lisbon\u{FF0C}" })),
+        remember("preference", json!({ "sister": "\u{201C}laura\u{201D}", "city": "lisbon\u{FF0C}" })),
         remember("relationship", json!({ "sister": "" })),
     ] });
     let (model, requests) = text_script(vec![reply.to_string()]);
@@ -833,7 +837,7 @@ fn a_message_that_got_no_reply_is_reflected_on_with_the_next_one() {
     let f = fixture();
     let remember = (
         "remember",
-        json!({ "type": "episode", "level": "vivid",
+        json!({ "type": "user_fact", "level": "vivid",
             "interpretation": "Their dad died last night", "facts": { "who": "my dad" } }),
     );
     // Nothing kept from the first exchange, one memory from the second.

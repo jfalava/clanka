@@ -472,8 +472,20 @@ impl Companion {
             "remember" => {
                 let a: Remember = args(call)?;
                 let kind = parse(MemoryType::parse, &a.kind, "type")?;
-                if kind == MemoryType::OpenThread {
-                    return Err(Error::Invalid("use open_thread for open threads".into()));
+                match kind {
+                    MemoryType::OpenThread => {
+                        return Err(Error::Invalid("use open_thread for open threads".into()));
+                    }
+                    // Sleep writes the night's one episode; one kept here too
+                    // was the same evening twice.
+                    MemoryType::Episode => {
+                        return Err(Error::Invalid(
+                            "the evening becomes an episode when you sleep; keep this moment as \
+                             another type"
+                                .into(),
+                        ));
+                    }
+                    _ => {}
                 }
                 let level = parse(Level::parse, &a.memory.level, "level")?;
                 let (draft, note) = a.memory.draft(kind, level, exchange, spoken, None)?;
@@ -857,7 +869,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             "Keep something new from this exchange.",
             memory(
                 json!({
-                    "type": { "type": "string", "enum": ["user_fact", "preference", "episode", "relationship",
+                    "type": { "type": "string", "enum": ["user_fact", "preference", "relationship",
                         "promise", "opinion", "persona_note"] },
                     "strength": { "type": "number", "minimum": 0, "maximum": 1,
                         "description": "Opinions only: how strongly you hold it." },
