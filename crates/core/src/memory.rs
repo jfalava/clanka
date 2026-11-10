@@ -34,6 +34,9 @@ pub struct MemoryDraft {
     pub urgency: Option<Urgency>,
     /// How the memory feels to the companion, −1 to 1. `None` is neutral.
     pub valence: Option<f64>,
+    /// Made in a dream: a faint fragment without facts, or a seared memory
+    /// an echo showed (see [`crate::dream`]). The schema holds it to those two.
+    pub dreamt: bool,
 }
 
 impl MemoryDraft {
@@ -48,6 +51,7 @@ impl MemoryDraft {
             strength: None,
             urgency: None,
             valence: None,
+            dreamt: false,
         }
     }
 }
@@ -68,6 +72,8 @@ pub struct Memory {
     /// When an open thread was closed.
     pub resolved_at: Option<i64>,
     pub valence: Option<f64>,
+    /// Made in a dream: see [`MemoryDraft::dreamt`].
+    pub dreamt: bool,
     pub recall_count: i64,
     pub last_recalled_session: Option<i64>,
     pub source_turns: Vec<i64>,
@@ -145,15 +151,36 @@ impl Companion {
 
     /// Appends to the immutable transcript.
     pub fn record_turn(&mut self, session: i64, speaker: Speaker, content: &str) -> Result<i64> {
+        self.insert_turn(session, speaker, content, false)
+    }
+
+    /// Appends a message of the user's to a dream as an echo: a scene from the
+    /// past. Only what an echo showed can survive the dream.
+    pub fn record_echo(&mut self, session: i64, content: &str) -> Result<i64> {
+        self.insert_turn(session, Speaker::User, content, true)
+    }
+
+    fn insert_turn(
+        &mut self,
+        session: i64,
+        speaker: Speaker,
+        content: &str,
+        echo: bool,
+    ) -> Result<i64> {
         let now = self.deps.clock.now_ms();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_writable(&tx, &self.soul.hash)?;
         ensure_open(&tx, session)?;
+        if echo && !crate::dream::is_dream(&tx, session)? {
+            return Err(Error::Invalid(format!(
+                "session {session} is no dream; echoes happen only in dreams"
+            )));
+        }
         tx.execute(
-            "INSERT INTO turns (session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![session, speaker, content, now],
+            "INSERT INTO turns (session_id, role, content, created_at, echo) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![session, speaker, content, now, echo],
         )?;
         let id = tx.last_insert_rowid();
         tx.commit()?;
@@ -466,7 +493,7 @@ impl Companion {
             .query_row(
                 "SELECT id, type, level, facts, interpretation, status, superseded_by, occurred_at,
                         persona_hash, strength, urgency, created_at, updated_at, valence,
-                        recall_count, last_recalled_session, resolved_at
+                        recall_count, last_recalled_session, resolved_at, dreamt
                  FROM memories WHERE id = ?1",
                 [id],
                 |r| {
@@ -484,6 +511,7 @@ impl Companion {
                         urgency: r.get(10)?,
                         resolved_at: r.get(16)?,
                         valence: r.get(13)?,
+                        dreamt: r.get(17)?,
                         recall_count: r.get(14)?,
                         last_recalled_session: r.get(15)?,
                         source_turns: Vec::new(),
@@ -528,6 +556,35 @@ impl Companion {
             .ok_or_else(|| Error::Embedder("expected one vector, got none".into()))?;
         crate::companion::blob(&vector, embedder.dimensions())
     }
+}
+
+/// What the companion heard of a turn: the text without its out-of-earshot
+/// spans, each between a pair of `||`. A `||` with no pair is just text. Memory
+/// reads the user's words through this, so nothing said out of earshot is ever
+/// kept; the transcript keeps them whole, for an echo to reveal.
+pub fn heard(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut cut = false;
+    while let Some(start) = rest.find("||") {
+        let Some(len) = rest[start + 2..].find("||") else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        rest = &rest[start + 2 + len + 2..];
+        cut = true;
+        // One space is left between the words the span stood between.
+        if out.ends_with(char::is_whitespace) {
+            rest = rest.trim_start_matches([' ', '\t']);
+        }
+    }
+    out.push_str(rest);
+    if cut { out.trim().to_owned() } else { out }
+}
+
+/// Whether some of the text was said out of the companion's earshot.
+pub fn has_unheard(text: &str) -> bool {
+    heard(text) != text
 }
 
 /// Removes a memory, its vector and (by cascade) its versions, sources and
@@ -682,8 +739,8 @@ fn insert(
 
     tx.execute(
         "INSERT INTO memories (type, level, facts, interpretation, occurred_at, persona_hash,
-                               strength, urgency, valence, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                               strength, urgency, valence, created_at, updated_at, dreamt)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             draft.kind,
             draft.level,
@@ -695,7 +752,8 @@ fn insert(
             draft.urgency,
             draft.valence,
             now,
-            now
+            now,
+            draft.dreamt
         ],
     )?;
     let id = tx.last_insert_rowid();

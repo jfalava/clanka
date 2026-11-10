@@ -294,7 +294,7 @@ impl Companion {
                 });
                 continue;
             }
-            let said = self.source_text(&memory)?;
+            let said = self.source_text(&memory, false)?;
             for (key, value) in &memory.facts {
                 let value = value
                     .as_str()
@@ -334,7 +334,7 @@ impl Companion {
                 memory.kind.as_str(),
                 memory.level.as_str(),
                 memory.interpretation,
-                self.source_text(&memory)?
+                self.source_text(&memory, true)?
             ));
         }
         let allowed: BTreeSet<i64> = ids.iter().copied().collect();
@@ -379,7 +379,10 @@ impl Companion {
         Ok(reflections)
     }
 
-    pub(crate) fn source_text(&self, memory: &Memory) -> Result<String> {
+    /// What the turns a memory cites say. `heard` leaves out what was said out
+    /// of the companion's earshot, for a model that must not learn it; a fact
+    /// check reads it all, since an echo can reveal what was said there.
+    pub(crate) fn source_text(&self, memory: &Memory, heard: bool) -> Result<String> {
         let mut lines = Vec::new();
         for turn in &memory.source_turns {
             let (role, content): (String, String) = self.conn.query_row(
@@ -387,6 +390,11 @@ impl Companion {
                 [turn],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
+            let content = if heard {
+                crate::memory::heard(&content)
+            } else {
+                content
+            };
             let who = if role == "user" { "user" } else { "you" };
             lines.push(format!("({who}) {content}"));
         }

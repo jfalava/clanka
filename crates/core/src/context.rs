@@ -31,7 +31,17 @@ const LET_GO_HINT: &str = "You've pushed back on the user a lot lately. Let the 
 
 /// Tokens set aside for the hints `render` may add (tiredness, letting go).
 pub fn hints_reserve() -> usize {
-    estimate_tokens(SLEEPY_HINT).max(estimate_tokens(TIRED_HINT)) + estimate_tokens(LET_GO_HINT)
+    [
+        SLEEPY_HINT,
+        TIRED_HINT,
+        crate::dream::FADING_HINT,
+        crate::dream::WAKING_HINT,
+    ]
+    .map(estimate_tokens)
+    .into_iter()
+    .max()
+    .unwrap_or(0)
+        + estimate_tokens(LET_GO_HINT)
 }
 
 /// Most that time away shifts the companion's warmth, reached after [`TIME_AWAY_FULL_HOURS`].
@@ -70,6 +80,12 @@ pub enum Fatigue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Context {
     pub persona: String,
+    /// The companion is dreaming.
+    pub dreaming: bool,
+    /// In a dream, what the reply model is told after the persona (see
+    /// [`crate::dream::hint`]). Left out on later turns for a host that
+    /// replays it ([`Companion::keep_new`]).
+    pub dream: Option<String>,
     pub sections: Vec<(Section, String)>,
     /// The companion's mood, with any time-away shift already applied.
     pub mood: Option<Mood>,
@@ -90,6 +106,8 @@ pub struct Context {
     /// that replays its history ([`Companion::keep_new`]) shows each step
     /// (tired, then sleepy) once instead of on every turn after it.
     pub fatigue_before: Fatigue,
+    /// The session fills its whole budget. A dream ends with this reply.
+    pub spent: bool,
     /// At the pushback limit: the companion should let the next opinion clash go.
     pub let_go: bool,
     /// Estimated tokens of everything included, the current message and the
@@ -115,9 +133,14 @@ impl Companion {
             return Err(Error::PersonaUnresolved);
         }
         let persona = self.soul.persona();
+        let dreaming = crate::dream::open_dream(&self.conn)?.is_some();
+        // Like the persona, never left out: it is what makes this a dream.
+        let dream = dreaming.then(|| crate::dream::hint(&self.soul));
         let mut left = Budget {
             total: budget,
-            used: estimate_tokens(&persona) + estimate_tokens(message),
+            used: estimate_tokens(&persona)
+                + estimate_tokens(message)
+                + dream.as_deref().map_or(0, estimate_tokens),
         };
         let mut fits = |text: &str| left.take(text);
 
@@ -133,18 +156,21 @@ impl Companion {
             }
         }
         let mut mood = self.mood()?;
+        // A dream has no time in it: no time away, no ages.
         let time_away = match &mut mood {
-            Some(m) => self.apply_time_away(m)?,
-            None => None,
+            Some(m) if !dreaming => self.apply_time_away(m)?,
+            _ => None,
         };
         let mood = mood.filter(|m| fits(&render_mood(m)));
+        // The note is the writer's, for the next waking reply.
         let turn_note = self
             .last_turn_note()?
             .map(|(_, note)| note)
+            .filter(|_| !dreaming)
             .filter(|n| fits(&render_note(n)));
 
         // A soul with a sense of time also knows how long ago something happened.
-        let today = self.today();
+        let today = self.today().filter(|_| !dreaming);
         let mut hot_threads = Vec::new();
         for memory in self.hot_threads()? {
             if !fits(&render_memory(&memory, today)) {
@@ -188,7 +214,11 @@ impl Companion {
 
         let (pushbacks, limit) = self.pushback_pressure()?;
         Ok(Context {
-            let_go: pushbacks >= limit,
+            // Nothing is kept of a dream as it happens, pushbacks included.
+            let_go: !dreaming && pushbacks >= limit,
+            spent: session_budget == 0 || session_tokens >= session_budget,
+            dreaming,
+            dream,
             time_away,
             today,
             persona,
@@ -245,6 +275,8 @@ impl Companion {
         if !changed("SELECT max(created_at) FROM turn_notes", &[])? {
             ctx.turn_note = None;
         }
+        // Said on the dream's first turn; the host's history keeps saying it.
+        ctx.dream = None;
         ctx.hot_threads
             .retain(|m| m.last_recalled_session != Some(session));
         ctx.memories
@@ -262,8 +294,9 @@ impl Companion {
         if !self.soul.traits.time_sense {
             return Ok(None);
         }
+        // Dreams aren't time together.
         let ended: Option<i64> = self.conn.query_row(
-            "SELECT max(ended_at) FROM sessions WHERE ended_at IS NOT NULL",
+            "SELECT max(ended_at) FROM sessions WHERE ended_at IS NOT NULL AND dream = 0",
             [],
             |r| r.get(0),
         )?;
@@ -271,7 +304,8 @@ impl Companion {
         let hours = (self.deps.clock.now_ms() - ended) as f64 / 3_600_000.0;
         let said: i64 = self.conn.query_row(
             "SELECT count(*) FROM turns WHERE role = 'user' AND session_id =
-               (SELECT id FROM sessions WHERE ended_at IS NULL AND started_at > ?1 ORDER BY id DESC LIMIT 1)",
+               (SELECT id FROM sessions WHERE ended_at IS NULL AND dream = 0 AND started_at > ?1
+                ORDER BY id DESC LIMIT 1)",
             [ended],
             |r| r.get(0),
         )?;
@@ -380,6 +414,7 @@ impl Context {
     /// [`Context::turns`] as chat messages itself.
     pub fn render(&self) -> String {
         let mut out = vec![self.persona.clone()];
+        out.extend(self.dream.clone());
         out.extend(self.sections.iter().map(|(s, c)| render_section(*s, c)));
         out.extend(self.mood.iter().map(render_mood));
         out.extend(self.turn_note.iter().map(|n| render_note(n)));
@@ -402,10 +437,13 @@ impl Context {
                 .collect();
             out.push(format!("What you remember:\n{}", memories.join("\n")));
         }
-        match self.fatigue {
-            Fatigue::Rested => {}
-            Fatigue::Tired(_) => out.push(TIRED_HINT.into()),
-            Fatigue::Sleepy => out.push(SLEEPY_HINT.into()),
+        // A dream doesn't tire the companion; it fades, then ends.
+        match (self.fatigue, self.dreaming) {
+            (_, true) if self.spent => out.push(crate::dream::WAKING_HINT.into()),
+            (Fatigue::Sleepy, true) => out.push(crate::dream::FADING_HINT.into()),
+            (Fatigue::Rested, _) | (Fatigue::Tired(_), true) => {}
+            (Fatigue::Tired(_), false) => out.push(TIRED_HINT.into()),
+            (Fatigue::Sleepy, false) => out.push(SLEEPY_HINT.into()),
         }
         if self.let_go {
             out.push(LET_GO_HINT.into());
@@ -468,8 +506,16 @@ fn render_memory(m: &Memory, now: Option<i64>) -> String {
         Some(age) => format!("- ({age}) {}", m.interpretation),
         None => format!("- {}", m.interpretation),
     };
-    if m.level == Level::Seared {
-        line.push_str(" (this one is burned into you)");
+    if m.dreamt {
+        // What a dream left is shown without an age: it has no date.
+        line = format!("- {}", m.interpretation);
+    }
+    match (m.level, m.dreamt) {
+        (Level::Seared, true) => {
+            line.push_str(" (you learned this in a dream, and it is burned into you)")
+        }
+        (Level::Seared, false) => line.push_str(" (this one is burned into you)"),
+        _ => {}
     }
     if !m.facts.is_empty() {
         let facts: Vec<String> = m

@@ -22,6 +22,9 @@ pub struct Companion {
     persona: PersonaStatus,
     ranking: Ranking,
     pub(crate) duplicate_similarity: f32,
+    /// The dream this handle started. A dream belongs to the handle that
+    /// dreams it: another one that takes a turn finds it lost and drops it.
+    pub(crate) dream: Option<i64>,
 }
 
 /// How the soul.md on disk relates to the one its memories were written under.
@@ -116,6 +119,7 @@ impl Companion {
             persona,
             ranking: Ranking::default(),
             duplicate_similarity: DUPLICATE_SIMILARITY,
+            dream: None,
         })
     }
 

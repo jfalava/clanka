@@ -239,8 +239,11 @@ impl Companion {
     pub fn pushback_pressure(&self) -> Result<(usize, usize)> {
         let traits = &self.soul.traits;
         let count: i64 = self.conn.query_row(
+            // Dream turns aren't counted: nothing pushes back in a dream.
             "SELECT count(*) FROM pushbacks WHERE core_value = 0 AND turn_id >=
-               (SELECT coalesce(min(id), 0) FROM (SELECT id FROM turns ORDER BY id DESC LIMIT ?1))",
+               (SELECT coalesce(min(id), 0) FROM (SELECT t.id FROM turns t
+                  JOIN sessions s ON s.id = t.session_id WHERE s.dream = 0
+                  ORDER BY t.id DESC LIMIT ?1))",
             [traits.pushback_window],
             |r| r.get(0),
         )?;

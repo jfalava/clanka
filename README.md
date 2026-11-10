@@ -50,6 +50,24 @@ machine without one, add `[keys]` with `store = "file"` before `clanka init`.
 
 Every command explains itself: `clanka help <command>`.
 
+## Dreams
+
+After the companion has slept, a message starting with `~~` sends it into a
+dream. What you write there is what happens to it, as "you"; it lives it in
+first person without knowing it is dreaming, its temperament louder and its
+life hazy. In a dream, `<<` shows it an echo, a scene from the past.
+
+It wakes when it chooses to (it realizes none of it can be real, or something
+it can't bear), when the dream fills the session, or on `/sleep`. Waking
+keeps its mood, a few fragments that come back only in later dreams, and at
+most one seared memory: a name, date or place that an echo showed and that
+you had also written while it was awake. Anything the dream made up fades.
+Leaving mid-dream keeps nothing.
+
+In a waking message, text between `||` and `||` is said out of the
+companion's earshot: it is told not to acknowledge it, and memory never keeps
+it, until an echo reveals it.
+
 ## Hermes
 
 `hermes/install.sh` builds the plugin and installs it under

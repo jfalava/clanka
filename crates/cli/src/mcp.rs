@@ -1,7 +1,9 @@
 //! `clanka mcp`: a stdio MCP server for trying a companion out in any MCP
-//! host. Four tools with one fixed order (begin_turn, reply, end_turn), so any
+//! host. Five tools with one fixed order (begin_turn, reply, end_turn), so any
 //! current model can follow it, plus the persona as an MCP prompt. The doctor
 //! is never a tool: the doctor token freezes memory and the CLI does the rest.
+//! A dream ends with wake_up, or by itself when it fills the session; the
+//! server drops one still open when it exits.
 
 use crate::turn::{self, Begin, Pending};
 use anyhow::Result;
@@ -21,7 +23,8 @@ const INSTRUCTIONS: &str = "You are a companion with a long-term memory. For EVE
 do these three steps in order: 1) call begin_turn with the user's message, exactly as written; \
 2) write your reply in character, using what begin_turn returned as your own memories and mood; \
 3) call end_turn with your reply, exactly as written. When the user says goodnight or asks you to \
-sleep, call sleep after replying.";
+sleep, call sleep after replying. When begin_turn tells you of a place you know that is strange, \
+and you come to wake there, call wake_up after end_turn.";
 
 #[derive(Deserialize, JsonSchema)]
 pub struct BeginTurn {
@@ -112,6 +115,10 @@ impl Server {
                 Begin::Frozen => "Memory is frozen by the doctor, so nothing is recorded. Reply \
                      without memories and do not call end_turn."
                     .into(),
+                Begin::Awake => format!(
+                    "Not recorded. {} Tell the user so in a line and do not call end_turn.",
+                    turn::AWAKE
+                ),
                 Begin::Open {
                     context,
                     pending: p,
@@ -138,15 +145,26 @@ impl Server {
     ) -> Result<String, String> {
         let (chat, pending, writer) =
             (self.chat.clone(), self.pending.clone(), self.writer.clone());
-        let (user_turn, companion_turn) = blocking(move || {
+        let (user_turn, companion_turn, dream) = blocking(move || {
             let Some(p) = lock(&pending).take() else {
                 return Err(
                     "No turn is open: call begin_turn with the user's message first.".into(),
                 );
             };
-            turn::end(&mut lock(&chat), p, &reply).map_err(|e| e.to_string())
+            let dream = p.dream.then_some((p.session, p.wake));
+            let (user, companion) =
+                turn::end(&mut lock(&chat), p, &reply).map_err(|e| e.to_string())?;
+            Ok((user, companion, dream))
         })
         .await?;
+        // Nothing of a dream is kept as it happens: it is decided on waking.
+        if let Some((session, spent)) = dream {
+            if !spent {
+                return Ok("Saved.".into());
+            }
+            let (chat, writer) = (self.chat.clone(), self.writer.clone());
+            return blocking(move || wake(&chat, writer.as_deref(), session)).await;
+        }
         let Some(writer) = writer else {
             return Ok(
                 "Saved. (No companion model is configured for clanka, so nothing was reflected on.)"
@@ -192,9 +210,31 @@ impl Server {
     }
 
     #[tool(
+        description = "Call after end_turn when your reply was the moment you woke from the strange, familiar place begin_turn told you of. Takes a while."
+    )]
+    async fn wake_up(&self) -> Result<String, String> {
+        let (chat, writer) = (self.chat.clone(), self.writer.clone());
+        blocking(move || {
+            let dream = lock(&chat).dreaming().map_err(|e| e.to_string())?;
+            match dream {
+                Some(dream) => wake(&chat, writer.as_deref(), dream),
+                None => Ok("You are awake already.".into()),
+            }
+        })
+        .await
+    }
+
+    #[tool(
         description = "Call when the user says goodnight or asks you to sleep, after your reply and end_turn. Ends the conversation and turns it into memories. Takes a while."
     )]
     async fn sleep(&self) -> Result<String, String> {
+        // In a dream, sleep is waking up.
+        let (chat, writer) = (self.chat.clone(), self.writer.clone());
+        let dream = blocking(move || lock(&chat).dreaming().map_err(|e| e.to_string())).await?;
+        if let Some(dream) = dream {
+            let chat = self.chat.clone();
+            return blocking(move || wake(&chat, writer.as_deref(), dream)).await;
+        }
         let Some(writer) = self.writer.clone() else {
             return Err(
                 "Can't sleep: no companion model is configured. Add a [model] section to \
@@ -249,6 +289,36 @@ impl ServerHandler for Server {
     }
 }
 
+/// Wakes the companion from `dream` with the writer; without one (no companion
+/// model) the dream is dropped instead, since nothing could decide what stays.
+fn wake(
+    chat: &Mutex<Companion>,
+    writer: Option<&Mutex<Companion>>,
+    dream: i64,
+) -> Result<String, String> {
+    let Some(writer) = writer else {
+        lock(chat).drop_dream().map_err(|e| e.to_string())?;
+        return Ok(
+            "You woke. No companion model is configured, so nothing of the dream was \
+                   kept. The next message starts a new conversation."
+                .into(),
+        );
+    };
+    let report = lock(writer).wake(dream).map_err(|e| e.to_string())?;
+    let seared = if report.seared.is_some() {
+        " One thing an echo showed you stays, burned in, and you mean to find out whether it \
+         is true."
+    } else {
+        ""
+    };
+    Ok(format!(
+        "You woke: {} fragments linger and {} memories shifted.{seared} The next message \
+         starts a new conversation.",
+        report.fragments.len(),
+        report.drifted.len()
+    ))
+}
+
 pub fn serve(chat: Companion, writer: Option<Companion>, budget: usize) -> Result<()> {
     let server = Server::new(chat, writer, budget);
     // One thread serves stdio; core work runs on the blocking pool.
@@ -256,8 +326,11 @@ pub fn serve(chat: Companion, writer: Option<Companion>, budget: usize) -> Resul
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let service = server.serve(rmcp::transport::stdio()).await?;
+        let service = server.clone().serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
-        Ok(())
-    })
+        anyhow::Ok(())
+    })?;
+    // A dream that didn't end by waking is dropped: nothing of it is kept.
+    lock(&server.chat).drop_dream()?;
+    Ok(())
 }

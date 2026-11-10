@@ -125,7 +125,8 @@ struct Candidate {
 impl Companion {
     /// Memories for the turn about to happen. `message` is your current message,
     /// not yet recorded; the query adds your previous user turns from the open
-    /// session, up to the soul's `recall_window` messages in all.
+    /// session, up to the soul's `recall_window` messages in all. Only what the
+    /// companion heard of them searches: nothing said out of earshot does.
     pub fn recall(&self, message: &str, ranking: &Ranking) -> Result<Vec<Recalled>> {
         self.search(&self.recall_query(message)?, ranking)
     }
@@ -137,6 +138,8 @@ impl Companion {
         ranking.check()?;
         let embedding = self.embed(query)?;
         let mood = self.mood()?.map(|m| m.valence);
+        // A dream's fragments come up only in another dream.
+        let dreaming = crate::dream::open_dream(&self.conn)?.is_some();
         let newest: i64 =
             self.conn
                 .query_row("SELECT coalesce(max(id), 0) FROM memories", [], |r| {
@@ -163,11 +166,11 @@ impl Companion {
              FROM memories m
              JOIN memory_vectors v ON v.memory_id = m.id
              LEFT JOIN fts ON fts.id = m.id
-             WHERE m.status = 'active'"
+             WHERE m.status = 'active' AND (?3 OR m.dreamt = 0 OR m.level = 'seared')"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let candidates = stmt
-            .query_map(params![embedding, fts], |r| {
+            .query_map(params![embedding, fts, dreaming], |r| {
                 Ok(Candidate {
                     id: r.get(0)?,
                     kind: r.get(1)?,
@@ -260,9 +263,10 @@ impl Companion {
         )?;
         let mut parts = stmt
             .query_map([previous], |r| r.get::<_, String>(0))?
+            .map(|t| t.map(|t| crate::memory::heard(&t)))
             .collect::<rusqlite::Result<Vec<_>>>()?;
         parts.reverse();
-        parts.push(message.to_owned());
+        parts.push(crate::memory::heard(message));
         Ok(parts.join("\n"))
     }
 }

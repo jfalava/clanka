@@ -53,6 +53,7 @@ class _Plugin:
         # Reflections and sleep run one at a time, in order, off the turn thread.
         self._work_lock = threading.Lock()
         self._sleep_requested = False
+        self._wake_requested = False
 
     # The companion opens on first use, so a slow Secret Service or model load
     # never counts against Hermes's plugin load timeout. It opens on a thread
@@ -141,6 +142,8 @@ class _Plugin:
             return _block(f"Memory is not working, so nothing was sent: {e}")
         if kind == "doctor":
             return _block("Memory frozen.")
+        if kind == "awake":
+            return _block(context)
         if kind == "frozen":
             return _block(
                 "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
@@ -158,8 +161,17 @@ class _Plugin:
         opening = self._opening
         if opening is None or not opening.done() or opening.exception() is not None:
             return
-        turns = opening.result().end_turn(assistant_response or "")
+        ended = opening.result().end_turn(assistant_response or "")
         sleep, self._sleep_requested = self._sleep_requested, False
+        wake, self._wake_requested = self._wake_requested, False
+        turns = None
+        if ended is not None:
+            user, companion, spent = ended
+            turns = (user, companion)
+            # The dream filled the session: it ends with this reply.
+            wake = wake or spent
+        # In a dream, sleep wakes the companion; reflect does nothing there.
+        sleep = sleep or wake
         if turns is None and not sleep:
             return
         # A copied context keeps Hermes's live model selection for ctx.llm.
@@ -174,7 +186,20 @@ class _Plugin:
         # the reflection on the last exchange.
         logger.info("clanka: session reset (%s): sleeping", reason or "unknown")
         run = contextvars.copy_context().run
-        threading.Thread(target=run, args=(self._after_turn, None, True), name="clanka-sleep").start()
+        threading.Thread(target=run, args=(self._reset,), name="clanka-sleep").start()
+
+    def _reset(self):
+        # A dream the conversation ended before the companion woke from is
+        # dropped: nothing of it is kept.
+        with self._work_lock:
+            try:
+                if self.companion().drop_dream():
+                    logger.info("clanka: the conversation ended mid-dream: the dream is dropped")
+                    return
+            except Exception:
+                logger.exception("clanka: dropping the dream failed")
+                return
+        self._after_turn(None, True)
 
     def _after_turn(self, turns, sleep):
         with self._work_lock:
@@ -211,6 +236,13 @@ class _Plugin:
     def recall_memory(self, args, **_):
         found = self.companion().recall(str(args.get("query", "")))
         return json.dumps({"memories": found or [], "note": "" if found else "Nothing comes to mind."})
+
+    def wake_up(self, args, **_):
+        if not self.companion().dreaming():
+            return json.dumps({"ok": False, "note": "You are awake already."})
+        self._wake_requested = True
+        # Like go_to_sleep: the reply is the moment, in the companion's words.
+        return json.dumps({"ok": True, "note": "Your reply is the moment you wake, in your own words."})
 
     def go_to_sleep(self, args, **_):
         self._sleep_requested = True
@@ -255,4 +287,16 @@ def register(ctx):
             "parameters": {"type": "object", "properties": {}},
         },
         handler=plugin.go_to_sleep,
+    )
+    ctx.register_tool(
+        name="wake_up",
+        toolset="clanka",
+        schema={
+            "name": "wake_up",
+            "description": "Only when you are somewhere you know that is strange, and it comes to "
+            "you that none of it can be real, or you realize something you cannot bear: call this "
+            "before your reply. Your reply is the moment you wake.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        handler=plugin.wake_up,
     )

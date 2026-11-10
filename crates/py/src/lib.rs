@@ -119,10 +119,12 @@ impl PyCompanion {
 
     /// Before the model replies. Returns `("doctor", "")` when the message is
     /// the doctor token (memory is frozen, nothing recorded: don't send the
-    /// message to the model), `("frozen", "")` while frozen, or
-    /// `("open", context)` with the memory to give the model. On the host
-    /// conversation's first turn (`first`) that is everything; later it is
-    /// only what the model hasn't seen, and empty when nothing is new.
+    /// message to the model), `("frozen", "")` while frozen, `("awake", why)`
+    /// when the message asked for a dream (`~~`) mid-conversation (nothing
+    /// recorded; show `why` instead of a reply), or `("open", context)` with
+    /// the memory to give the model. On the host conversation's first turn
+    /// (`first`) that is everything; later it is only what the model hasn't
+    /// seen, and empty when nothing is new.
     #[pyo3(signature = (message, first = true))]
     fn begin_turn(
         &self,
@@ -139,6 +141,7 @@ impl PyCompanion {
                     ("doctor", String::new())
                 }
                 Begin::Frozen => ("frozen", String::new()),
+                Begin::Awake => ("awake", turn::AWAKE.to_owned()),
                 Begin::Open { context, pending } => {
                     *lock(&self.pending) = Some(pending);
                     ("open", context)
@@ -148,17 +151,32 @@ impl PyCompanion {
     }
 
     /// After the reply: records it and marks what was recalled. Fast. Returns
-    /// the `(user, companion)` turn IDs to pass to `reflect`, or `None` when no
-    /// turn was open (the doctor token, a frozen memory, or a vetoed turn).
-    fn end_turn(&self, py: Python<'_>, reply: &str) -> PyResult<Option<(i64, i64)>> {
+    /// the `(user, companion)` turn IDs to pass to `reflect` and whether the
+    /// dream ends with this reply (it filled the session: call `sleep`, which
+    /// wakes it), or `None` when no turn was open (the doctor token, a frozen
+    /// memory, or a vetoed turn). `reflect` on a dream's turns does nothing.
+    fn end_turn(&self, py: Python<'_>, reply: &str) -> PyResult<Option<(i64, i64, bool)>> {
         py.detach(|| {
             let Some(pending) = lock(&self.pending).take() else {
                 return Ok(None);
             };
-            turn::end(&mut lock(&self.chat), pending, reply)
-                .map(Some)
-                .map_err(err)
+            let spent = pending.wake;
+            let (user, companion) =
+                turn::end(&mut lock(&self.chat), pending, reply).map_err(err)?;
+            Ok(Some((user, companion, spent)))
         })
+    }
+
+    /// Whether the companion is in a dream.
+    fn dreaming(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| Ok(lock(&self.chat).dreaming().map_err(err)?.is_some()))
+    }
+
+    /// Drops the open dream, if any: it ends with nothing kept. For a host
+    /// conversation that ended before the companion woke. Returns whether
+    /// there was one.
+    fn drop_dream(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| Ok(lock(&self.chat).drop_dream().map_err(err)?.is_some()))
     }
 
     /// Reflects on one exchange with the host model, as the companion. Slow:
@@ -208,9 +226,28 @@ impl PyCompanion {
 
     /// Ends the conversation and consolidates it. Slow. Does nothing, and says
     /// so, when nothing was said since the companion last slept, so a host may
-    /// call it at every conversation boundary.
+    /// call it at every conversation boundary. In a dream, the companion wakes
+    /// instead, and what stays of the dream is decided.
     fn sleep(&self, py: Python<'_>) -> PyResult<String> {
         py.detach(|| {
+            let dream = {
+                let mut chat = lock(&self.chat);
+                chat.drop_lost_dream().map_err(err)?;
+                chat.dreaming().map_err(err)?
+            };
+            if let Some(dream) = dream {
+                let report = lock(&self.writer).wake(dream).map_err(err)?;
+                return Ok(format!(
+                    "Awake. {} fragments linger, {} memories shifted{}.",
+                    report.fragments.len(),
+                    report.drifted.len(),
+                    if report.seared.is_some() {
+                        ", and one thing an echo showed stays seared"
+                    } else {
+                        ""
+                    }
+                ));
+            }
             let Some(session) = lock(&self.chat).session_in_progress().map_err(err)? else {
                 return Ok("Already asleep: nothing was said since.".to_owned());
             };

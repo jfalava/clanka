@@ -220,7 +220,7 @@ fn core_values(body: &str) -> Vec<String> {
 
 /// Proper names: capitalised words that don't start a sentence, a line, a
 /// quote or a list item. The companion's own name is left out.
-fn cast(body: &str, name: &str) -> Vec<String> {
+pub(crate) fn cast(body: &str, name: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for line in body.lines() {
         let mut rest = line;

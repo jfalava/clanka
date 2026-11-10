@@ -113,7 +113,21 @@ enum Command {
     /// conversation and turn it into memories, or send the soul's doctor_token to freeze
     /// the memory and quit without recording anything. Refuses to start if the persona
     /// changed since its memories were written.
-    #[command(after_long_help = "Example:\n  clanka chat ~/.config/clanka/souls/<id>.md")]
+    ///
+    /// Markers at the start of a message: `>>N` asks for a reply of about N paragraphs.
+    /// `~~`, as the first message after sleep, starts a dream: what you write is what
+    /// happens to the companion, as "you", and it lives it without knowing it dreams. In a
+    /// dream, `<<` shows it an echo of the past. It wakes when it chooses to, when the dream
+    /// fills the session, or on /sleep; only fragments and its mood stay, and at most one
+    /// thing an echo showed that you had also written while it was awake. Leaving mid-dream
+    /// keeps nothing of it. Anywhere in a waking message, text between || and || is said out
+    /// of the companion's earshot: it plays along without hearing it, and never keeps it.
+    #[command(
+        after_long_help = "Example:\n  clanka chat ~/.config/clanka/souls/<id>.md\n\n\
+        A dream:\n  \
+        you> ~~ You're standing in your mother's kitchen. It is too quiet.\n  \
+        you> << >>3 Years ago, in this room, the judge reads the sentence aloud."
+    )]
     Chat {
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,
@@ -606,8 +620,9 @@ fn memories(paths: &Paths, soul: &Path) -> Result<()> {
         } else {
             ""
         };
+        let dreamt = if m.dreamt { ", dreamt" } else { "" };
         println!(
-            "#{} [{}{closed}, {}{valence}, {}] {}{facts}",
+            "#{} [{}{closed}{dreamt}, {}{valence}, {}] {}{facts}",
             m.id,
             m.kind.as_str(),
             m.level.as_str(),

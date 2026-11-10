@@ -2,12 +2,16 @@
 //! jobs: it writes each reply, then reflects on the exchange in the background
 //! as the writer. Lines in, replies out as they are written; `/sleep` ends the
 //! conversation. Turns go through [`crate::turn`], like every other front end.
+//!
+//! A message starting with `~~` after sleep is a dream. Its replies may call
+//! `wake_up`, so they arrive whole instead of as they are written; when the
+//! companion wakes, the chat goes on awake. Leaving mid-dream drops it.
 
 use crate::turn::{self, Opened};
 use anyhow::{Result, bail};
-use clanka_core::Companion;
-use clanka_core::deps::{LlmMessage, LlmRequest, Role};
+use clanka_core::deps::{Llm, LlmMessage, LlmRequest, LlmResponse, Role};
 use clanka_core::model::Speaker;
+use clanka_core::{Companion, WakeReport, dream};
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -17,6 +21,10 @@ const TEMPERATURE: f32 = 0.8;
 
 /// Said after a reply failed. Not "say it again": that would record it twice.
 const KEPT: &str = "Your message was kept; go on and the next reply answers it too.";
+
+/// The `wake_up` result for a model that called it without saying anything:
+/// the waking line is still its to say.
+const WAKING: &str = "You wake. Your reply is the moment you wake, in your own words.";
 
 pub fn run(chat: Companion, writer: Companion, budget: usize) -> Result<()> {
     converse(
@@ -60,6 +68,12 @@ pub fn converse(
         }
         if message == "/sleep" {
             finish(&mut reflections);
+            chat.drop_lost_dream()?;
+            // In a dream, sleep is waking up.
+            if let Some(dream) = chat.dreaming()? {
+                wake(&writer, dream, &notes, &name);
+                break;
+            }
             let session = chat.open_session()?;
             let report = lock(&writer).sleep(session)?;
             notes.say(&format!(
@@ -76,11 +90,18 @@ pub fn converse(
                 break;
             }
             Opened::Frozen => bail!("memory is frozen by the doctor; unfreeze it before chatting"),
+            Opened::Awake => {
+                notes.say(&format!(
+                    "clanka: {name} is awake in this conversation. Send /sleep, then start \
+                     the dream with ~~ in a new chat."
+                ));
+                continue;
+            }
             Opened::Open(open) => *open,
         };
         let mut system = open.context.render();
-        if let Some(n) = open.stretch {
-            system = format!("{system}\n\n{}", turn::stretch_hint(n));
+        for hint in open.hints() {
+            system = format!("{system}\n\n{hint}");
         }
         let said = open
             .context
@@ -112,28 +133,42 @@ pub fn converse(
                 }),
             }
         }
-        let request = LlmRequest {
+        let mut request = LlmRequest {
             system,
             messages,
-            tools: Vec::new(),
+            tools: if open.pending.dream {
+                vec![dream::wake_up_tool()]
+            } else {
+                Vec::new()
+            },
             temperature: TEMPERATURE,
         };
-        // The reply is printed as the model writes it.
-        let mut started = false;
-        let reply = chat.deps().llm.stream(&request, &mut |piece| {
-            let piece = if started { piece } else { piece.trim_start() };
-            if piece.is_empty() {
-                return;
+        let llm = chat.deps().llm.as_ref();
+        let mut reply = speak(llm, &request, &name, &mut out);
+        let mut woke = false;
+        // A model that only called wake_up still owes the moment it wakes.
+        if let Ok(called) = &reply
+            && turn::wakes(&called.tool_calls)
+        {
+            woke = true;
+            if called.text.trim().is_empty() {
+                request.messages.push(LlmMessage {
+                    role: Role::Assistant,
+                    content: String::new(),
+                    tool_calls: called.tool_calls.clone(),
+                    tool_call_id: None,
+                });
+                for call in &called.tool_calls {
+                    request.messages.push(LlmMessage {
+                        role: Role::Tool,
+                        content: WAKING.into(),
+                        tool_calls: Vec::new(),
+                        tool_call_id: Some(call.id.clone()),
+                    });
+                }
+                request.tools.clear();
+                reply = speak(llm, &request, &name, &mut out);
             }
-            if !started {
-                let _ = write!(out, "{name}> ");
-                started = true;
-            }
-            let _ = write!(out, "{piece}");
-            let _ = out.flush();
-        });
-        if started {
-            let _ = writeln!(out);
         }
         let reply = match reply {
             Ok(reply) if !reply.text.trim().is_empty() => reply.text.trim().to_owned(),
@@ -148,7 +183,17 @@ pub fn converse(
                 continue;
             }
         };
+        let (dreaming, session, spent) =
+            (open.pending.dream, open.pending.session, open.pending.wake);
         let (user_turn, companion_turn) = turn::end(&mut chat, open.pending, &reply)?;
+        // Nothing of a dream is kept as it happens: it is decided on waking.
+        if dreaming {
+            if woke || spent {
+                finish(&mut reflections);
+                wake(&writer, session, &notes, &name);
+            }
+            continue;
+        }
         // Same model, separate call, off the hot path.
         let (writer, notes) = (writer.clone(), notes.clone());
         reflections.push(std::thread::spawn(move || {
@@ -161,7 +206,65 @@ pub fn converse(
         reflections.retain(|r| !r.is_finished());
     }
     finish(&mut reflections);
+    // A dream that didn't end by waking is dropped: nothing of it is kept.
+    if chat.drop_dream()?.is_some() {
+        notes.say(&format!(
+            "clanka: the dream ended before {name} woke; nothing of it was kept."
+        ));
+    }
     Ok(())
+}
+
+/// Sends `request` and prints the reply as `name> …`, as the model writes it
+/// when it can stream (a reply that may call a tool arrives whole).
+fn speak(
+    llm: &dyn Llm,
+    request: &LlmRequest,
+    name: &str,
+    out: &mut impl Write,
+) -> clanka_core::Result<LlmResponse> {
+    let mut started = false;
+    let reply = llm.stream(request, &mut |piece| {
+        let piece = if started { piece } else { piece.trim_start() };
+        if piece.is_empty() {
+            return;
+        }
+        if !started {
+            let _ = write!(out, "{name}> ");
+            started = true;
+        }
+        let _ = write!(out, "{piece}");
+        let _ = out.flush();
+    });
+    if started {
+        let _ = writeln!(out);
+    }
+    reply
+}
+
+/// Wakes the companion from `dream` and says what stayed. A wake that fails
+/// leaves the dream open: /sleep tries again, and leaving drops it.
+fn wake(writer: &Mutex<Companion>, dream: i64, notes: &Notes, name: &str) {
+    match lock(writer).wake(dream) {
+        Ok(report) => notes.say(&woke(name, &report)),
+        Err(e) => notes.say(&format!(
+            "clanka: {name} couldn't wake: {e}. Send /sleep to try again."
+        )),
+    }
+}
+
+/// What waking left, in a line.
+fn woke(name: &str, report: &WakeReport) -> String {
+    let seared = if report.seared.is_some() {
+        "; one thing an echo showed stays, burned in"
+    } else {
+        ""
+    };
+    format!(
+        "{name} wakes: {} fragments linger, {} memories shifted{seared}.",
+        report.fragments.len(),
+        report.drifted.len()
+    )
 }
 
 /// Where the prompt and clanka's notes go: stderr in a terminal. Shared with

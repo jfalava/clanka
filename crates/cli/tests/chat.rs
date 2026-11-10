@@ -2,7 +2,7 @@ mod common;
 
 use clanka::chat::converse;
 use clanka_core::Error;
-use clanka_core::deps::{LlmRequest, LlmResponse, Role};
+use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
 use common::{Scripted, TOKEN, open, open_with};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -151,4 +151,122 @@ fn a_closed_terminal_ends_the_chat_without_a_model_call() {
     )
     .unwrap();
     assert!(asked.lock().unwrap().is_empty());
+}
+
+/// A dream starts with `~~`, its replies may call wake_up, and the reply that
+/// does is the moment the companion wakes: a model that only called the tool
+/// is asked once more for the words. The wake pass settles a mood, and the
+/// chat goes on awake, without wake_up.
+#[test]
+fn a_dream_wakes_by_the_companions_choice_and_the_chat_goes_on_awake() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = Arc::new(Mutex::new(Vec::new()));
+    let (seen, mut replies) = (
+        tools.clone(),
+        vec![
+            ("I'm in the kitchen.", false),
+            ("", true),
+            ("I wake, shaking.", false),
+            ("Hello.", false),
+        ]
+        .into_iter(),
+    );
+    let chat = open_with(
+        dir.path(),
+        Scripted::new(move |r: &LlmRequest| {
+            seen.lock()
+                .unwrap()
+                .push(r.tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>());
+            let (text, wakes) = replies.next().expect("a reply for every request");
+            Ok(LlmResponse {
+                text: text.into(),
+                tool_calls: if wakes {
+                    vec![ToolCall {
+                        id: "w".into(),
+                        name: "wake_up".into(),
+                        arguments: "{}".into(),
+                    }]
+                } else {
+                    Vec::new()
+                },
+            })
+        }),
+    );
+    // The writer settles a mood when it wakes, and keeps nothing otherwise.
+    let writer = open_with(
+        dir.path(),
+        Scripted::new(|r: &LlmRequest| {
+            let waking = r.system.contains("waking up") && r.messages.len() == 1;
+            Ok(LlmResponse {
+                text: String::new(),
+                tool_calls: if waking {
+                    vec![ToolCall {
+                        id: "m".into(),
+                        name: "settle_mood".into(),
+                        arguments: r#"{"valence": -0.5, "energy": 0.1, "warmth": 0.3, "cause": "a kitchen I can't place"}"#.into(),
+                    }]
+                } else {
+                    Vec::new()
+                },
+            })
+        }),
+    );
+    let (mut out, notes) = (Vec::new(), Notes::default());
+    converse(
+        chat,
+        writer,
+        4000,
+        "~~ You're in your mother's kitchen.\nThe kettle screams.\nhi\n".as_bytes(),
+        &mut out,
+        notes.clone(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "Nova> I'm in the kitchen.\nNova> I wake, shaking.\nNova> Hello.\n"
+    );
+    let wake: Vec<String> = vec!["wake_up".into()];
+    assert_eq!(
+        *tools.lock().unwrap(),
+        [wake.clone(), wake, Vec::new(), Vec::new()]
+    );
+    let notes = notes.text();
+    assert!(notes.contains("Nova wakes: 0 fragments linger"), "{notes}");
+    assert!(!notes.contains("nothing of it was kept"), "{notes}");
+
+    let c = open(dir.path());
+    assert_eq!(c.dreaming().unwrap(), None);
+    assert_eq!(c.mood().unwrap().unwrap().cause, "a kitchen I can't place");
+    // "hi" is a waking conversation of its own.
+    let awake = c.assemble("x", 4000, &Default::default()).unwrap();
+    let said: Vec<&str> = awake.turns.iter().map(|t| t.content.as_str()).collect();
+    assert_eq!(said, ["hi", "Hello."]);
+}
+
+/// Leaving mid-dream drops it: nothing of it is kept, and the companion is
+/// awake again for whatever opens it next.
+#[test]
+fn leaving_mid_dream_keeps_nothing_of_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (model, _) = scripted(vec![Ok("Where am I?")]);
+    let notes = Notes::default();
+    converse(
+        open_with(dir.path(), model),
+        open(dir.path()),
+        4000,
+        "~~ You're on a pier.\n".as_bytes(),
+        Vec::new(),
+        notes.clone(),
+    )
+    .unwrap();
+    assert!(
+        notes.text().contains("nothing of it was kept"),
+        "{}",
+        notes.text()
+    );
+    let c = open(dir.path());
+    assert_eq!(c.dreaming().unwrap(), None);
+    assert_eq!(c.mood().unwrap(), None);
+    assert!(c.active_memories().unwrap().is_empty());
 }

@@ -163,3 +163,68 @@ fn an_opened_turn_carries_the_history_before_the_message() {
     );
     assert_eq!(second.pending.user_turn, 3);
 }
+
+/// `~~` falls asleep into a dream only once the conversation is over; `<<` is
+/// an echo only in a dream; text between `||` is out of earshot only awake.
+/// Each marker reaches the model as this reply's hint, and memory never sees
+/// the marker itself.
+#[test]
+fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(dir.path());
+
+    // Glued to a word it is strikethrough; `<<` awake is just text.
+    let (_, pending) = begin(&mut c, "~~not~~ a dream", true);
+    assert!(!pending.dream);
+    turn::end(&mut c, pending, "Ha.").unwrap();
+    let (said, pending) = begin(&mut c, "<< years ago ||she lied||", false);
+    assert!(!pending.dream);
+    assert!(said.ends_with(turn::UNHEARD_HINT), "{said}");
+    turn::end(&mut c, pending, "Mm.").unwrap();
+
+    // Mid-conversation, a dream is refused and nothing is recorded.
+    let turns = |c: &Companion| {
+        c.assemble("x", 4000, &Default::default())
+            .unwrap()
+            .turns
+            .len()
+    };
+    let before = turns(&c);
+    assert_eq!(
+        turn::begin(&mut c, "~~ You're in a kitchen.", 4000, false).unwrap(),
+        Begin::Awake
+    );
+    assert_eq!(turns(&c), before);
+
+    let session = c.session_in_progress().unwrap().unwrap();
+    c.end_session(session, clanka_core::model::SessionEnd::Doctor)
+        .unwrap();
+    let (first, pending) = begin(&mut c, "~~ You're in a kitchen.", false);
+    assert!(pending.dream && !pending.wake);
+    assert!(first.contains("somewhere you know"), "{first}");
+    assert!(!first.contains(turn::UNHEARD_HINT), "{first}");
+    turn::end(&mut c, pending, "It smells of bread.").unwrap();
+
+    let (echo, pending) = begin(&mut c, "<< >>3 The judge reads the sentence.", false);
+    assert!(echo.contains(clanka_core::dream::ECHO_HINT), "{echo}");
+    assert!(echo.ends_with(&turn::stretch_hint(3)), "{echo}");
+    assert!(!echo.contains("somewhere you know"), "said once: {echo}");
+    turn::end(&mut c, pending, "No.").unwrap();
+
+    let said: Vec<String> = c
+        .assemble("x", 4000, &clanka_core::Ranking::default())
+        .unwrap()
+        .turns
+        .into_iter()
+        .map(|t| t.content)
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "You're in a kitchen.",
+            "It smells of bread.",
+            "The judge reads the sentence.",
+            "No."
+        ]
+    );
+}

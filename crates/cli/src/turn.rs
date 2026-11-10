@@ -5,9 +5,17 @@
 //! Such a host replays everything it was given on every later turn, so a turn
 //! carries only what the model hasn't seen this session: the first turn gets
 //! the whole context, later ones only what changed and memories new tonight.
+//!
+//! Markers at the start of a message, parsed here so every front end reads
+//! them the same, in this order: `~~` falls asleep into a dream (only as the
+//! first message after sleep), `<<` shows the dreaming companion an echo of
+//! the past, `>>N` asks for a reply of about N paragraphs. Anywhere in a
+//! waking message, text between a pair of `||` is said out of earshot.
 
+use clanka_core::dream::{ECHO_HINT, WAKE_UP};
+use clanka_core::memory::has_unheard;
 use clanka_core::model::Speaker;
-use clanka_core::{Companion, Context, Result};
+use clanka_core::{Companion, Context, Error, Result};
 
 /// The turn `begin` opened and `end` closes.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +24,12 @@ pub struct Pending {
     pub user_turn: i64,
     /// Memories and hot threads shown this turn.
     pub recalled: Vec<i64>,
+    /// The turn is part of a dream: nothing is reflected on, and the reply
+    /// may wake the companion (the `wake_up` tool).
+    pub dream: bool,
+    /// The dream fills the session's budget and ends with this reply: the
+    /// front end wakes the companion once the reply is recorded.
+    pub wake: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,9 +39,50 @@ pub enum Begin {
     Doctor,
     /// Memory is frozen by the doctor: nothing is recorded or recalled.
     Frozen,
+    /// The message asked for a dream (`~~`) while the companion is awake in a
+    /// conversation. Nothing was recorded; the host should not pass the
+    /// message to the model, and can show [`AWAKE`].
+    Awake,
     /// The turn is recorded; `context` is the memory to give the model, empty
     /// when nothing is new since the last turn.
     Open { context: String, pending: Pending },
+}
+
+/// Why a `~~` was refused.
+pub const AWAKE: &str = "Still awake in this conversation: a dream starts with ~~ only as the \
+    first message after sleep.";
+
+/// What a bare `~~` puts in the dream: somewhere to be.
+pub const DREAM_OPENING: &str = "You are somewhere you almost know.";
+
+/// Told to the reply model when the user wrote something out of the
+/// companion's earshot. The model knows it, so the story holds together; the
+/// companion never acts as if it heard.
+pub const UNHEARD_HINT: &str = "Words between || were said out of your earshot: they happened, \
+    but you didn't hear them. Never acknowledge them, in word or deed.";
+
+/// Splits a leading `~~` off a message: the companion falls asleep into a
+/// dream that starts with what follows. A bare `~~` drops it somewhere. `~~`
+/// glued to a word is Markdown strikethrough, not a marker.
+pub fn dream_marker(message: &str) -> (bool, &str) {
+    match message.trim_start().strip_prefix("~~") {
+        Some(rest) if rest.is_empty() || rest.starts_with(char::is_whitespace) => {
+            let rest = rest.trim();
+            (true, if rest.is_empty() { DREAM_OPENING } else { rest })
+        }
+        _ => (false, message),
+    }
+}
+
+/// Splits a leading `<<` off a dream message: an echo, a scene from the past.
+/// It needs a scene after it; alone, or glued to a word, it is just text.
+pub fn echo_marker(message: &str) -> (bool, &str) {
+    match message.trim_start().strip_prefix("<<") {
+        Some(rest) if rest.starts_with(char::is_whitespace) && !rest.trim().is_empty() => {
+            (true, rest.trim())
+        }
+        _ => (false, message),
+    }
 }
 
 /// Most paragraphs a `>>N` message can ask for: about what fits in a reply.
@@ -74,23 +129,53 @@ pub enum Opened {
     Doctor,
     /// See [`Begin::Frozen`].
     Frozen,
+    /// See [`Begin::Awake`].
+    Awake,
     Open(Box<Open>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Open {
     pub context: Context,
-    /// The message as recorded: without a `>>N` marker.
+    /// The message as recorded: without its markers.
     pub message: String,
     /// Paragraphs a `>>N` marker asked for.
     pub stretch: Option<u32>,
+    /// The message is an echo (`<<`).
+    pub echo: bool,
+    /// Something the model is shown was said out of earshot.
+    pub unheard: bool,
     pub pending: Pending,
+}
+
+impl Open {
+    /// The lines for this reply only, after everything else: the echo, the
+    /// out-of-earshot rule and the length. Models follow the latest instruction.
+    pub fn hints(&self) -> Vec<String> {
+        let mut hints = Vec::new();
+        if self.echo {
+            hints.push(ECHO_HINT.to_owned());
+        }
+        if self.unheard {
+            hints.push(UNHEARD_HINT.to_owned());
+        }
+        hints.extend(self.stretch.map(stretch_hint));
+        hints
+    }
+}
+
+/// Whether a reply called `wake_up`.
+pub fn wakes(calls: &[clanka_core::deps::ToolCall]) -> bool {
+    calls.iter().any(|c| c.name == WAKE_UP)
 }
 
 /// Checks for the doctor token, assembles the turn's memory and records the
 /// user's message. `first` is true on the host conversation's first turn, when
 /// the model has seen nothing yet and gets the whole context; a clanka session
 /// outlives host conversations, so the host must say.
+///
+/// A dream another handle left open (its front end exited or died) is lost
+/// and dropped first. A dream this handle started goes on.
 pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Opened> {
     if c.soul().is_doctor_token(message) {
         c.set_frozen(true)?;
@@ -99,28 +184,58 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
     if c.is_frozen()? {
         return Ok(Opened::Frozen);
     }
+    c.drop_lost_dream()?;
+    let (asleep, message) = dream_marker(message);
+    let dream = match c.dreaming()? {
+        Some(dream) => Some(dream),
+        None if asleep => match c.start_dream() {
+            Ok(dream) => Some(dream),
+            Err(Error::Awake) => return Ok(Opened::Awake),
+            Err(e) => return Err(e),
+        },
+        None => None,
+    };
+    let (echo, message) = match dream {
+        Some(_) => echo_marker(message),
+        None => (false, message),
+    };
     let (stretch, message) = stretch(message);
     let ranking = c.ranking().clone();
     let mut context = c.assemble(message, budget, &ranking)?;
     if !first {
         c.keep_new(&mut context)?;
     }
-    let session = c.open_session()?;
-    let user_turn = c.record_turn(session, Speaker::User, message)?;
+    // A host replaying its history has the rule from the turn that needed it.
+    let unheard = dream.is_none()
+        && (has_unheard(message) || first && context.turns.iter().any(|t| has_unheard(&t.content)));
+    let session = match dream {
+        Some(dream) => dream,
+        None => c.open_session()?,
+    };
+    let user_turn = if echo {
+        c.record_echo(session, message)?
+    } else {
+        c.record_turn(session, Speaker::User, message)?
+    };
     let recalled = context
         .hot_threads
         .iter()
         .chain(context.memories.iter().map(|r| &r.memory))
         .map(|m| m.id)
         .collect();
+    let wake = dream.is_some() && context.spent;
     Ok(Opened::Open(Box::new(Open {
         context,
         message: message.to_owned(),
         stretch,
+        echo,
+        unheard,
         pending: Pending {
             session,
             user_turn,
             recalled,
+            dream: dream.is_some(),
+            wake,
         },
     })))
 }
@@ -131,15 +246,17 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
     let open = match open(c, message, budget, first)? {
         Opened::Doctor => return Ok(Begin::Doctor),
         Opened::Frozen => return Ok(Begin::Frozen),
+        Opened::Awake => return Ok(Begin::Awake),
         Opened::Open(open) => *open,
     };
+    // Added after `keep_new`, so even a turn with nothing new carries them.
+    let hints = open.hints();
     let mut context = render(open.context);
-    // Added after `keep_new`, so even a turn with nothing new carries it.
-    if let Some(n) = open.stretch {
+    for hint in hints {
         if !context.is_empty() {
             context.push_str("\n\n");
         }
-        context.push_str(&stretch_hint(n));
+        context.push_str(&hint);
     }
     Ok(Begin::Open {
         context,

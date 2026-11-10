@@ -48,6 +48,8 @@ pub enum Error {
     PersonaUnresolved,
     #[error("session {0} has ended")]
     SessionClosed(i64),
+    #[error("the companion is awake in a conversation; it has to sleep before it can dream")]
+    Awake,
     #[error("memory {0} not found")]
     NotFound(i64),
     #[error(

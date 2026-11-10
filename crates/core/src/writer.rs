@@ -10,6 +10,7 @@
 use crate::actions;
 use crate::companion::ensure_writable;
 use crate::deps::{LlmMessage, LlmRequest, Role, ToolCall, ToolSpec};
+use crate::memory::heard;
 use crate::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
 use crate::soul::Soul;
 use crate::{Companion, Error, Memory, MemoryDraft, Mood, Result};
@@ -79,9 +80,25 @@ impl Companion {
     /// one another handle is on right now, does nothing. When the reflection on
     /// an earlier exchange failed, up to [`CATCH_UP`] of those are made up for
     /// first, oldest first.
+    ///
+    /// A dream's exchanges are never reflected on: what stays of a dream is
+    /// decided once, when the companion wakes (see [`Companion::wake`]).
     pub fn reflect(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
         // Fail before paying for a model call.
         ensure_writable(&self.conn, &self.soul.hash)?;
+        let session: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT session_id FROM turns WHERE id = ?1",
+                [companion_turn],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(session) = session
+            && crate::dream::is_dream(&self.conn, session)?
+        {
+            return Ok(Reflection::default());
+        }
         let mut caught_up = 0;
         for (user, companion) in self.missed_reflections(companion_turn)? {
             match self.reflect_once(user, companion) {
@@ -146,9 +163,10 @@ impl Companion {
 
     /// What the user said that `companion_turn` replied to: `user_turn`, and
     /// before it any message of theirs that never got a reply (the model
-    /// failed), which no other exchange would cover. The turn IDs and the text.
+    /// failed), which no other exchange would cover. The turn IDs and the text
+    /// the companion heard: what was said out of earshot is never kept.
     fn said_before(&self, user_turn: i64, companion_turn: i64) -> Result<(Vec<i64>, String)> {
-        let last = self.turn_text(user_turn, Speaker::User)?;
+        let last = heard(&self.turn_text(user_turn, Speaker::User)?);
         let turns: Vec<(i64, String)> = self
             .conn
             .prepare(
@@ -166,6 +184,7 @@ impl Companion {
             return Ok((vec![user_turn], last));
         }
         let (ids, texts): (Vec<i64>, Vec<String>) = turns.into_iter().unzip();
+        let texts: Vec<String> = texts.iter().map(|t| heard(t)).collect();
         Ok((ids, texts.join("\n")))
     }
 
@@ -500,7 +519,7 @@ impl Companion {
                 };
                 // The facts the old memory holds were said in the turns it
                 // cites, not in this exchange, and the model copies them over.
-                let earlier = self.source_text(&old)?;
+                let earlier = self.source_text(&old, false)?;
                 let replaced = Some((old.source_turns.as_slice(), earlier.as_str()));
                 let (mut draft, note) = a
                     .memory
@@ -630,10 +649,15 @@ pub(crate) fn listing(m: &Memory, today: Option<i64>) -> String {
     } else {
         format!(" facts {}", Value::Object(m.facts.clone()))
     };
-    let age = today
-        .and_then(|now| crate::context::age(now, m.created_at))
-        .map(|age| format!(", {age}"))
-        .unwrap_or_default();
+    // A dream's memory has no date; it says where it came from instead.
+    let age = if m.dreamt {
+        ", learned in a dream".to_owned()
+    } else {
+        today
+            .and_then(|now| crate::context::age(now, m.created_at))
+            .map(|age| format!(", {age}"))
+            .unwrap_or_default()
+    };
     format!(
         "#{} [{}{closed}, {}{age}] {}{facts}",
         m.id,

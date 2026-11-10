@@ -8,7 +8,7 @@
 use crate::companion::ensure_writable;
 use crate::context::estimate_tokens;
 use crate::deps::{ToolCall, ToolSpec};
-use crate::memory::ensure_open;
+use crate::memory::{ensure_open, heard};
 use crate::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
 use crate::writer::{args, parse};
 use crate::{Companion, Error, MemoryDraft, Mood, Result};
@@ -52,8 +52,13 @@ impl Companion {
     pub fn sleep(&mut self, session: i64) -> Result<SleepReport> {
         ensure_writable(&self.conn, &self.soul.hash)?;
         ensure_open(&self.conn, session)?;
+        if crate::dream::is_dream(&self.conn, session)? {
+            return Err(Error::Invalid(format!(
+                "session {session} is a dream; it ends by waking, not by sleep"
+            )));
+        }
         let escalated = self.escalate_threads()?;
-        let offered = self.drift_offers(session)?;
+        let offered = self.drift_offers(session, self.soul.traits.drift)?;
 
         let prompt = self.sleep_prompt(session, &offered)?;
         let system = format!(
@@ -92,12 +97,19 @@ impl Companion {
             if !content.contains(name.as_str()) {
                 continue;
             }
-            let said: i64 = self.conn.query_row(
-                "SELECT count(*) FROM turns WHERE role = 'user' AND instr(lower(content), lower(?1)) > 0",
-                [name],
-                |r| r.get(0),
-            )?;
-            if said == 0 {
+            // A name said only out of earshot was never said to the companion.
+            let turns: Vec<String> = self
+                .conn
+                .prepare(
+                    "SELECT content FROM turns WHERE role = 'user' AND instr(lower(content), lower(?1)) > 0",
+                )?
+                .query_map([name], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            let lower = name.to_lowercase();
+            if !turns
+                .iter()
+                .any(|t| heard(t).to_lowercase().contains(&lower))
+            {
                 return Ok(Some(name.clone()));
             }
         }
@@ -115,7 +127,7 @@ impl Companion {
                 "SELECT m.id, m.level FROM memories m
                  WHERE m.type = 'open_thread' AND m.status = 'active' AND m.resolved_at IS NULL
                    AND m.level IN ('faint', 'normal')
-                   AND (SELECT count(*) FROM sessions s WHERE s.started_at > max(m.created_at,
+                   AND (SELECT count(*) FROM sessions s WHERE s.dream = 0 AND s.started_at > max(m.created_at,
                           coalesce((SELECT max(v.created_at) FROM memory_versions v
                                     WHERE v.memory_id = m.id AND v.reason = 'escalated'), 0))) >= ?1",
             )?
@@ -128,10 +140,15 @@ impl Companion {
     }
 
     /// Memories recalled this session that haven't drifted in it yet, each
-    /// with a seeded drift magnitude. A memory written this session came up
-    /// only because it was just made; it hasn't had a night to blur, and
-    /// offering it invites the model to rewrite it as the whole evening.
-    fn drift_offers(&self, session: i64) -> Result<BTreeMap<i64, (u64, f64)>> {
+    /// with a seeded drift magnitude under the `drift` dial. A memory written
+    /// this session came up only because it was just made; it hasn't had a
+    /// night to blur, and offering it invites the model to rewrite it as the
+    /// whole evening.
+    pub(crate) fn drift_offers(
+        &self,
+        session: i64,
+        drift: f64,
+    ) -> Result<BTreeMap<i64, (u64, f64)>> {
         let candidates: Vec<(i64, Level)> = self
             .conn
             .prepare(
@@ -147,7 +164,7 @@ impl Companion {
         let mut offers = BTreeMap::new();
         for (id, level) in candidates {
             let seed = self.deps.rng.next_seed();
-            let magnitude = unit(seed) * self.soul.traits.drift * DRIFT_CAP[level as usize];
+            let magnitude = unit(seed) * drift * DRIFT_CAP[level as usize];
             if magnitude >= MIN_DRIFT {
                 offers.insert(id, (seed, magnitude));
             }
@@ -165,7 +182,8 @@ impl Companion {
                     Speaker::User => user.as_str(),
                     Speaker::Companion => "you",
                 };
-                Ok(format!("({who}) {}", clip(&r.get::<_, String>(1)?)))
+                let content: String = r.get(1)?;
+                Ok(format!("({who}) {}", clip(&heard(&content))))
             })?
             .collect::<rusqlite::Result<_>>()?;
         let turns = newest_that_fit(turns, TRANSCRIPT_TOKENS);
@@ -194,20 +212,7 @@ impl Companion {
             ),
             None => "not set".into(),
         };
-        let mut drifts = Vec::new();
-        for (&id, &(_, magnitude)) in offered {
-            let m = self.memory(id)?;
-            drifts.push(format!(
-                "#{id} [{}, drift {magnitude:.2}] {}",
-                m.level.as_str(),
-                m.interpretation
-            ));
-        }
-        let drifts = if drifts.is_empty() {
-            "(none)".to_owned()
-        } else {
-            drifts.join("\n")
-        };
+        let drifts = self.drift_listing(offered)?;
         let mut sections = Vec::new();
         for section in [Section::AboutUser, Section::Relationship] {
             let content = self.section(section)?.unwrap_or_default();
@@ -283,42 +288,72 @@ impl Companion {
                 self.write_section(Actor::Sleep, section, &a.content)?;
                 Ok(format!("section {} updated", a.section))
             }
-            "settle_mood" => {
-                let a: SettleMood = args(call)?;
-                let mood = Mood {
-                    valence: a.valence,
-                    energy: a.energy,
-                    warmth: a.warmth,
-                    cause: a.cause,
-                };
-                self.set_mood(Actor::Sleep, &mood)?;
-                Ok("mood settled".into())
-            }
-            "drift" => {
-                let a: Drift = args(call)?;
-                let &(seed, magnitude) = offered.get(&a.memory_id).ok_or_else(|| {
-                    Error::Invalid(format!(
-                        "memory {} isn't one that came up tonight",
-                        a.memory_id
-                    ))
-                })?;
-                if drifted.iter().any(|&(id, _)| id == a.memory_id) {
-                    return Err(Error::Invalid(format!(
-                        "memory {} already drifted tonight",
-                        a.memory_id
-                    )));
-                }
-                self.drift_memory(session, a.memory_id, &a.interpretation, seed, magnitude)?;
-                drifted.push((a.memory_id, magnitude));
-                Ok(format!("memory {} drifted", a.memory_id))
-            }
+            "settle_mood" => self.settle_mood_call(call),
+            "drift" => self.drift_call(call, session, offered, drifted),
             other => Err(Error::Invalid(format!("there is no tool called {other:?}"))),
         }
+    }
+
+    /// The memories offered to drift, as the model reads them.
+    pub(crate) fn drift_listing(&self, offered: &BTreeMap<i64, (u64, f64)>) -> Result<String> {
+        let mut drifts = Vec::new();
+        for (&id, &(_, magnitude)) in offered {
+            let m = self.memory(id)?;
+            drifts.push(format!(
+                "#{id} [{}, drift {magnitude:.2}] {}",
+                m.level.as_str(),
+                m.interpretation
+            ));
+        }
+        Ok(if drifts.is_empty() {
+            "(none)".to_owned()
+        } else {
+            drifts.join("\n")
+        })
+    }
+
+    /// `settle_mood`, falling asleep or waking up.
+    pub(crate) fn settle_mood_call(&mut self, call: &ToolCall) -> Result<String> {
+        let a: SettleMood = args(call)?;
+        let mood = Mood {
+            valence: a.valence,
+            energy: a.energy,
+            warmth: a.warmth,
+            cause: a.cause,
+        };
+        self.set_mood(Actor::Sleep, &mood)?;
+        Ok("mood settled".into())
+    }
+
+    /// `drift` on one of the memories `offered`, at most once each.
+    pub(crate) fn drift_call(
+        &mut self,
+        call: &ToolCall,
+        session: i64,
+        offered: &BTreeMap<i64, (u64, f64)>,
+        drifted: &mut Vec<(i64, f64)>,
+    ) -> Result<String> {
+        let a: Drift = args(call)?;
+        let &(seed, magnitude) = offered.get(&a.memory_id).ok_or_else(|| {
+            Error::Invalid(format!(
+                "memory {} isn't one that came up tonight",
+                a.memory_id
+            ))
+        })?;
+        if drifted.iter().any(|&(id, _)| id == a.memory_id) {
+            return Err(Error::Invalid(format!(
+                "memory {} already drifted tonight",
+                a.memory_id
+            )));
+        }
+        self.drift_memory(session, a.memory_id, &a.interpretation, seed, magnitude)?;
+        drifted.push((a.memory_id, magnitude));
+        Ok(format!("memory {} drifted", a.memory_id))
     }
 }
 
 /// The turn, cut short when it runs past [`TURN_CHARS`].
-fn clip(content: &str) -> String {
+pub(crate) fn clip(content: &str) -> String {
     match content.char_indices().nth(TURN_CHARS) {
         Some((end, _)) => format!("{} […]", &content[..end]),
         None => content.to_owned(),
@@ -327,7 +362,7 @@ fn clip(content: &str) -> String {
 
 /// The latest turns that fit in `budget` estimated tokens, in order, with a
 /// line in place of the earlier ones left out.
-fn newest_that_fit(turns: Vec<String>, budget: usize) -> Vec<String> {
+pub(crate) fn newest_that_fit(turns: Vec<String>, budget: usize) -> Vec<String> {
     let mut used = 0;
     let fit = turns
         .iter()
@@ -433,23 +468,36 @@ fn tool_specs() -> Vec<ToolSpec> {
                 "content": { "type": "string" },
             }, "required": ["section", "content"] }),
         ),
-        tool(
-            "settle_mood",
-            "How you are left feeling as you fall asleep. Once.",
-            json!({ "type": "object", "properties": {
-                "valence": axis("Bad to good mood."),
-                "energy": axis("Tired to lively."),
-                "warmth": axis("Cold to warm toward the user."),
-                "cause": { "type": "string", "description": "One line on why." },
-            }, "required": ["valence", "energy", "warmth", "cause"] }),
-        ),
-        tool(
-            "drift",
-            "How you now remember one of tonight's memories.",
-            json!({ "type": "object", "properties": {
-                "memory_id": { "type": "integer" },
-                "interpretation": { "type": "string" },
-            }, "required": ["memory_id", "interpretation"] }),
-        ),
+        mood_spec("How you are left feeling as you fall asleep. Once."),
+        drift_spec("How you now remember one of tonight's memories."),
     ]
+}
+
+/// `settle_mood`, described for the moment it is called in.
+pub(crate) fn mood_spec(description: &str) -> ToolSpec {
+    let axis = |d: &str| json!({ "type": "number", "minimum": -1, "maximum": 1, "description": d });
+    ToolSpec {
+        name: "settle_mood".into(),
+        description: description.into(),
+        parameters: json!({ "type": "object", "properties": {
+            "valence": axis("Bad to good mood."),
+            "energy": axis("Tired to lively."),
+            "warmth": axis("Cold to warm toward the user."),
+            "cause": { "type": "string", "description": "One line on why." },
+        }, "required": ["valence", "energy", "warmth", "cause"] })
+        .to_string(),
+    }
+}
+
+/// `drift`, described for the moment it is called in.
+pub(crate) fn drift_spec(description: &str) -> ToolSpec {
+    ToolSpec {
+        name: "drift".into(),
+        description: description.into(),
+        parameters: json!({ "type": "object", "properties": {
+            "memory_id": { "type": "integer" },
+            "interpretation": { "type": "string" },
+        }, "required": ["memory_id", "interpretation"] })
+        .to_string(),
+    }
 }
