@@ -579,8 +579,9 @@ fn memories(paths: &Paths, soul: &Path) -> Result<()> {
         );
     }
     let all = companion.active_memories()?;
-    let (threads, memories): (Vec<_>, Vec<_>) =
-        all.iter().partition(|m| m.kind == MemoryType::OpenThread);
+    let (threads, memories): (Vec<_>, Vec<_>) = all
+        .iter()
+        .partition(|m| m.kind == MemoryType::OpenThread && m.resolved_at.is_none());
     println!("\nOpen threads ({}):", threads.len());
     for m in threads {
         let urgency = m.urgency.map(|u| u.as_str()).unwrap_or("?");
@@ -600,8 +601,13 @@ fn memories(paths: &Paths, soul: &Path) -> Result<()> {
         } else {
             format!(" facts {}", serde_json::Value::Object(m.facts.clone()))
         };
+        let closed = if m.resolved_at.is_some() {
+            ", closed"
+        } else {
+            ""
+        };
         println!(
-            "#{} [{}, {}{valence}, {}] {}{facts}",
+            "#{} [{}{closed}, {}{valence}, {}] {}{facts}",
             m.id,
             m.kind.as_str(),
             m.level.as_str(),

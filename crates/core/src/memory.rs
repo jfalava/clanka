@@ -65,6 +65,8 @@ pub struct Memory {
     pub persona_hash: String,
     pub strength: Option<f64>,
     pub urgency: Option<Urgency>,
+    /// When an open thread was closed.
+    pub resolved_at: Option<i64>,
     pub valence: Option<f64>,
     pub recall_count: i64,
     pub last_recalled_session: Option<i64>,
@@ -464,7 +466,7 @@ impl Companion {
             .query_row(
                 "SELECT id, type, level, facts, interpretation, status, superseded_by, occurred_at,
                         persona_hash, strength, urgency, created_at, updated_at, valence,
-                        recall_count, last_recalled_session
+                        recall_count, last_recalled_session, resolved_at
                  FROM memories WHERE id = ?1",
                 [id],
                 |r| {
@@ -480,6 +482,7 @@ impl Companion {
                         persona_hash: r.get(8)?,
                         strength: r.get(9)?,
                         urgency: r.get(10)?,
+                        resolved_at: r.get(16)?,
                         valence: r.get(13)?,
                         recall_count: r.get(14)?,
                         last_recalled_session: r.get(15)?,

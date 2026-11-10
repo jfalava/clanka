@@ -1,7 +1,7 @@
 mod common;
 
 use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
-use clanka_core::model::{Actor, Level, MemoryType, Speaker, Status};
+use clanka_core::model::{Actor, Level, MemoryType, Speaker, Status, Urgency};
 use clanka_core::writer::{MAX_ROUNDS, REFLECTION_ATTEMPTS, REFUNDED_ATTEMPTS};
 use clanka_core::{Companion, Error, MemoryDraft, Ranking};
 use common::{count, fixture, open, open_fallible, open_text_only, open_with_llm, raw};
@@ -656,6 +656,30 @@ fn the_prompt_names_the_user_once_they_have_given_their_name() {
     let prompt = &requests.lock().unwrap()[0].messages[0].content;
     assert!(
         prompt.contains(&format!("What Sam said (turn {said})")),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn a_closed_thread_that_comes_up_again_is_listed_as_closed() {
+    let f = fixture();
+    let (model, requests) = script(vec![vec![]]);
+    let mut c = open_with_llm(&f, model);
+    let mut draft = MemoryDraft::new(
+        MemoryType::OpenThread,
+        Level::Normal,
+        "Whether Laura calls back",
+    );
+    draft.urgency = Some(Urgency::Simmering);
+    let thread = c.write(Actor::Writer, &draft).unwrap();
+    c.resolve_thread(Actor::Writer, thread).unwrap();
+    let (said, replied) = exchange(&mut c, "Laura called back today.", "She did!");
+
+    c.reflect(said, replied).unwrap();
+    let prompt = &requests.lock().unwrap()[0].messages[0].content;
+    assert!(prompt.contains("Open threads:\n(none)"), "{prompt}");
+    assert!(
+        prompt.contains(&format!("#{thread} [open_thread, closed, normal")),
         "{prompt}"
     );
 }

@@ -605,8 +605,14 @@ fn instructions(name: &str) -> String {
 }
 
 /// One memory as the writer reads it. With `today`, also how long ago it was
-/// kept, so an old thread or a stale fact shows its age.
+/// kept, so an old thread or a stale fact shows its age. A closed thread says
+/// so: listed like an open one, a model closed it again.
 pub(crate) fn listing(m: &Memory, today: Option<i64>) -> String {
+    let closed = if m.resolved_at.is_some() {
+        ", closed"
+    } else {
+        ""
+    };
     let facts = if m.facts.is_empty() {
         String::new()
     } else {
@@ -617,7 +623,7 @@ pub(crate) fn listing(m: &Memory, today: Option<i64>) -> String {
         .map(|age| format!(", {age}"))
         .unwrap_or_default();
     format!(
-        "#{} [{}, {}{age}] {}{facts}",
+        "#{} [{}{closed}, {}{age}] {}{facts}",
         m.id,
         m.kind.as_str(),
         m.level.as_str(),
