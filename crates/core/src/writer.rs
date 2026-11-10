@@ -35,13 +35,20 @@ pub const LEFT_OUT: &str = "left out";
 /// The writer is a careful bookkeeper, not a performer.
 const TEMPERATURE: f32 = 0.2;
 
-/// Earlier exchanges of the session one reflection catches up on when theirs
-/// failed. A few at a time: each is a model call made before the current one.
+/// Earlier exchanges one reflection catches up on when theirs failed. A few
+/// at a time: each is a model call made before the current one.
 pub const CATCH_UP: usize = 2;
 
 /// Times an exchange's reflection is tried before it is given up on. A try
-/// that failed because the model couldn't be reached doesn't count.
+/// that failed because the model couldn't be reached doesn't count, up to
+/// [`REFUNDED_ATTEMPTS`] of them.
 pub const REFLECTION_ATTEMPTS: i64 = 3;
+
+/// Tries that may go uncounted for one exchange. "The model couldn't be
+/// reached" is all a failed call says, and a model that fails the same way on
+/// every try says it too: without a limit that exchange was retried, and paid
+/// for, with every later one for good.
+pub const REFUNDED_ATTEMPTS: i64 = 10;
 
 /// A reflection claimed this long ago and never finished was cut off (the
 /// process exited), not still running: no reflection takes half an hour.
@@ -70,8 +77,8 @@ impl Companion {
     ///
     /// An exchange is reflected on once: a second call for one already done, or
     /// one another handle is on right now, does nothing. When the reflection on
-    /// an earlier exchange of the same session failed, up to [`CATCH_UP`] of
-    /// those are made up for first, oldest first.
+    /// an earlier exchange failed, up to [`CATCH_UP`] of those are made up for
+    /// first, oldest first.
     pub fn reflect(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
         // Fail before paying for a model call.
         ensure_writable(&self.conn, &self.soul.hash)?;
@@ -111,24 +118,27 @@ impl Companion {
                 })
             });
         let (state, refund) = match &result {
-            Ok(_) => ("done", 0),
+            Ok(_) => ("done", false),
             // Not the exchange's failure, so the try doesn't count: the doctor
             // froze memory, or the model can't be reached. An outage lasts
             // several exchanges, and counting it gave up on each within three.
-            Err(Error::Frozen | Error::Llm(_)) => ("failed", 1),
-            Err(_) => ("failed", 0),
+            Err(Error::Frozen | Error::Llm(_)) => ("failed", true),
+            Err(_) => ("failed", false),
         };
         // Only while the claim is still this one: a reflection that ran past
         // the stale limit was taken over, and the other handle's result stands.
         self.conn.execute(
-            "UPDATE reflections SET state = ?2, attempts = attempts - ?3, updated_at = ?4
+            "UPDATE reflections SET state = ?2, updated_at = ?4,
+               attempts = attempts - (?3 AND refunded < ?6),
+               refunded = refunded + (?3 AND refunded < ?6)
              WHERE companion_turn_id = ?1 AND state = 'running' AND updated_at = ?5",
             params![
                 companion_turn,
                 state,
                 refund,
                 self.deps.clock.now_ms(),
-                claimed
+                claimed,
+                REFUNDED_ATTEMPTS
             ],
         )?;
         result
@@ -174,26 +184,31 @@ impl Companion {
         Ok((claimed == 1).then_some(now))
     }
 
-    /// Exchanges of `companion_turn`'s session before it whose reflection never
-    /// ran or failed, and hasn't been tried [`REFLECTION_ATTEMPTS`] times. An
-    /// exchange is named by a reply and the user's last message before it.
+    /// Exchanges before `companion_turn` whose reflection failed or was cut
+    /// off, and hasn't been tried [`REFLECTION_ATTEMPTS`] times. In its own
+    /// session, also those whose reflection never started. Not in an earlier
+    /// one: the host leaves the goodnight exchange to sleep, which read the
+    /// whole session. An exchange is named by a reply and the user's last
+    /// message before it.
     fn missed_reflections(&self, companion_turn: i64) -> Result<Vec<(i64, i64)>> {
         let now = self.deps.clock.now_ms();
         Ok(self
             .conn
             .prepare(
-                "SELECT u.id, c.id FROM turns c
-                 JOIN turns u ON u.id = (SELECT max(p.id) FROM turns p
-                                         WHERE p.session_id = c.session_id AND p.id < c.id
-                                           AND p.role = 'user')
-                 LEFT JOIN reflections r ON r.companion_turn_id = c.id
-                 WHERE c.role = 'companion' AND c.id < ?1
-                   AND c.session_id = (SELECT session_id FROM turns WHERE id = ?1)
-                   AND (r.companion_turn_id IS NULL
-                        OR (r.attempts < ?2
-                            AND (r.state = 'failed'
-                                 OR (r.state = 'running' AND r.updated_at < ?3))))
-                 ORDER BY c.id LIMIT ?4",
+                "SELECT said, replied FROM (
+                   SELECT u.id AS said, c.id AS replied FROM turns c
+                   JOIN turns u ON u.id = (SELECT max(p.id) FROM turns p
+                                           WHERE p.session_id = c.session_id AND p.id < c.id
+                                             AND p.role = 'user')
+                   WHERE c.role = 'companion' AND c.id < ?1
+                     AND c.session_id = (SELECT session_id FROM turns WHERE id = ?1)
+                     AND NOT EXISTS (SELECT 1 FROM reflections r
+                                     WHERE r.companion_turn_id = c.id)
+                   UNION ALL
+                   SELECT r.user_turn_id, r.companion_turn_id FROM reflections r
+                   WHERE r.state != 'done' AND r.companion_turn_id < ?1 AND r.attempts < ?2
+                     AND (r.state = 'failed' OR r.updated_at < ?3))
+                 ORDER BY replied LIMIT ?4",
             )?
             .query_map(
                 params![

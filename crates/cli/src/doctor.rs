@@ -17,9 +17,11 @@ const WHEN_HELP: &str = "A time in UTC as `clanka doctor log` prints it (2026-03
 pub enum DoctorCommand {
     /// Stop every write to the memory while the doctor works.
     ///
-    /// Takes effect at once in every process that has the companion open: chat, MCP and
-    /// Hermes turns fail as frozen instead of being recorded. Sending the soul's
-    /// doctor_token in a chat does the same. Lasts until `clanka doctor unfreeze`.
+    /// Takes effect at once in every process that has the companion open, and nothing
+    /// said meanwhile is recorded or remembered: `clanka chat` stops, a Hermes turn is
+    /// answered with a note that memory is frozen instead of by the model, and an MCP
+    /// host, which calls its model itself, is told to answer without memory. Sending the
+    /// soul's doctor_token in a chat does the same. Lasts until `clanka doctor unfreeze`.
     Freeze {
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,

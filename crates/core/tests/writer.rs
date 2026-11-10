@@ -2,7 +2,7 @@ mod common;
 
 use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
 use clanka_core::model::{Actor, Level, MemoryType, Speaker, Status};
-use clanka_core::writer::{MAX_ROUNDS, REFLECTION_ATTEMPTS};
+use clanka_core::writer::{MAX_ROUNDS, REFLECTION_ATTEMPTS, REFUNDED_ATTEMPTS};
 use clanka_core::{Companion, Error, MemoryDraft, Ranking};
 use common::{count, fixture, open, open_fallible, open_text_only, open_with_llm, raw};
 use serde_json::{Value, json};
@@ -674,11 +674,11 @@ fn a_reflection_that_failed_or_never_ran_is_caught_up_on_with_the_next() {
 }
 
 #[test]
-fn an_exchange_that_keeps_failing_is_given_up_on_and_another_session_is_left_alone() {
+fn an_exchange_that_keeps_failing_is_given_up_on_and_the_rest_wait_for_a_later_session() {
     let f = fixture();
-    let (mut c, _, down, asked) = failing(&f);
-    down.store(true, Ordering::SeqCst);
-    for said in ["one", "two", "three", "four"] {
+    let (mut c, _, broken, asked) = failing(&f);
+    broken.store(true, Ordering::SeqCst);
+    for said in ["one", "two", "three"] {
         let turns = exchange(&mut c, &format!("exchange {said}"), "Hey");
         assert!(c.reflect(turns.0, turns.1).is_err());
     }
@@ -689,20 +689,22 @@ fn an_exchange_that_keeps_failing_is_given_up_on_and_another_session_is_left_alo
         count(&db, "SELECT max(attempts) FROM reflections"),
         REFLECTION_ATTEMPTS
     );
+    // The goodnight: the host leaves it to sleep, so its reflection never starts.
+    exchange(&mut c, "exchange four", "Night");
 
-    // The night closed the session: sleep read its turns itself, so what was
-    // missed in it is not reflected on from the next session.
+    // The night closed the session. Sleep read its turns itself, so the
+    // goodnight stays unreflected; the two that failed with tries left don't.
     let session = c.open_session().unwrap();
     db.execute(
         "UPDATE sessions SET ended_at = 1, ended_by = 'sleep' WHERE id = ?1",
         [session],
     )
     .unwrap();
-    down.store(false, Ordering::SeqCst);
+    broken.store(false, Ordering::SeqCst);
     let before = asked.lock().unwrap().len();
     let five = exchange(&mut c, "exchange five", "Morning");
-    assert_eq!(c.reflect(five.0, five.1).unwrap().caught_up, 0);
-    assert_eq!(asked.lock().unwrap().len(), before + 1);
+    assert_eq!(c.reflect(five.0, five.1).unwrap().caught_up, 2);
+    assert_eq!(asked.lock().unwrap()[before..], ["two", "three", "five"]);
 }
 
 /// The provider being down for a few messages is no reason to give up on them:
@@ -726,6 +728,23 @@ fn an_outage_does_not_use_up_an_exchanges_tries() {
     let five = exchange(&mut c, "exchange five", "Back");
     assert_eq!(c.reflect(five.0, five.1).unwrap().caught_up, 2);
     assert_eq!(asked.lock().unwrap()[before..], ["one", "two", "five"]);
+}
+
+/// An outage that never ends, or a model that fails the same way every time
+/// (the two look alike), stops being retried: only so many tries go uncounted.
+#[test]
+fn an_exchange_is_given_up_on_once_its_uncounted_tries_run_out() {
+    let f = fixture();
+    let (mut c, down, asked) = flaky(&f);
+    down.store(true, Ordering::SeqCst);
+    let one = exchange(&mut c, "exchange one", "Hey");
+    assert!(c.reflect(one.0, one.1).is_err());
+    let two = exchange(&mut c, "exchange two", "Hm");
+    for _ in 0..(REFUNDED_ATTEMPTS + REFLECTION_ATTEMPTS + 5) {
+        assert!(c.reflect(two.0, two.1).is_err());
+    }
+    let tries = asked.lock().unwrap().iter().filter(|a| *a == "one").count();
+    assert_eq!(tries as i64, REFUNDED_ATTEMPTS + REFLECTION_ATTEMPTS);
 }
 
 /// A message whose reply never came (the model failed) belongs to the next

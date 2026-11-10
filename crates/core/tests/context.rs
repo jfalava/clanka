@@ -314,4 +314,25 @@ fn a_soul_with_a_sense_of_time_knows_how_long_ago_it_kept_something() {
     };
     assert!(kept(true).contains("- (3 weeks ago) Laura plays cello"));
     assert!(kept(false).contains("- Laura plays cello"));
+
+    // A memory written late, as a caught-up reflection is, dates from when it
+    // was said, not from when it was written.
+    let f = fixture();
+    let clk = common::clock();
+    let mut c = common::open_full(&f, |_| Default::default(), clk.clone());
+    let s = c.open_session().unwrap();
+    let said = c
+        .record_turn(s, Speaker::User, "Laura plays cello")
+        .unwrap();
+    clk.fetch_add(5 * DAY, std::sync::atomic::Ordering::SeqCst);
+    let mut draft = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Laura plays cello");
+    draft.source_turns = vec![said];
+    let id = c.write(Actor::Writer, &draft).unwrap();
+    let memory = c.memory(id).unwrap();
+    assert!(memory.created_at - memory.occurred_at.unwrap() >= 5 * DAY);
+    assert!(
+        assemble(&c, 4000)
+            .render()
+            .contains("- (5 days ago) Laura plays cello")
+    );
 }

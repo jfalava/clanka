@@ -25,6 +25,8 @@ pub struct MemoryDraft {
     pub interpretation: String,
     /// Turns that anchor the facts. Required whenever `facts` is not empty.
     pub source_turns: Vec<i64>,
+    /// When what the memory is about was said. Left empty, it is the time of
+    /// the last source turn, or nothing for a memory with no source turns.
     pub occurred_at: Option<i64>,
     /// Opinions only: how strongly the companion holds the stance, 0–1.
     pub strength: Option<f64>,
@@ -636,12 +638,20 @@ fn insert(
     let mut turns = draft.source_turns.clone();
     turns.sort_unstable();
     turns.dedup();
+    // A memory written late (a reflection caught up days after the exchange)
+    // still happened when its last source turn was said.
+    let mut occurred_at = draft.occurred_at;
     for &turn in &turns {
-        let found = tx
-            .query_row("SELECT 1 FROM turns WHERE id = ?1", [turn], |_| Ok(()))
+        let said: Option<i64> = tx
+            .query_row("SELECT created_at FROM turns WHERE id = ?1", [turn], |r| {
+                r.get(0)
+            })
             .optional()?;
-        if found.is_none() {
+        let Some(said) = said else {
             return Err(Error::Invalid(format!("source turn {turn} does not exist")));
+        };
+        if draft.occurred_at.is_none() {
+            occurred_at = occurred_at.max(Some(said));
         }
     }
 
@@ -676,7 +686,7 @@ fn insert(
             draft.level,
             Value::Object(draft.facts.clone()).to_string(),
             draft.interpretation,
-            draft.occurred_at,
+            occurred_at,
             persona_hash,
             draft.strength,
             draft.urgency,

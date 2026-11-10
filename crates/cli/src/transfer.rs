@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Config, Keys, Paths, SharedEmbedder, write_private};
+use clanka_core::Companion;
 use clanka_core::deps::KeySource;
 use clanka_core::soul::Soul;
 use std::path::Path;
@@ -57,13 +58,12 @@ pub fn export(paths: &Paths, soul_path: &Path, dir: &Path) -> Result<()> {
     let soul = Soul::load(soul_path)?;
     let id = soul.traits.id;
     let key = Keys::new(paths, &Config::load(paths)?).key(id)?;
-    let companion = setup::open(paths, soul_path, SharedEmbedder::load(paths)?, None)?;
 
     let written = (|| -> Result<()> {
         // The key first: it makes the directory, which only you can enter.
         write_private(dir, &dir.join(KEY_FILE), &key)
             .with_context(|| format!("writing {}", dir.join(KEY_FILE).display()))?;
-        companion.export_to(&dir.join(DB_FILE))?;
+        Companion::export(&paths.data, &soul, &key, &dir.join(DB_FILE))?;
         std::fs::copy(soul_path, dir.join(SOUL_FILE))
             .with_context(|| format!("copying {}", soul_path.display()))?;
         Ok(())

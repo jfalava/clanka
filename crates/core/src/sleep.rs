@@ -258,6 +258,13 @@ impl Companion {
                 };
                 let mut draft = MemoryDraft::new(MemoryType::Episode, level, a.interpretation);
                 draft.valence = a.valence;
+                // The evening happened when it was talked through, not when it
+                // was slept on: a sleep retried a day later still dates it right.
+                draft.occurred_at = self.conn.query_row(
+                    "SELECT max(created_at) FROM turns WHERE session_id = ?1",
+                    [session],
+                    |r| r.get(0),
+                )?;
                 let id = self.write(Actor::Sleep, &draft)?;
                 *episode = Some(id);
                 Ok(format!("episode {id}"))

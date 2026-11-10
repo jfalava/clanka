@@ -72,7 +72,10 @@ impl Soul {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let rest = text.strip_prefix("+++\n").ok_or_else(|| {
+        // An editor that saves Windows line endings changes nothing that was
+        // written: the file parses, and the persona hash stays the same.
+        let unix = text.replace("\r\n", "\n");
+        let rest = unix.strip_prefix("+++\n").ok_or_else(|| {
             Error::Soul("soul.md must start with a `+++` frontmatter line".into())
         })?;
         let (front, body) = rest

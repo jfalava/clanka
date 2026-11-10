@@ -76,7 +76,7 @@ pub struct Context {
     /// Only for souls with `time_sense`, early in a session after a gap.
     pub time_away: Option<TimeAway>,
     /// Now, in milliseconds since the Unix epoch, for souls with `time_sense`:
-    /// each memory is shown with how long ago it was kept.
+    /// each memory is shown with how long ago it happened.
     pub today: Option<i64>,
     pub turn_note: Option<String>,
     pub hot_threads: Vec<Memory>,
@@ -143,7 +143,7 @@ impl Companion {
             .map(|(_, note)| note)
             .filter(|n| fits(&render_note(n)));
 
-        // A soul with a sense of time also knows how long ago it kept something.
+        // A soul with a sense of time also knows how long ago something happened.
         let today = self.today();
         let mut hot_threads = Vec::new();
         for memory in self.hot_threads()? {
@@ -464,7 +464,7 @@ pub fn date(ms: i64) -> String {
 }
 
 fn render_memory(m: &Memory, now: Option<i64>) -> String {
-    let mut line = match now.and_then(|now| age(now, m.created_at)) {
+    let mut line = match now.and_then(|now| age(now, m.occurred_at.unwrap_or(m.created_at))) {
         Some(age) => format!("- ({age}) {}", m.interpretation),
         None => format!("- {}", m.interpretation),
     };

@@ -28,8 +28,10 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     loop {
-        eprint!("you> ");
-        std::io::stderr().flush()?;
+        // The terminal or pipe is gone: the conversation is over.
+        if !tell("you> ", false) {
+            break;
+        }
         let Some(line) = lines.next() else { break };
         let message = line?;
         let message = message.trim();
@@ -40,17 +42,17 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
             finish(&mut reflections);
             let session = chat.open_session()?;
             let report = lock(&writer).sleep(session)?;
-            eprintln!(
+            say(&format!(
                 "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
                 report.drifted.len(),
                 report.escalated.len()
-            );
+            ));
             break;
         }
 
         let open = match turn::open(&mut chat, message, budget, true)? {
             Opened::Doctor => {
-                eprintln!("Memory frozen for the doctor. Nothing was recorded.");
+                say("Memory frozen for the doctor. Nothing was recorded.");
                 break;
             }
             Opened::Frozen => bail!("memory is frozen by the doctor; unfreeze it before chatting"),
@@ -120,11 +122,11 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
             // The message is already recorded: the next reply answers both,
             // and the reflection on that exchange reads both.
             Ok(_) => {
-                eprintln!("clanka: the model sent an empty reply. {KEPT}");
+                say(&format!("clanka: the model sent an empty reply. {KEPT}"));
                 continue;
             }
             Err(e) => {
-                eprintln!("clanka: no reply: {e}\nclanka: {KEPT}");
+                say(&format!("clanka: no reply: {e}\nclanka: {KEPT}"));
                 continue;
             }
         };
@@ -133,13 +135,30 @@ pub fn run(mut chat: Companion, writer: Companion, budget: usize) -> Result<()> 
         let writer = writer.clone();
         reflections.push(std::thread::spawn(move || {
             if let Err(e) = lock(&writer).reflect(user_turn, companion_turn) {
-                eprintln!("clanka: reflection on turns {user_turn}–{companion_turn} failed: {e}");
+                say(&format!(
+                    "clanka: reflection on turns {user_turn}–{companion_turn} failed: {e}"
+                ));
             }
         }));
         reflections.retain(|r| !r.is_finished());
     }
     finish(&mut reflections);
     Ok(())
+}
+
+/// Writes to stderr, and says whether anyone is still there to read it.
+/// `eprintln!` panics on a closed terminal or pipe, and a panic here would end
+/// the process under a reflection that is still writing.
+fn tell(text: &str, line: bool) -> bool {
+    let mut err = std::io::stderr().lock();
+    let end = if line { "\n" } else { "" };
+    write!(err, "{text}{end}")
+        .and_then(|()| err.flush())
+        .is_ok()
+}
+
+fn say(text: &str) {
+    tell(text, true);
 }
 
 /// Waits for reflections still running, so none is cut off at exit or sleep.

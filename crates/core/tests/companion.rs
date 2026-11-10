@@ -239,6 +239,12 @@ fn soul_errors_refuse_to_load() {
         assert!(err.contains(reason), "expected {reason:?} in {err:?}");
     }
 
+    // Saved with Windows line endings, it is the same soul and the same persona.
+    let unix = soul_text(id, 0.7, &["Honesty over comfort"]);
+    let windows = Soul::parse(&unix.replace('\n', "\r\n")).unwrap();
+    assert_eq!(windows.hash, Soul::parse(&unix).unwrap().hash);
+    assert_eq!(windows.core_values, ["Honesty over comfort"]);
+
     let soul = Soul::parse(&soul_text(
         id,
         0.7,
@@ -353,8 +359,9 @@ fn an_export_opens_elsewhere_with_the_same_key() {
 
     let elsewhere = tempfile::tempdir().unwrap();
     let copy = elsewhere.path().join(format!("{}.db", f.id));
-    c.export_to(&copy).unwrap();
-    assert!(c.export_to(&copy).is_err(), "an export never overwrites");
+    let export = || Companion::export(f.dir.path(), c.soul(), "k", &copy);
+    export().unwrap();
+    assert!(export().is_err(), "an export never overwrites");
     // Written after the export: not in it.
     c.write(
         Actor::Cli,
@@ -375,4 +382,15 @@ fn an_export_opens_elsewhere_with_the_same_key() {
         .collect();
     assert_eq!(found, [laura]);
     assert_eq!(moved.active_memories().unwrap().len(), 1);
+
+    // A copy needs no embedding model, so the configured one having changed
+    // since the vectors were built doesn't stop it.
+    drop(c);
+    assert!(matches!(
+        Companion::open(f.dir.path(), &f.soul, deps("k", "model-b")),
+        Err(Error::EmbedderChanged { .. })
+    ));
+    let again = elsewhere.path().join("again.db");
+    Companion::export(f.dir.path(), moved.soul(), "k", &again).unwrap();
+    assert!(again.exists());
 }

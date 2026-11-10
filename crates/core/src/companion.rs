@@ -72,11 +72,13 @@ impl Companion {
             ensure_vectors(&conn, deps.embedder.model_id(), deps.embedder.dimensions())?;
         }
 
-        let persona = match meta(&conn, "persona_hash")? {
+        // One transaction: an accepted hash is never stored without its log line.
+        let tx = conn.unchecked_transaction()?;
+        let persona = match meta(&tx, "persona_hash")? {
             None => {
-                set_meta(&conn, "persona_hash", &soul.hash)?;
+                set_meta(&tx, "persona_hash", &soul.hash)?;
                 log(
-                    &conn,
+                    &tx,
                     "cli",
                     "persona_accepted",
                     "persona",
@@ -90,9 +92,9 @@ impl Companion {
             // The same file under the old whole-file hash: nothing changed, so
             // move the database to the body hash instead of asking.
             Some(hash) if hash == soul.legacy_hash => {
-                set_meta(&conn, "persona_hash", &soul.hash)?;
+                set_meta(&tx, "persona_hash", &soul.hash)?;
                 log(
-                    &conn,
+                    &tx,
                     "cli",
                     "persona_rehashed",
                     "persona",
@@ -104,6 +106,7 @@ impl Companion {
             }
             Some(accepted_hash) => PersonaStatus::Changed { accepted_hash },
         };
+        tx.commit()?;
 
         Ok(Self {
             conn,
@@ -155,17 +158,22 @@ impl Companion {
         Ok(())
     }
 
-    /// Writes a copy of the whole database, as it is at this moment, to a new
-    /// file under the same key. Safe while other processes write: the copy is
-    /// one consistent snapshot. Refuses to overwrite a file.
-    pub fn export_to(&self, path: &Path) -> Result<()> {
-        if path.exists() {
-            return Err(Error::Invalid(format!("{} already exists", path.display())));
+    /// Writes a copy of the companion's whole database, as it is at this
+    /// moment, to a new file under the same key. Safe while other processes
+    /// write: the copy is one consistent snapshot. Refuses to overwrite a file.
+    ///
+    /// The companion isn't opened: a copy needs no embedding model, so one
+    /// whose vectors came from another model, or whose persona changed, can
+    /// still be moved.
+    pub fn export(data_dir: &Path, soul: &Soul, key: &str, to: &Path) -> Result<()> {
+        if to.exists() {
+            return Err(Error::Invalid(format!("{} already exists", to.display())));
         }
-        let target = path
+        let target = to
             .to_str()
-            .ok_or_else(|| Error::Invalid(format!("{} is not valid UTF-8", path.display())))?;
-        self.conn.execute("VACUUM INTO ?1", [target])?;
+            .ok_or_else(|| Error::Invalid(format!("{} is not valid UTF-8", to.display())))?;
+        let conn = db::open(&data_dir.join(format!("{}.db", soul.traits.id)), key)?;
+        conn.execute("VACUUM INTO ?1", [target])?;
         Ok(())
     }
 
@@ -180,10 +188,11 @@ impl Companion {
     /// "Continue" after a persona change: keep old memories as they were felt
     /// and write new ones under the new persona.
     pub fn continue_with_persona(&mut self) -> Result<()> {
-        set_meta(&self.conn, "persona_hash", &self.soul.hash)?;
+        let tx = self.conn.unchecked_transaction()?;
+        set_meta(&tx, "persona_hash", &self.soul.hash)?;
         let hash = json!({ "hash": self.soul.hash });
         log(
-            &self.conn,
+            &tx,
             "cli",
             "persona_continued",
             "persona",
@@ -191,6 +200,7 @@ impl Companion {
             &hash,
             self.deps.clock.now_ms(),
         )?;
+        tx.commit()?;
         self.persona = PersonaStatus::Unchanged;
         Ok(())
     }
@@ -202,17 +212,19 @@ impl Companion {
     }
 
     pub fn set_frozen(&self, frozen: bool) -> Result<()> {
-        set_meta(&self.conn, "frozen", if frozen { "1" } else { "0" })?;
+        let tx = self.conn.unchecked_transaction()?;
+        set_meta(&tx, "frozen", if frozen { "1" } else { "0" })?;
         let action = if frozen { "freeze" } else { "unfreeze" };
         log(
-            &self.conn,
+            &tx,
             "doctor",
             action,
             "companion",
             None,
             &json!({}),
             self.deps.clock.now_ms(),
-        )
+        )?;
+        Ok(tx.commit()?)
     }
 }
 

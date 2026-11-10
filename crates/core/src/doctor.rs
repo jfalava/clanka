@@ -78,16 +78,18 @@ impl Companion {
     /// The fork's first half: this companion becomes read-only for good. Give
     /// soul.md a new UUIDv7 and the next open starts the companion anew; nothing here is deleted.
     pub fn archive(&mut self) -> Result<()> {
-        set_meta(&self.conn, "archived", "1")?;
+        let tx = self.conn.unchecked_transaction()?;
+        set_meta(&tx, "archived", "1")?;
         log(
-            &self.conn,
+            &tx,
             "cli",
             "archive",
             "companion",
             None,
             &json!({}),
             self.deps.clock.now_ms(),
-        )
+        )?;
+        Ok(tx.commit()?)
     }
 
     /// Every write after `since` (milliseconds since the epoch), oldest first.

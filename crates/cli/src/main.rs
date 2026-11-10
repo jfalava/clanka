@@ -146,7 +146,8 @@ enum Command {
     /// safe to take while the companion is in use) and key, the database key in plain
     /// text. Whoever has the directory can read every memory, so move it over a channel
     /// you trust and delete it afterwards. Changes nothing here (a companion that was never
-    /// opened gets its empty database first).
+    /// opened gets its empty database first). Needs no embedding model, so it also works
+    /// after `[embedding] model` changed and before `clanka doctor reembed`.
     #[command(after_long_help = "Example:\n  \
         clanka export ~/.config/clanka/souls/<id>.md ~/nova-export\n  \
         scp -r ~/nova-export other-machine:   # then there: clanka import ~/nova-export")]
@@ -207,6 +208,9 @@ enum Command {
         cases: PathBuf,
     },
     /// Download the embedding model config.toml names, if it is not here yet.
+    ///
+    /// Files already here are checked against the expected checksums, and any that is
+    /// missing or damaged (an interrupted download) is fetched again.
     ///
     /// The model turns text into the vectors recall searches. The default is a small
     /// English one (about 23 MB); `[embedding] model = "multilingual"` in config.toml picks
@@ -879,10 +883,13 @@ fn unfenced(text: &str) -> String {
 
 /// A whole soul.md: frontmatter for `id`, `name` and `token` over `body`.
 fn soul_text(id: uuid::Uuid, name: &str, token: &str, body: &str) -> String {
+    // As TOML writes it: a quote or backslash in a name would otherwise break
+    // the frontmatter, or add a key to it.
+    let name = toml::Value::String(name.to_owned());
     format!(
         r#"+++
 id = "{id}"
-name = "{name}"
+name = {name}
 contrariness = 0.5      # 0–1: how often the companion pushes back
 persistence = 0.5       # 0 forget and forgive … 1 chase and resolve
 time_sense = true       # time away affects mood
@@ -953,13 +960,14 @@ defended against the user, so keep them few; everything else is personality. -->
     )
 }
 
-/// Downloads the embedding model's files that are not there yet.
+/// Downloads the embedding model's files that are missing or aren't the
+/// expected ones (a download cut off by hand, a damaged disk).
 fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
     let dir = embedding.dir(paths);
     std::fs::create_dir_all(&dir)?;
-    for (local, remote) in embedding.files() {
+    for (local, remote, sha256) in embedding.files() {
         let path = dir.join(local);
-        if path.exists() {
+        if path.exists() && setup::sha256_file(&path)? == sha256 {
             continue;
         }
         let url = format!("{}/{remote}", embedding.repo());
@@ -970,10 +978,17 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
             .with_config()
             .limit(1024 * 1024 * 1024)
             .reader();
-        // Written whole and renamed, so an interrupted download never looks complete.
+        // Written whole, checked and renamed, so a download that was
+        // interrupted or answered with something else never looks complete.
         let partial = path.with_extension("part");
         let mut file = std::fs::File::create(&partial)?;
         std::io::copy(&mut body, &mut file).with_context(|| url.clone())?;
+        drop(file);
+        let found = setup::sha256_file(&partial)?;
+        if found != sha256 {
+            std::fs::remove_file(&partial)?;
+            bail!("{url} is not the expected file: its SHA-256 is {found}, not {sha256}");
+        }
         std::fs::rename(&partial, &path)?;
     }
     Ok(())
@@ -1204,6 +1219,11 @@ mod tests {
         let text = super::soul_template(uuid::Uuid::now_v7(), "Nova", &"a".repeat(32));
         let soul = clanka_core::soul::Soul::parse(&text).unwrap();
         assert_eq!(soul.traits.name, "Nova");
+        let odd = "Nova \"the\\quiet\"\ndrift = 1";
+        let named = super::soul_template(uuid::Uuid::now_v7(), odd, &"a".repeat(32));
+        let named = clanka_core::soul::Soul::parse(&named).unwrap();
+        assert_eq!(named.traits.name, odd);
+        assert_eq!(named.traits.drift, 0.3);
         assert_eq!(soul.core_values.len(), 3);
         assert!(text.contains("<!--"), "the template guides its author");
         assert!(

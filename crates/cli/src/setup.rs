@@ -43,28 +43,79 @@ impl Embedding {
         }
     }
 
+    /// Where the files are downloaded from: one fixed revision, so the files
+    /// are the ones the checksums in [`Self::files`] are for.
     pub fn repo(self) -> &'static str {
         match self {
-            Self::English => "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main",
+            Self::English => {
+                "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/751bff37182d3f1213fa05d7196b954e230abad9"
+            }
             Self::Multilingual => {
-                "https://huggingface.co/Qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q/resolve/main"
+                "https://huggingface.co/Qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q/resolve/faf4aa4225822f3bc6376869cb1164e8e3feedd0"
             }
         }
     }
 
-    /// The files fastembed uses for the model, as (local name, path in the repo).
-    pub fn files(self) -> [(&'static str, &'static str); 5] {
-        let model = match self {
-            Self::English => "onnx/model_quantized.onnx",
-            Self::Multilingual => "model_optimized.onnx",
-        };
-        [
-            ("model.onnx", model),
-            ("tokenizer.json", "tokenizer.json"),
-            ("config.json", "config.json"),
-            ("special_tokens_map.json", "special_tokens_map.json"),
-            ("tokenizer_config.json", "tokenizer_config.json"),
-        ]
+    /// The files fastembed uses for the model, as (local name, path in the
+    /// repo, SHA-256). A changed vector model would silently stop matching
+    /// every stored vector, so a file that isn't the expected one is refused.
+    pub fn files(self) -> [(&'static str, &'static str, &'static str); 5] {
+        match self {
+            Self::English => [
+                (
+                    "model.onnx",
+                    "onnx/model_quantized.onnx",
+                    "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1",
+                ),
+                (
+                    "tokenizer.json",
+                    "tokenizer.json",
+                    "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
+                ),
+                (
+                    "config.json",
+                    "config.json",
+                    "7135149f7cffa1a573466c6e4d8423ed73b62fd2332c575bf738a0d033f70df7",
+                ),
+                (
+                    "special_tokens_map.json",
+                    "special_tokens_map.json",
+                    "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3",
+                ),
+                (
+                    "tokenizer_config.json",
+                    "tokenizer_config.json",
+                    "9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3",
+                ),
+            ],
+            Self::Multilingual => [
+                (
+                    "model.onnx",
+                    "model_optimized.onnx",
+                    "634d0f66c29dc934c8fa72b8a4fe91dd4d420a22f1d82a241058d4316e659a99",
+                ),
+                (
+                    "tokenizer.json",
+                    "tokenizer.json",
+                    "fa685fc160bbdbab64058d4fc91b60e62d207e8dc60b9af5c002c5ab946ded00",
+                ),
+                (
+                    "config.json",
+                    "config.json",
+                    "c8ec081fdad2df991bf5abbf18418fec7a5cdaa421f60ffb060a30040b8c376f",
+                ),
+                (
+                    "special_tokens_map.json",
+                    "special_tokens_map.json",
+                    "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835",
+                ),
+                (
+                    "tokenizer_config.json",
+                    "tokenizer_config.json",
+                    "0666eebf692422757e1dddf3c9fb1ded73ba3dc726c5828671fc89e45bf3609f",
+                ),
+            ],
+        }
     }
 
     /// Where the model's files live.
@@ -359,6 +410,30 @@ pub fn random_hex(bytes: usize) -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The SHA-256 of a file's contents, as lowercase hex.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let read = file
+            .read(&mut buf)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
 /// One loaded embedding model shared by several handles, so two handles to
 /// the same companion don't load it twice.
 #[derive(Clone)]
@@ -369,10 +444,15 @@ impl SharedEmbedder {
     pub fn load(paths: &Paths) -> Result<Self> {
         let embedding = Config::load(paths)?.embedding.model;
         let dir = embedding.dir(paths);
-        if !dir.join("model.onnx").exists() {
+        // Every file, not only the model: an interrupted download leaves some.
+        if let Some((missing, ..)) = embedding
+            .files()
+            .iter()
+            .find(|(local, ..)| !dir.join(local).exists())
+        {
             bail!(
-                "embedding model missing in {}; run `clanka embedding`",
-                dir.display()
+                "embedding model file {} is missing; run `clanka embedding`",
+                dir.join(missing).display()
             );
         }
         Ok(Self(Arc::new(FastEmbedder::from_dir(

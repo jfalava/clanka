@@ -7,7 +7,7 @@ use clanka_core::deps::{Llm, LlmRequest, LlmResponse, Role, ToolCall};
 use clanka_core::{Error, Result};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Most one reply or reflection round runs to.
 const MAX_TOKENS: u32 = 2048;
@@ -20,6 +20,10 @@ const ATTEMPTS: u32 = 4;
 /// to come back later than this, the request fails at once.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 
+/// Longest one request may take from the first try to the end of the reply,
+/// retries and the waits between them included: a turn is waiting on it.
+const TIMEOUT: Duration = Duration::from_secs(180);
+
 /// Most of a response that isn't an event stream that is read.
 const MAX_BODY: usize = 16 * 1024 * 1024;
 
@@ -28,12 +32,13 @@ pub struct OpenAiModel {
     agent: ureq::Agent,
     /// Wait before the second try; it doubles for each one after.
     backoff: Duration,
+    /// See [`TIMEOUT`].
+    timeout: Duration,
 }
 
 impl OpenAiModel {
     pub fn new(config: ModelConfig) -> Self {
         let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(180)))
             .http_status_as_error(false)
             .build()
             .into();
@@ -41,6 +46,7 @@ impl OpenAiModel {
             config,
             agent,
             backoff: Duration::from_secs(1),
+            timeout: TIMEOUT,
         }
     }
 
@@ -59,11 +65,18 @@ impl OpenAiModel {
             self.config.base_url.trim_end_matches('/')
         );
         let body = body.to_string();
+        let started = Instant::now();
         let mut attempt = 1;
         loop {
+            // Each try gets what is left of the one limit, not a full one of
+            // its own: four slow failures in a row took four times as long.
+            let left = self.timeout.saturating_sub(started.elapsed());
             let sent = self
                 .agent
                 .post(&url)
+                .config()
+                .timeout_global(Some(left))
+                .build()
                 .header("Authorization", &format!("Bearer {key}"))
                 .header("Content-Type", "application/json")
                 .send(&body);
@@ -98,6 +111,9 @@ impl OpenAiModel {
                 }
             };
             let wait = delay(self.backoff, attempt, retry_after);
+            if started.elapsed() + wait >= self.timeout {
+                return Err(error);
+            }
             eprintln!(
                 "clanka: {error}; trying again in {:.1}s",
                 wait.as_secs_f32()
@@ -122,8 +138,8 @@ fn retryable_status(status: u16) -> bool {
     matches!(status, 408 | 425 | 429) || (500..600).contains(&status)
 }
 
-/// Failures to reach the provider. A request that ran into the 180 s overall
-/// timeout is not tried again: the user has waited long enough.
+/// Failures to reach the provider. A request that ran into the overall
+/// [`TIMEOUT`] is not tried again: the user has waited long enough.
 fn retryable_error(e: &ureq::Error) -> bool {
     use ureq::Error::{ConnectionFailed, HostNotFound, Io, Timeout};
     match e {
@@ -500,6 +516,19 @@ mod tests {
         let busy = http("500 Internal Server Error", "", "down");
         let url = provider(vec![busy; ATTEMPTS as usize]);
         let error = model(url).complete(&hello()).unwrap_err().to_string();
+        assert!(error.contains("500"), "{error}");
+    }
+
+    #[test]
+    fn retries_stop_when_the_next_wait_would_pass_the_time_limit() {
+        // Two responses: a third try would fail to connect, not with a 500.
+        let busy = http("500 Internal Server Error", "", "down");
+        let model = OpenAiModel {
+            backoff: Duration::from_millis(200),
+            timeout: Duration::from_millis(300),
+            ..model(provider(vec![busy; 2]))
+        };
+        let error = model.complete(&hello()).unwrap_err().to_string();
         assert!(error.contains("500"), "{error}");
     }
 
