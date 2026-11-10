@@ -3,8 +3,8 @@
 A general plugin on Hermes's public plugin API only:
 
 - ``pre_llm_call``: checks for the doctor token (the turn is blocked and memory
-  frozen), then records the user's message and adds the turn's memory, mood
-  and notes as context.
+  frozen), blocks every turn while memory is frozen, then records the user's
+  message and adds the turn's memory, mood and notes as context.
 - ``post_llm_call``: records the reply, then reflects on the exchange on a
   background thread. Reflection runs on ``ctx.llm``, the user's active model,
   so the companion's memory is written by the same model it chats with.
@@ -102,6 +102,12 @@ class _Plugin:
         kind, context = self.companion().begin_turn(user_message or "", bool(is_first_turn))
         if kind == "doctor":
             return {"action": "block", "message": "Memory frozen."}
+        if kind == "frozen":
+            # Answering would be a reply the companion never remembers.
+            return {
+                "action": "block",
+                "message": "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again.",
+            }
         if kind == "open" and context:
             return {"context": context}
         return None
