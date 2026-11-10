@@ -230,7 +230,11 @@ pub(crate) fn cast(body: &str, name: &str) -> Vec<String> {
                 .map_or(rest.len(), |i| start + i);
             let before = &line[..line.len() - rest.len() + start];
             let word = rest[start..end].trim_end_matches(|c: char| !c.is_alphanumeric());
-            let word = word.strip_suffix("'s").unwrap_or(word);
+            // Models write the possessive with a curly apostrophe as often as not.
+            let word = word
+                .strip_suffix("'s")
+                .or_else(|| word.strip_suffix("\u{2019}s"))
+                .unwrap_or(word);
             rest = &rest[end..];
             let mid_sentence = before
                 .trim_end()

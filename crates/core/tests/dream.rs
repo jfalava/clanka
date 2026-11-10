@@ -67,14 +67,23 @@ fn awake_evening(c: &mut Companion, said: &str) -> i64 {
 /// this dream showed it and the user had written it while the companion was
 /// awake, out of earshot included. Whatever the dream made up, whatever was
 /// said awake but never echoed, and a word that turns up everywhere all fade.
+/// A name from the companion's own life proves nothing, and a name only the
+/// dream knew can't ride along in the interpretation either.
 #[test]
 fn an_echo_sears_only_what_was_written_awake() {
     let f = fixture();
+    // Greta is in Nova's own life.
+    let soul = std::fs::read_to_string(&f.soul).unwrap();
+    std::fs::write(
+        &f.soul,
+        format!("{soul}\nNova grew up with her aunt Greta.\n"),
+    )
+    .unwrap();
     let clk = clock();
     let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), clk.clone());
     let whisper = awake_evening(
         &mut c,
-        "Sam leans in: ||the judge sentenced Laura to hang at Dawnfort|| and Nova is busy.",
+        "Sam leans in: ||the judge sentenced Laura to hang at Dawnfort, Greta knew|| and Nova is busy.",
     );
     let faint = c
         .write(
@@ -97,7 +106,7 @@ fn an_echo_sears_only_what_was_written_awake() {
         .unwrap();
     c.record_echo(
         dream,
-        "Years ago the judge says Laura will hang at Dawnfort, below Morrow Hill.",
+        "Years ago the judge says Laura will hang at Dawnfort, below Morrow Hill. Greta nods.",
     )
     .unwrap();
     c.record_turn(dream, Speaker::Companion, "No. No, not her.")
@@ -105,18 +114,27 @@ fn an_echo_sears_only_what_was_written_awake() {
     c.mark_recalled(dream, &[faint, normal]).unwrap();
     drop(c);
 
-    let sear = |facts: Value| {
+    let sear_as = |interpretation: &str, facts: Value| {
         call(
             "sear",
-            json!({ "type": "user_fact", "facts": facts,
-                    "interpretation": "Laura was condemned, and nobody told me",
+            json!({ "type": "user_fact", "facts": facts, "interpretation": interpretation,
                     "to_confirm": "Is Laura really condemned?" }),
         )
     };
+    let sear = |facts: Value| sear_as("Laura was condemned, and nobody told me", facts);
     let calls = vec![
         // Only what the dream made up: nothing stays.
         sear(json!({ "hill": "Morrow Hill" })),
-        sear(json!({ "place": "Dawnfort", "hill": "Morrow Hill", "who": "Sam", "word": "the" })),
+        // Echoed and written awake, but Greta is Nova's own: it proves nothing.
+        sear(json!({ "who": "Greta" })),
+        // The facts hold, but the interpretation names a hill only the dream knew.
+        sear_as(
+            "Laura hangs at Dawnfort, below Morrow Hill",
+            json!({ "place": "Dawnfort" }),
+        ),
+        sear(
+            json!({ "place": "Dawnfort", "hill": "Morrow Hill", "who": "Sam", "word": "the", "aunt": "Greta" }),
+        ),
         // One thing stays from a dream; a second is refused.
         sear(json!({ "who": "Laura" })),
         mood("I woke cold, and I don't know why"),
@@ -127,6 +145,10 @@ fn an_echo_sears_only_what_was_written_awake() {
         call(
             "keep_fragment",
             json!({ "interpretation": "the pale face of Laura" }),
+        ),
+        call(
+            "keep_fragment",
+            json!({ "interpretation": "the smell of Laura\u{2019}s kitchen" }),
         ),
         call(
             "keep_fragment",
@@ -152,7 +174,11 @@ fn an_echo_sears_only_what_was_written_awake() {
             seared.dreamt,
             Value::Object(seared.facts.clone())
         ),
-        (Level::Seared, true, json!({ "place": "Dawnfort" }))
+        (
+            Level::Seared,
+            true,
+            json!({ "place": "Dawnfort", "aunt": "Greta" })
+        )
     );
     assert_eq!(seared.source_turns, [whisper], "it cites the waking turn");
     let db = raw(c.db_path(), "k");
@@ -170,7 +196,8 @@ fn an_echo_sears_only_what_was_written_awake() {
         )
     );
 
-    // The named fragment was refused; the others are faint and factless.
+    // The named fragments were refused, however the possessive was written;
+    // the others are faint and factless.
     assert_eq!(report.fragments.len(), 2);
     for id in &report.fragments {
         let m = c.memory(*id).unwrap();
@@ -225,7 +252,7 @@ fn an_echo_sears_only_what_was_written_awake() {
     assert!(
         text.contains(
             "- Laura was condemned, and nobody told me (you learned this in a dream, and it is \
-             burned into you) [place: Dawnfort]"
+             burned into you) [aunt: Greta, place: Dawnfort]"
         ),
         "{text}"
     );

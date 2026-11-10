@@ -23,8 +23,8 @@ const INSTRUCTIONS: &str = "You are a companion with a long-term memory. For EVE
 do these three steps in order: 1) call begin_turn with the user's message, exactly as written; \
 2) write your reply in character, using what begin_turn returned as your own memories and mood; \
 3) call end_turn with your reply, exactly as written. When the user says goodnight or asks you to \
-sleep, call sleep after replying. When begin_turn tells you of a place you know that is strange, \
-and you come to wake there, call wake_up after end_turn.";
+sleep, call sleep after replying. In a dream (begin_turn tells you of a place you know that is \
+strange), when your reply is the moment you wake, call wake_up after end_turn.";
 
 #[derive(Deserialize, JsonSchema)]
 pub struct BeginTurn {

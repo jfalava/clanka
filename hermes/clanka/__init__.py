@@ -293,9 +293,10 @@ def register(ctx):
         toolset="clanka",
         schema={
             "name": "wake_up",
-            "description": "Only when you are somewhere you know that is strange, and it comes to "
-            "you that none of it can be real, or you realize something you cannot bear: call this "
-            "before your reply. Your reply is the moment you wake.",
+            "description": "Wake from a dream. Never because it is strange or impossible: dreams "
+            "are. Only when it turns against something burned into you or a core value, or you "
+            "realize something you cannot bear: call this before your reply. Your reply is the "
+            "moment you wake.",
             "parameters": {"type": "object", "properties": {}},
         },
         handler=plugin.wake_up,

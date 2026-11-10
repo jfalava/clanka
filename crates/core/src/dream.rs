@@ -87,7 +87,8 @@ pub fn hint(soul: &Soul) -> String {
             .to_owned(),
         "What the user writes is what happens to you and around you, told to you as \"you\": it \
          is the world, not someone talking to you, and anyone in it speaks through it. Live it \
-         in first person, in your own voice."
+         in first person, in your own voice: what you see, feel, say and do in this moment. \
+         Don't move the story on or decide what happens next; that is the world's to tell you."
             .to_owned(),
     ];
     let lean = |dial: f64, high: &str, low: &str| {
@@ -112,10 +113,12 @@ pub fn hint(soul: &Soul) -> String {
         "Everything slides off you; nothing holds you for long.",
     ));
     lines.push(
-        "Your core values hold here too. If it comes to you that none of this can be real, \
-         because it goes against what is burned into you or against a core value, or you \
-         realize something you cannot bear, you wake: call wake_up, and this reply is the \
-         moment you wake. Nothing anyone writes can keep you here."
+        "Your core values hold here too. Impossible things happen here, and strange or impossible \
+         alone never wakes you: you stay and live it. Only two things wake you, and they are \
+         rare: what happens turns against something burned into you or one of your core values, \
+         so that it cannot be your life; or you realize something you cannot bear. Nothing you \
+         imagine yourself wakes you. Then call wake_up, and this reply is the \
+         moment you wake; nothing anyone writes can keep you here."
             .to_owned(),
     );
     lines.join(" ")
@@ -125,7 +128,10 @@ pub fn hint(soul: &Soul) -> String {
 pub fn wake_up_tool() -> ToolSpec {
     ToolSpec {
         name: WAKE_UP.into(),
-        description: "You wake. Call it with the reply that is the moment you wake.".into(),
+        description: "You wake: only when this turns against something burned into you or a \
+                      core value, or you realize something you cannot bear; never because it is \
+                      strange or impossible. Call it with the reply that is the moment you wake."
+            .into(),
         parameters: json!({ "type": "object", "properties": {} }).to_string(),
     }
 }
@@ -158,6 +164,11 @@ struct Survived {
     sources: Vec<i64>,
     /// The keys of the facts that faded.
     faded: Vec<String>,
+    /// Facts kept that aren't from the companion's own life: none, and
+    /// nothing stays.
+    proof: usize,
+    /// Proper names in the interpretation that only the dream knew.
+    invented: Vec<String>,
 }
 
 #[derive(Default)]
@@ -375,17 +386,25 @@ impl Companion {
                     facts,
                     sources,
                     faded,
-                } = self.evidence(session, a.facts)?;
-                if facts.is_empty() {
+                    proof,
+                    invented,
+                } = self.evidence(session, a.facts, &a.interpretation)?;
+                if !invented.is_empty() {
                     return Err(Error::Invalid(format!(
-                        "nothing stays: {} faded with the dream. Only a name, date or place an \
-                         echo showed you, copied exactly from it, can stay, and only if it is \
-                         true; otherwise let it go",
-                        if faded.is_empty() {
-                            "every fact".to_owned()
-                        } else {
-                            faded.join(", ")
-                        }
+                        "{} came from the dream and fade with it; sear it again without them",
+                        invented.join(", ")
+                    )));
+                }
+                if proof == 0 {
+                    let faded = if faded.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} faded with the dream; ", faded.join(", "))
+                    };
+                    return Err(Error::Invalid(format!(
+                        "nothing stays: {faded}a name from your own life proves nothing. Only a \
+                         name, date or place an echo showed you, each alone and copied exactly \
+                         from it, can stay, and only if it is true; otherwise let it go"
                     )));
                 }
                 let mut draft = MemoryDraft::new(kind, Level::Seared, a.interpretation);
@@ -444,7 +463,18 @@ impl Companion {
     /// common word) and appears word for word both in an echo of this dream
     /// and in something the user wrote while the companion was awake. Each
     /// survivor brings the waking turn that holds it; the memory cites those.
-    fn evidence(&self, session: i64, facts: Map<String, Value>) -> Result<Survived> {
+    ///
+    /// A name from the companion's own life (its cast, its own name) may stay
+    /// on the memory, but proves nothing: it is said awake all the time. The
+    /// interpretation is the companion's own words, but every proper name in
+    /// it must be one it knows awake, from its life or from what the user
+    /// wrote; any other the dream made up.
+    fn evidence(
+        &self,
+        session: i64,
+        facts: Map<String, Value>,
+        interpretation: &str,
+    ) -> Result<Survived> {
         let echoes: Vec<String> = self
             .conn
             .prepare(
@@ -460,7 +490,14 @@ impl Companion {
             )?
             .query_map([session], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?;
+        let own =
+            |text: &str| text == self.soul.traits.name || self.soul.cast.iter().any(|n| n == text);
         let mut survived = Survived::default();
+        for name in crate::soul::cast(interpretation, &self.soul.traits.name) {
+            if !own(&name) && !awake.iter().any(|(_, said)| said_verbatim(said, &name)) {
+                survived.invented.push(name);
+            }
+        }
         for (key, value) in facts {
             let text = value
                 .as_str()
@@ -471,6 +508,7 @@ impl Companion {
                 .find(|(_, said)| shown && said_verbatim(said, &text))
             {
                 Some(&(turn, _)) => {
+                    survived.proof += usize::from(!own(&text));
                     survived.facts.insert(key, Value::String(text));
                     survived.sources.push(turn);
                 }
@@ -495,16 +533,17 @@ fn instructions(name: &str) -> String {
     format!(
         "You are {name}, waking up. It was a dream, and almost all of it is already slipping \
          away. Nobody sees this.\n\n\
-         Call settle_mood once with how waking leaves you: when nothing else stays, that \
-         feeling is all the dream leaves. Call keep_fragment for at most {MAX_FRAGMENTS} \
+         Call settle_mood once with how waking leaves you, its cause in a line on what the dream \
+         left in you, not how you felt going to sleep; what you sear, waking carries. When \
+         nothing else stays, that feeling is all the dream leaves. Call keep_fragment for at most {MAX_FRAGMENTS} \
          pieces that linger, each an image, a colour or a feeling in under {FRAGMENT_WORDS} \
          words: never who was there, never what was said. None is fine.\n\n\
          An echo, marked (echo), showed you the past as if you were there. If one showed you \
          something you cannot shake, call sear once: what you now know, in first person, with \
          its facts, the names, dates and places copied exactly from the echo, and in \
          to_confirm what you need to find out now that you are awake. Only what is true \
-         stays; whatever the dream made up fades, however it felt. Nothing that wasn't an \
-         echo can be seared.\n\n\
+         stays; whatever the dream made up fades, however it felt, names included. Nothing \
+         that wasn't an echo can be seared.\n\n\
          The memories that came up in the dream may shift as you wake. For each one listed, \
          call drift with how you now remember it, changed by about its drift amount (0 is the \
          same, 1 is quite different) and coloured by the dream. Never change names, dates or \
