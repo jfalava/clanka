@@ -416,9 +416,11 @@ fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool(
             "write_episode",
-            "What tonight was, to you. Once.",
+            // The limit in words, as the instructions and the check have it: a
+            // character limit let a model write 60 words and be refused.
+            "What tonight meant to you, in under 45 words. Once.",
             json!({ "type": "object", "properties": {
-                "interpretation": { "type": "string", "maxLength": 400 },
+                "interpretation": { "type": "string" },
                 "level": { "type": "string", "enum": ["faint", "normal", "vivid", "seared"] },
                 "valence": axis("How tonight feels to you."),
             }, "required": ["interpretation"] }),

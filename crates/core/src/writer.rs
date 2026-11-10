@@ -848,7 +848,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             "interpretation": { "type": "string", "maxLength": 300 },
             "level": level,
             "facts": { "type": "object", "additionalProperties": { "type": "string" },
-                "description": "The user's exact words for names, dates and places, a few words each. Anything you would rephrase belongs in interpretation." },
+                "description": "Names, dates and places, each copied exactly from what the user said and no longer than the name, date or place itself: \"Lyon\", not \"the bakery in Lyon\". Anything you would rephrase belongs in interpretation." },
             "valence": { "type": "number", "minimum": -1, "maximum": 1 },
         });
         properties
