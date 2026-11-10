@@ -249,8 +249,9 @@ def register(ctx):
         toolset="clanka",
         schema={
             "name": "go_to_sleep",
-            "description": "Call when the user says goodnight or asks you to sleep. You fall "
-            "asleep after this reply and the conversation becomes a memory.",
+            "description": "Call this before you reply whenever the user says goodnight, says "
+            "they are going to bed or done for the night, or asks you to sleep. You fall asleep "
+            "after this reply and the conversation becomes a memory.",
             "parameters": {"type": "object", "properties": {}},
         },
         handler=plugin.go_to_sleep,
