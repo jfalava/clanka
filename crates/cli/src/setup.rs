@@ -1,10 +1,11 @@
 //! Where things live and how a companion handle is put together: the key from
-//! the Secret Service, the local embedding model and the companion's model.
+//! the Secret Service or a key file, the local embedding model, the
+//! companion's model and config.toml's tuning.
 
 use crate::llm::{NoModel, OpenAiModel};
 use anyhow::{Context, Result, bail};
 use clanka_core::deps::{Embedder, EmbeddingModel, FastEmbedder, KeySource, Llm, Rng, SystemClock};
-use clanka_core::{Companion, Deps};
+use clanka_core::{Companion, Deps, Ranking};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,24 +14,70 @@ use uuid::Uuid;
 /// Secret Service entries are `clanka` / `<companion id>`.
 const KEYRING_SERVICE: &str = "clanka";
 
-/// Conversations are in English, so the small English MiniLM (see the design's
-/// embedding benchmark). Stored with every vector: changing it means a re-embed.
-pub const MODEL_ID: &str = "all-MiniLM-L6-v2-q";
-pub const MODEL: EmbeddingModel = EmbeddingModel::AllMiniLML6V2Q;
-/// The files fastembed uses for `MODEL`, as (local name, path in the repo).
-pub const MODEL_REPO: &str = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main";
-pub const MODEL_FILES: [(&str, &str); 5] = [
-    ("model.onnx", "onnx/model_quantized.onnx"),
-    ("tokenizer.json", "tokenizer.json"),
-    ("config.json", "config.json"),
-    ("special_tokens_map.json", "special_tokens_map.json"),
-    ("tokenizer_config.json", "tokenizer_config.json"),
-];
+/// The local model that turns text into vectors for recall. Its ID is stored
+/// with every vector: a companion whose vectors came from another model
+/// refuses to open until `clanka doctor reembed` rebuilds them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Embedding {
+    /// The small English MiniLM (see the design's embedding benchmark).
+    #[default]
+    English,
+    /// The multilingual MiniLM, for conversations in other languages: about
+    /// ten times the download and slower per text.
+    Multilingual,
+}
+
+impl Embedding {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::English => "all-MiniLM-L6-v2-q",
+            Self::Multilingual => "paraphrase-multilingual-MiniLM-L12-v2-q",
+        }
+    }
+
+    fn model(self) -> EmbeddingModel {
+        match self {
+            Self::English => EmbeddingModel::AllMiniLML6V2Q,
+            Self::Multilingual => EmbeddingModel::ParaphraseMLMiniLML12V2Q,
+        }
+    }
+
+    pub fn repo(self) -> &'static str {
+        match self {
+            Self::English => "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main",
+            Self::Multilingual => {
+                "https://huggingface.co/Qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q/resolve/main"
+            }
+        }
+    }
+
+    /// The files fastembed uses for the model, as (local name, path in the repo).
+    pub fn files(self) -> [(&'static str, &'static str); 5] {
+        let model = match self {
+            Self::English => "onnx/model_quantized.onnx",
+            Self::Multilingual => "model_optimized.onnx",
+        };
+        [
+            ("model.onnx", model),
+            ("tokenizer.json", "tokenizer.json"),
+            ("config.json", "config.json"),
+            ("special_tokens_map.json", "special_tokens_map.json"),
+            ("tokenizer_config.json", "tokenizer_config.json"),
+        ]
+    }
+
+    /// Where the model's files live.
+    pub fn dir(self, paths: &Paths) -> PathBuf {
+        paths.models.join(self.id())
+    }
+}
 
 pub struct Paths {
     pub config: PathBuf,
     pub souls: PathBuf,
     pub data: PathBuf,
+    /// One directory per embedding model.
     pub models: PathBuf,
 }
 
@@ -42,7 +89,7 @@ impl Paths {
         let data = dirs.data_dir().to_owned();
         Ok(Self {
             souls: config.join("souls"),
-            models: data.join("models").join(MODEL_ID),
+            models: data.join("models"),
             config,
             data,
         })
@@ -51,6 +98,24 @@ impl Paths {
     pub fn config_file(&self) -> PathBuf {
         self.config.join("config.toml")
     }
+
+    /// The soul.md of every companion set up here, sorted by path.
+    pub fn soul_files(&self) -> Result<Vec<PathBuf>> {
+        let entries = match std::fs::read_dir(&self.souls) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", self.souls.display())),
+        };
+        let mut souls = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().is_some_and(|e| e == "md") {
+                souls.push(path);
+            }
+        }
+        souls.sort();
+        Ok(souls)
+    }
 }
 
 /// `~/.config/clanka/config.toml`. Every part is optional.
@@ -58,6 +123,43 @@ impl Paths {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub model: Option<ModelConfig>,
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
+    /// Recall's tuning: any of [`Ranking`]'s fields; the rest keep their defaults.
+    #[serde(default)]
+    pub recall: Ranking,
+    #[serde(default)]
+    pub keys: KeysConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingConfig {
+    #[serde(default)]
+    pub model: Embedding,
+    /// Cosine similarity from which a new memory is refused as a copy of one
+    /// already kept. Another model spreads similar texts differently.
+    pub duplicate_similarity: Option<f32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeysConfig {
+    #[serde(default)]
+    pub store: KeyStore,
+}
+
+/// Where a new companion's database key is put.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeyStore {
+    /// The Secret Service (the login keychain on macOS).
+    #[default]
+    SecretService,
+    /// A file only you can read, `keys/<id>.key` beside config.toml, for a
+    /// machine with no Secret Service. Whoever can read your files can then
+    /// read the database too: the key no longer waits on your login.
+    File,
 }
 
 /// The model that powers the companion: one definition for every role.
@@ -104,17 +206,36 @@ fn os_store() -> keyring_core::Result<std::sync::Arc<keyring_core::CredentialSto
     Ok(apple_native_keyring_store::keychain::Store::new()?)
 }
 
-pub struct SecretServiceKeys;
+/// Where database keys are kept: the Secret Service, or a key file when you
+/// chose that in config.toml. A companion's key file wins when it exists,
+/// whatever the setting, so a companion moved here with its key still opens.
+pub struct Keys {
+    dir: PathBuf,
+    store: KeyStore,
+}
 
-impl SecretServiceKeys {
+impl Keys {
+    pub fn new(paths: &Paths, config: &Config) -> Self {
+        Self {
+            dir: paths.config.join("keys"),
+            store: config.keys.store,
+        }
+    }
+
+    fn file(&self, companion: Uuid) -> PathBuf {
+        self.dir.join(format!("{companion}.key"))
+    }
+
     fn entry(companion: Uuid) -> Result<keyring_core::Entry> {
         static STORE: std::sync::Once = std::sync::Once::new();
-        let mut failed = None;
+        static FAILED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         STORE.call_once(|| match os_store() {
             Ok(store) => keyring_core::set_default_store(store),
-            Err(e) => failed = Some(e),
+            Err(e) => {
+                let _ = FAILED.set(e.to_string());
+            }
         });
-        if let Some(e) = failed {
+        if let Some(e) = FAILED.get() {
             bail!("Secret Service unavailable: {e}");
         }
         Ok(keyring_core::Entry::new(
@@ -123,20 +244,101 @@ impl SecretServiceKeys {
         )?)
     }
 
-    pub fn store(companion: Uuid, key: &str) -> Result<()> {
-        Self::entry(companion)?
-            .set_password(key)
-            .context("storing the database key in the Secret Service")
+    /// The key from its file, if the companion has one.
+    fn read_file(&self, companion: Uuid) -> Result<Option<String>> {
+        let path = self.file(companion);
+        let key = match std::fs::read_to_string(&path) {
+            Ok(key) => key,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)?.permissions().mode();
+            if mode & 0o077 != 0 {
+                bail!(
+                    "{} can be read by other users; run `chmod 600` on it",
+                    path.display()
+                );
+            }
+        }
+        Ok(Some(key.trim().to_owned()))
+    }
+
+    pub fn store(&self, companion: Uuid, key: &str) -> Result<()> {
+        match self.store {
+            KeyStore::SecretService => Self::entry(companion)
+                .and_then(|entry| Ok(entry.set_password(key)?))
+                .context(
+                    "storing the database key in the Secret Service; on a machine without one, \
+                     put `[keys]` and `store = \"file\"` in config.toml",
+                ),
+            KeyStore::File => {
+                let path = self.file(companion);
+                write_private(&self.dir, &path, key)
+                    .with_context(|| format!("writing {}", path.display()))
+            }
+        }
+    }
+
+    /// Drops a key `store` put away, for a companion that was never set up
+    /// after all. Best effort: a key left behind opens nothing.
+    pub fn forget(&self, companion: Uuid) {
+        match self.store {
+            KeyStore::SecretService => {
+                if let Ok(entry) = Self::entry(companion) {
+                    let _ = entry.delete_credential();
+                }
+            }
+            KeyStore::File => {
+                let _ = std::fs::remove_file(self.file(companion));
+            }
+        }
     }
 }
 
-impl KeySource for SecretServiceKeys {
+/// Writes a file only its owner can read, in a directory only they can enter.
+/// Replaces an existing file.
+pub fn write_private(dir: &Path, path: &Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut dir_options = std::fs::DirBuilder::new();
+    dir_options.recursive(true);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        dir_options.mode(0o700);
+        options.mode(0o600);
+    }
+    dir_options.create(dir)?;
+    // Written whole and renamed: a key is never half there.
+    let partial = path.with_extension("part");
+    let _ = std::fs::remove_file(&partial);
+    let mut file = options.open(&partial)?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
+    std::fs::rename(&partial, path)
+}
+
+impl KeySource for Keys {
     fn key(&self, companion: Uuid) -> clanka_core::Result<String> {
         let err = |e: String| clanka_core::Error::Key(e);
+        if let Some(key) = self
+            .read_file(companion)
+            .map_err(|e| err(format!("{e:#}")))?
+        {
+            return Ok(key);
+        }
         Self::entry(companion)
-            .map_err(|e| err(e.to_string()))?
-            .get_password()
-            .map_err(|e| err(format!("no key for {companion} in the Secret Service: {e}")))
+            .and_then(|entry| Ok(entry.get_password()?))
+            .map_err(|e| {
+                err(format!(
+                    "no key for {companion} in the Secret Service ({e:#}) or in {}",
+                    self.file(companion).display()
+                ))
+            })
     }
 }
 
@@ -163,17 +365,20 @@ pub fn random_hex(bytes: usize) -> String {
 pub struct SharedEmbedder(Arc<FastEmbedder>);
 
 impl SharedEmbedder {
+    /// Loads the embedding model config.toml names.
     pub fn load(paths: &Paths) -> Result<Self> {
-        if !paths.models.join("model.onnx").exists() {
+        let embedding = Config::load(paths)?.embedding.model;
+        let dir = embedding.dir(paths);
+        if !dir.join("model.onnx").exists() {
             bail!(
-                "embedding model missing in {}; run `clanka init` to download it",
-                paths.models.display()
+                "embedding model missing in {}; run `clanka embedding`",
+                dir.display()
             );
         }
         Ok(Self(Arc::new(FastEmbedder::from_dir(
-            MODEL,
-            MODEL_ID,
-            &paths.models,
+            embedding.model(),
+            embedding.id(),
+            &dir,
         )?)))
     }
 }
@@ -213,13 +418,106 @@ pub fn open_with(
     embedder: SharedEmbedder,
     llm: Box<dyn Llm>,
 ) -> Result<Companion> {
+    let config = Config::load(paths)?;
+    let mut companion = Companion::open(&paths.data, soul, deps(paths, &config, embedder, llm)?)?;
+    // Plain messages, not core errors: a bad setting isn't a broken companion.
+    let config_file = paths.config_file();
+    let bad = |e: clanka_core::Error| anyhow::anyhow!("{}: {e}", config_file.display());
+    companion.set_ranking(config.recall).map_err(bad)?;
+    if let Some(similarity) = config.embedding.duplicate_similarity {
+        companion
+            .set_duplicate_similarity(similarity)
+            .map_err(bad)?;
+    }
+    Ok(companion)
+}
+
+/// The doctor's re-embed: opens a companion whose vectors came from another
+/// embedding model and rebuilds every one with `embedder`.
+pub fn reembed(paths: &Paths, soul: &Path, embedder: SharedEmbedder) -> Result<Companion> {
+    let deps = deps(paths, &Config::load(paths)?, embedder, Box::new(NoModel))?;
+    Ok(Companion::reembed(&paths.data, soul, deps)?)
+}
+
+fn deps(
+    paths: &Paths,
+    config: &Config,
+    embedder: SharedEmbedder,
+    llm: Box<dyn Llm>,
+) -> Result<Deps> {
     std::fs::create_dir_all(&paths.data)?;
-    let deps = Deps {
+    Ok(Deps {
         llm,
         embedder: Box::new(embedder),
         clock: Box::new(SystemClock),
         rng: Box::new(OsRng),
-        keys: Box::new(SecretServiceKeys),
-    };
-    Ok(Companion::open(&paths.data, soul, deps)?)
+        keys: Box::new(Keys::new(paths, config)),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(root: &Path) -> Paths {
+        Paths {
+            config: root.join("config"),
+            souls: root.join("config/souls"),
+            data: root.join("data"),
+            models: root.join("data/models"),
+        }
+    }
+
+    #[test]
+    fn config_reads_the_optional_sections() {
+        let config: Config = toml::from_str(
+            "[embedding]\nmodel = \"multilingual\"\nduplicate_similarity = 0.9\n\
+             [recall]\nlimit = 3\n\
+             [keys]\nstore = \"file\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.embedding.model, Embedding::Multilingual);
+        assert_eq!(config.embedding.duplicate_similarity, Some(0.9));
+        assert_eq!(config.recall.limit, 3);
+        // A field the file leaves out keeps its default.
+        assert_eq!(config.recall.seared_limit, Ranking::default().seared_limit);
+        assert_eq!(config.keys.store, KeyStore::File);
+
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(empty.embedding.model, Embedding::English);
+        assert_eq!(empty.keys.store, KeyStore::SecretService);
+        // A misspelt setting is an error, not silently ignored.
+        assert!(toml::from_str::<Config>("[recall]\nlimits = 3\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_file_is_private_and_refused_once_others_can_read_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths(root.path());
+        let config: Config = toml::from_str("[keys]\nstore = \"file\"\n").unwrap();
+        let keys = Keys::new(&paths, &config);
+        let id = Uuid::from_u128(7);
+
+        keys.store(id, "abc123").unwrap();
+        let file = paths.config.join(format!("keys/{id}.key"));
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(keys.key(id).unwrap(), "abc123");
+
+        // The file wins whatever config.toml says, so the Secret Service is never asked.
+        let keyring = Keys::new(&paths, &Config::default());
+        assert_eq!(keyring.key(id).unwrap(), "abc123");
+
+        // Storing again replaces the key.
+        keys.store(id, "def456").unwrap();
+        assert_eq!(keys.key(id).unwrap(), "def456");
+
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let err = keys.key(id).unwrap_err().to_string();
+        assert!(err.contains("chmod 600"), "{err}");
+    }
 }

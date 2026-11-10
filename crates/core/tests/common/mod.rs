@@ -79,6 +79,24 @@ impl Llm for FnLlm {
     }
 }
 
+/// A model that can be down: its closure returns the error the provider gave.
+type FallibleReply = Box<dyn FnMut(&LlmRequest) -> Result<LlmResponse> + Send>;
+struct FallibleLlm(Mutex<FallibleReply>);
+impl Llm for FallibleLlm {
+    fn complete(&self, request: &LlmRequest) -> Result<LlmResponse> {
+        (self.0.lock().unwrap())(request)
+    }
+}
+
+pub fn open_fallible(
+    f: &Fixture,
+    llm: impl FnMut(&LlmRequest) -> Result<LlmResponse> + Send + 'static,
+) -> Companion {
+    let mut deps = deps("k", "model-a");
+    deps.llm = Box::new(FallibleLlm(Mutex::new(Box::new(llm))));
+    Companion::open(f.dir.path(), &f.soul, deps).unwrap()
+}
+
 /// A model like [`FnLlm`] that only returns text, as a host's plugin model API
 /// with no function calling does, so the core asks it for JSON actions.
 pub struct TextOnlyLlm(FnLlm);

@@ -5,7 +5,7 @@
 //! even here: rollback leaves them and lists them, and re-interpretation
 //! refuses them. Only the CLI delete removes one.
 
-use crate::companion::{ensure_doctor, log, meta, set_meta};
+use crate::companion::{ensure_doctor, ensure_embedder, log, meta, set_meta};
 use crate::deps::{ToolCall, ToolSpec};
 use crate::memory::{Rewrite, remove_memory, rewrite_interpretation};
 use crate::model::Level;
@@ -153,6 +153,7 @@ impl Companion {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_embedder(&tx, self.deps.embedder.model_id())?;
         for (id, level) in born {
             if level == Level::Seared {
                 report.kept_seared.push(id);
@@ -424,6 +425,7 @@ impl Companion {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_doctor(&tx)?;
+        ensure_embedder(&tx, self.deps.embedder.model_id())?;
         let level: Level = tx
             .query_row(
                 "SELECT level FROM memories WHERE id = ?1",

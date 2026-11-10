@@ -5,7 +5,7 @@
 
 use crate::turn::{self, Begin, Pending};
 use anyhow::Result;
-use clanka_core::{Companion, Ranking};
+use clanka_core::Companion;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, PromptMessage, Role, ServerCapabilities, ServerConfig};
 use rmcp::{
@@ -156,9 +156,11 @@ impl Server {
     ) -> Result<String, String> {
         let (chat, pending) = (self.chat.clone(), self.pending.clone());
         blocking(move || {
-            let found = lock(&chat)
-                .recall(&query, &Ranking::default())
-                .map_err(|e| e.to_string())?;
+            let found = {
+                let chat = lock(&chat);
+                chat.recall(&query, chat.ranking())
+                    .map_err(|e| e.to_string())?
+            };
             if let Some(p) = lock(&pending).as_mut() {
                 p.recalled.extend(found.iter().map(|r| r.memory.id));
             }

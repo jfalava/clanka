@@ -63,7 +63,51 @@ fn burial_sinks_old_memories_and_recall_lifts_them_back() {
     let session = c.open_session().unwrap();
     c.mark_recalled(session, &[older]).unwrap();
     assert_eq!(ids(&c, "Laura?"), [older, newer]);
+    // Coming up again the same session, turn after turn, counts once.
+    c.mark_recalled(session, &[older]).unwrap();
     assert_eq!(c.memory(older).unwrap().recall_count, 1);
+    c.end_session(session, SessionEnd::Sleep).unwrap();
+    let next = c.open_session().unwrap();
+    c.mark_recalled(next, &[older]).unwrap();
+    assert_eq!(c.memory(older).unwrap().recall_count, 2);
+}
+
+#[test]
+fn settings_recall_cannot_work_with_are_refused() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let bad = [
+        Ranking {
+            faint_half_life: 0.0,
+            ..Ranking::default()
+        },
+        Ranking {
+            min_relevance: f64::NAN,
+            ..Ranking::default()
+        },
+        Ranking {
+            level_weights: [0.8, 1.0, -1.0, 1.3],
+            ..Ranking::default()
+        },
+    ];
+    for ranking in bad {
+        assert!(matches!(
+            c.recall("Laura?", &ranking),
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(c.set_ranking(ranking), Err(Error::Invalid(_))));
+    }
+    assert_eq!(c.ranking(), &Ranking::default());
+    // A negative threshold is fine: it lets everything through.
+    let open = Ranking {
+        min_relevance: -1.0,
+        ..Ranking::default()
+    };
+    c.set_ranking(open).unwrap();
+    for similarity in [0.0, -0.5, 1.5, f32::NAN] {
+        assert!(c.set_duplicate_similarity(similarity).is_err());
+    }
+    c.set_duplicate_similarity(1.0).unwrap();
 }
 
 #[test]
@@ -196,4 +240,29 @@ fn marking_recalls_respects_the_freeze() {
     assert_eq!(ids(&c, "Laura"), [id], "recall still works while frozen");
     assert!(matches!(c.mark_recalled(s, &[id]), Err(Error::Frozen)));
     assert_eq!(c.memory(id).unwrap().recall_count, 0);
+}
+
+/// Superseded versions keep their vectors, and hundreds of them are as near
+/// to the message as the memories that still count.
+#[test]
+fn an_active_memory_is_recalled_from_behind_hundreds_of_old_versions() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let fact = write(
+        &mut c,
+        MemoryType::UserFact,
+        Level::Normal,
+        "Laura plays cello",
+    );
+    let draft = |text: &str| MemoryDraft::new(MemoryType::Preference, Level::Normal, text);
+    let mut other = c.write(Actor::Writer, &draft("Laura likes fado")).unwrap();
+    for i in 0..300 {
+        let text = format!("Laura likes fado, take {i}");
+        other = c.supersede(Actor::Writer, other, &draft(&text)).unwrap();
+    }
+    let recalled = ids(&c, "How is Laura?");
+    assert!(
+        recalled.contains(&fact) && recalled.contains(&other),
+        "{recalled:?}"
+    );
 }

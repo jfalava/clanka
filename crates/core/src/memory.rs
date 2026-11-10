@@ -5,7 +5,7 @@
 //! very next write. Embeddings are computed before the transaction opens, so
 //! other processes never wait on the model.
 
-use crate::companion::{ensure_writable, log};
+use crate::companion::{ensure_embedder, ensure_writable, log};
 use crate::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Status, Urgency};
 use crate::{Companion, Error, Result};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -166,7 +166,17 @@ impl Companion {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_writable(&tx, &self.soul.hash)?;
-        let id = insert(&tx, actor, draft, &embedding, &self.soul.hash, now, None)?;
+        ensure_embedder(&tx, self.deps.embedder.model_id())?;
+        let id = insert(
+            &tx,
+            actor,
+            draft,
+            &embedding,
+            &self.soul.hash,
+            now,
+            None,
+            self.duplicate_similarity,
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -182,6 +192,7 @@ impl Companion {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_writable(&tx, &self.soul.hash)?;
+        ensure_embedder(&tx, self.deps.embedder.model_id())?;
         let (kind, status): (MemoryType, Status) = tx
             .query_row(
                 "SELECT type, status FROM memories WHERE id = ?1",
@@ -210,6 +221,7 @@ impl Companion {
             &self.soul.hash,
             now,
             Some(old),
+            self.duplicate_similarity,
         )?;
         tx.execute(
             "UPDATE memories SET status = 'superseded', superseded_by = ?1, updated_at = ?2 WHERE id = ?3",
@@ -346,6 +358,7 @@ impl Companion {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_writable(&tx, &self.soul.hash)?;
+        ensure_embedder(&tx, self.deps.embedder.model_id())?;
         let (level, status): (Level, Status) = tx
             .query_row(
                 "SELECT level, status FROM memories WHERE id = ?1",
@@ -489,18 +502,26 @@ impl Companion {
     }
 
     /// One vector as sqlite-vec's little-endian f32 blob.
+    ///
+    /// Refuses when the stored vectors no longer come from this handle's
+    /// model: the doctor re-embedded from another process since it opened, and
+    /// a vector from the old model would sit among the new ones as noise.
     pub(crate) fn embed(&self, text: &str) -> Result<Vec<u8>> {
-        let dimensions = self.deps.embedder.dimensions();
-        let vector = self
-            .deps
-            .embedder
+        let current = self.deps.embedder.model_id();
+        if let Some(stored) = crate::companion::meta(&self.conn, "embedder_model")?
+            && stored != current
+        {
+            return Err(Error::EmbedderChanged {
+                stored,
+                current: current.to_owned(),
+            });
+        }
+        let embedder = &self.deps.embedder;
+        let vector = embedder
             .embed(&[text])?
             .pop()
-            .filter(|v| v.len() == dimensions)
-            .ok_or_else(|| {
-                Error::Embedder(format!("expected one vector of {dimensions} dimensions"))
-            })?;
-        Ok(vector.iter().flat_map(|x| x.to_le_bytes()).collect())
+            .ok_or_else(|| Error::Embedder("expected one vector, got none".into()))?;
+        crate::companion::blob(&vector, embedder.dimensions())
     }
 }
 
@@ -601,6 +622,7 @@ pub(crate) fn ensure_open(conn: &Connection, session: i64) -> Result<()> {
 }
 
 /// `replaces` is left out of the duplicate check: a supersede is meant to be similar.
+#[allow(clippy::too_many_arguments)]
 fn insert(
     tx: &Transaction,
     actor: Actor,
@@ -609,6 +631,7 @@ fn insert(
     persona_hash: &str,
     now: i64,
     replaces: Option<i64>,
+    duplicate_similarity: f32,
 ) -> Result<i64> {
     let mut turns = draft.source_turns.clone();
     turns.sort_unstable();
@@ -622,22 +645,21 @@ fn insert(
         }
     }
 
-    // The nearest neighbours by cosine, then the type and status filters. A
-    // copy would sit at the very top, so a few dozen candidates are plenty.
+    // Compared against every active memory of the type, not the nearest few of
+    // all vectors: superseded and other-type memories can crowd a copy out of
+    // those. One type's active memories are few enough to read each vector.
     let nearest: Option<(i64, f64)> = tx
         .query_row(
-            "WITH knn AS MATERIALIZED (
-               SELECT memory_id AS id, distance FROM memory_vectors
-               WHERE embedding MATCH ?1 AND k = 32)
-             SELECT m.id, 1 - knn.distance FROM knn JOIN memories m ON m.id = knn.id
+            "SELECT m.id, 1 - vec_distance_cosine(v.embedding, ?1) AS similarity
+             FROM memories m JOIN memory_vectors v ON v.memory_id = m.id
              WHERE m.status = 'active' AND m.type = ?2 AND m.id IS NOT ?3
-             ORDER BY knn.distance LIMIT 1",
+             ORDER BY similarity DESC LIMIT 1",
             params![embedding, draft.kind, replaces],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
     if let Some((existing, similarity)) = nearest
-        && similarity as f32 >= DUPLICATE_SIMILARITY
+        && similarity as f32 >= duplicate_similarity
     {
         return Err(Error::Duplicate {
             existing,

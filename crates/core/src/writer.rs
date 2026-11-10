@@ -12,8 +12,8 @@ use crate::companion::ensure_writable;
 use crate::deps::{LlmMessage, LlmRequest, Role, ToolCall, ToolSpec};
 use crate::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
 use crate::soul::Soul;
-use crate::{Companion, Error, Memory, MemoryDraft, Mood, Ranking, Result};
-use rusqlite::OptionalExtension;
+use crate::{Companion, Error, Memory, MemoryDraft, Mood, Result};
+use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -35,11 +35,25 @@ pub const LEFT_OUT: &str = "left out";
 /// The writer is a careful bookkeeper, not a performer.
 const TEMPERATURE: f32 = 0.2;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Earlier exchanges of the session one reflection catches up on when theirs
+/// failed. A few at a time: each is a model call made before the current one.
+pub const CATCH_UP: usize = 2;
+
+/// Times an exchange's reflection is tried before it is given up on. A try
+/// that failed because the model couldn't be reached doesn't count.
+pub const REFLECTION_ATTEMPTS: i64 = 3;
+
+/// A reflection claimed this long ago and never finished was cut off (the
+/// process exited), not still running: no reflection takes half an hour.
+const STALE_CLAIM_MS: i64 = 30 * 60 * 1000;
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Reflection {
     /// Model calls made, at most [`MAX_ROUNDS`].
     pub rounds: usize,
     pub calls: Vec<ToolOutcome>,
+    /// Earlier exchanges whose failed reflection was made up for first.
+    pub caught_up: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,19 +67,144 @@ pub struct ToolOutcome {
 impl Companion {
     /// Reflects on one exchange: the user's turn and the companion's reply, both already recorded.
     /// Long-running (it calls the model); run it after the reply, off the hot path.
+    ///
+    /// An exchange is reflected on once: a second call for one already done, or
+    /// one another handle is on right now, does nothing. When the reflection on
+    /// an earlier exchange of the same session failed, up to [`CATCH_UP`] of
+    /// those are made up for first, oldest first.
     pub fn reflect(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
         // Fail before paying for a model call.
         ensure_writable(&self.conn, &self.soul.hash)?;
-        let said = self.turn_text(user_turn, Speaker::User)?;
-        let replied = self.turn_text(companion_turn, Speaker::Companion)?;
-
-        let exchange = [user_turn, companion_turn];
-        let prompt = self.reflection_prompt(&exchange, &said, &replied)?;
-        let system = reflection_system(&self.soul);
-        let spoken = format!("{said}\n{replied}");
-        self.tool_loop(system, prompt, tool_specs(), MAX_CALLS, |c, call| {
-            c.run_tool(call, &exchange, &spoken)
+        let mut caught_up = 0;
+        for (user, companion) in self.missed_reflections(companion_turn)? {
+            match self.reflect_once(user, companion) {
+                // Zero rounds: another handle was already on it.
+                Ok(done) => caught_up += usize::from(done.rounds > 0),
+                Err(Error::Frozen) => return Err(Error::Frozen),
+                // Most likely the model is down: the exchange stays marked as
+                // failed for a later catch-up, and the current one still gets
+                // its try.
+                Err(_) => break,
+            }
+        }
+        let reflection = self.reflect_once(user_turn, companion_turn)?;
+        Ok(Reflection {
+            caught_up,
+            ..reflection
         })
+    }
+
+    fn reflect_once(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
+        let (mut exchange, said) = self.said_before(user_turn, companion_turn)?;
+        let replied = self.turn_text(companion_turn, Speaker::Companion)?;
+        let Some(claimed) = self.claim_reflection(user_turn, companion_turn)? else {
+            return Ok(Reflection::default());
+        };
+        exchange.push(companion_turn);
+        let spoken = format!("{said}\n{replied}");
+        let result = self
+            .reflection_prompt(&exchange, &said, &replied)
+            .and_then(|prompt| {
+                let system = reflection_system(&self.soul);
+                self.tool_loop(system, prompt, tool_specs(), MAX_CALLS, |c, call| {
+                    c.run_tool(call, &exchange, &spoken)
+                })
+            });
+        let (state, refund) = match &result {
+            Ok(_) => ("done", 0),
+            // Not the exchange's failure, so the try doesn't count: the doctor
+            // froze memory, or the model can't be reached. An outage lasts
+            // several exchanges, and counting it gave up on each within three.
+            Err(Error::Frozen | Error::Llm(_)) => ("failed", 1),
+            Err(_) => ("failed", 0),
+        };
+        // Only while the claim is still this one: a reflection that ran past
+        // the stale limit was taken over, and the other handle's result stands.
+        self.conn.execute(
+            "UPDATE reflections SET state = ?2, attempts = attempts - ?3, updated_at = ?4
+             WHERE companion_turn_id = ?1 AND state = 'running' AND updated_at = ?5",
+            params![
+                companion_turn,
+                state,
+                refund,
+                self.deps.clock.now_ms(),
+                claimed
+            ],
+        )?;
+        result
+    }
+
+    /// What the user said that `companion_turn` replied to: `user_turn`, and
+    /// before it any message of theirs that never got a reply (the model
+    /// failed), which no other exchange would cover. The turn IDs and the text.
+    fn said_before(&self, user_turn: i64, companion_turn: i64) -> Result<(Vec<i64>, String)> {
+        let last = self.turn_text(user_turn, Speaker::User)?;
+        let turns: Vec<(i64, String)> = self
+            .conn
+            .prepare(
+                "SELECT u.id, u.content FROM turns u JOIN turns c ON c.id = ?1
+                 WHERE u.session_id = c.session_id AND u.role = 'user' AND u.id < c.id
+                   AND u.id > coalesce((SELECT max(p.id) FROM turns p
+                                        WHERE p.session_id = c.session_id AND p.id < c.id
+                                          AND p.role = 'companion'), 0)
+                 ORDER BY u.id",
+            )?
+            .query_map([companion_turn], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        // A caller pairing a reply with some other message gets just that pair.
+        if turns.last().is_none_or(|(id, _)| *id != user_turn) {
+            return Ok((vec![user_turn], last));
+        }
+        let (ids, texts): (Vec<i64>, Vec<String>) = turns.into_iter().unzip();
+        Ok((ids, texts.join("\n")))
+    }
+
+    /// Marks the exchange as being reflected on and returns when. None when it
+    /// already was, or another handle is on it now.
+    fn claim_reflection(&mut self, user_turn: i64, companion_turn: i64) -> Result<Option<i64>> {
+        let now = self.deps.clock.now_ms();
+        let claimed = self.conn.execute(
+            "INSERT INTO reflections (companion_turn_id, user_turn_id, state, attempts, updated_at)
+             VALUES (?1, ?2, 'running', 1, ?3)
+             ON CONFLICT (companion_turn_id) DO UPDATE
+               SET state = 'running', attempts = attempts + 1, updated_at = ?3
+               WHERE state = 'failed' OR (state = 'running' AND updated_at < ?4)",
+            params![companion_turn, user_turn, now, now - STALE_CLAIM_MS],
+        )?;
+        Ok((claimed == 1).then_some(now))
+    }
+
+    /// Exchanges of `companion_turn`'s session before it whose reflection never
+    /// ran or failed, and hasn't been tried [`REFLECTION_ATTEMPTS`] times. An
+    /// exchange is named by a reply and the user's last message before it.
+    fn missed_reflections(&self, companion_turn: i64) -> Result<Vec<(i64, i64)>> {
+        let now = self.deps.clock.now_ms();
+        Ok(self
+            .conn
+            .prepare(
+                "SELECT u.id, c.id FROM turns c
+                 JOIN turns u ON u.id = (SELECT max(p.id) FROM turns p
+                                         WHERE p.session_id = c.session_id AND p.id < c.id
+                                           AND p.role = 'user')
+                 LEFT JOIN reflections r ON r.companion_turn_id = c.id
+                 WHERE c.role = 'companion' AND c.id < ?1
+                   AND c.session_id = (SELECT session_id FROM turns WHERE id = ?1)
+                   AND (r.companion_turn_id IS NULL
+                        OR (r.attempts < ?2
+                            AND (r.state = 'failed'
+                                 OR (r.state = 'running' AND r.updated_at < ?3))))
+                 ORDER BY c.id LIMIT ?4",
+            )?
+            .query_map(
+                params![
+                    companion_turn,
+                    REFLECTION_ATTEMPTS,
+                    now - STALE_CLAIM_MS,
+                    CATCH_UP as i64
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     /// Calls the model with tools for up to [`MAX_ROUNDS`] rounds, running each
@@ -163,8 +302,11 @@ impl Companion {
                         ok: true,
                         result: format!("ok: {done}"),
                     },
-                    // A freeze from another process mid-reflection stops it at once.
-                    Err(Error::Frozen) => return Err(Error::Frozen),
+                    // A freeze from another process mid-reflection stops it at
+                    // once, and so does anything else the model can't fix: told
+                    // about it, it would give up and the exchange would count
+                    // as reflected on.
+                    Err(e) if not_the_models_doing(&e) => return Err(e),
                     Err(e) => ToolOutcome {
                         name: call.name.clone(),
                         ok: false,
@@ -198,7 +340,11 @@ impl Companion {
                 )));
             }
         }
-        Ok(Reflection { rounds, calls })
+        Ok(Reflection {
+            rounds,
+            calls,
+            caught_up: 0,
+        })
     }
 
     fn turn_text(&self, id: i64, speaker: Speaker) -> Result<String> {
@@ -220,7 +366,7 @@ impl Companion {
 
     /// What the companion knows going in: soul sections, mood, open threads and
     /// the memories this exchange brings up, each with the ID its tools need.
-    fn reflection_prompt(&self, exchange: &[i64; 2], said: &str, replied: &str) -> Result<String> {
+    fn reflection_prompt(&self, exchange: &[i64], said: &str, replied: &str) -> Result<String> {
         let mut out = Vec::new();
         for section in [Section::AboutUser, Section::Relationship] {
             let content = self.section(section)?.unwrap_or_default();
@@ -237,10 +383,15 @@ impl Companion {
             ),
             None => "Your mood: not set yet.".into(),
         });
-        let threads: Vec<String> = self.open_threads()?.iter().map(listing).collect();
+        let today = self.today();
+        let threads: Vec<String> = self
+            .open_threads()?
+            .iter()
+            .map(|m| listing(m, today))
+            .collect();
         out.push(format!("Open threads:\n{}", or_none(&threads.join("\n"))));
-        let recalled = self.recall(&format!("{said}\n{replied}"), &Ranking::default())?;
-        let memories: Vec<String> = recalled.iter().map(|r| listing(&r.memory)).collect();
+        let recalled = self.recall(&format!("{said}\n{replied}"), self.ranking())?;
+        let memories: Vec<String> = recalled.iter().map(|r| listing(&r.memory, today)).collect();
         out.push(format!(
             "Memories this brings up, already kept (the same thing again is supersede or \
              raise_level, not remember):\n{}",
@@ -251,11 +402,15 @@ impl Companion {
         // The user's name, once known, labels their turn: a small model given
         // only "they" picked a gender from the people being talked about.
         let who = self.user_name()?.unwrap_or_else(|| "they".into());
+        let (reply, theirs) = exchange
+            .split_last()
+            .expect("an exchange ends with the reply");
+        let theirs: Vec<String> = theirs.iter().map(i64::to_string).collect();
         out.push(format!(
             "What {who} said (turn {}), the only source for facts and for anything they did or \
-             said:\n{said}\n\nWhat you replied (turn {}), your words: a question you asked is not \
-             something they answered, and a guess you made is not a fact:\n{replied}",
-            exchange[0], exchange[1]
+             said:\n{said}\n\nWhat you replied (turn {reply}), your words: a question you asked \
+             is not something they answered, and a guess you made is not a fact:\n{replied}",
+            theirs.join(", ")
         ));
         // Last, where a small model weighs it most: the expected size of the reply.
         out.push("Keep what this earns: one call is usual, none is common, three is a lot.".into());
@@ -292,9 +447,11 @@ impl Companion {
         ids.into_iter().map(|id| self.memory(id)).collect()
     }
 
-    /// Runs one tool call and says what happened, for the model. `spoken` is
-    /// the exchange's text, which every fact must be quoted from.
-    fn run_tool(&mut self, call: &ToolCall, exchange: &[i64; 2], spoken: &str) -> Result<String> {
+    /// Runs one tool call and says what happened, for the model. `exchange` is
+    /// the user's turns and last the reply; `spoken` is their text, which every
+    /// fact must be quoted from.
+    fn run_tool(&mut self, call: &ToolCall, exchange: &[i64], spoken: &str) -> Result<String> {
+        let reply = *exchange.last().expect("an exchange ends with the reply");
         let w = Actor::Writer;
         match call.name.as_str() {
             "remember" => {
@@ -354,12 +511,12 @@ impl Companion {
             }
             "pushed_back" => {
                 let a: PushedBack = args(call)?;
-                self.record_pushback(w, exchange[1], a.on_core_value, &a.about)?;
+                self.record_pushback(w, reply, a.on_core_value, &a.about)?;
                 Ok("pushback recorded".into())
             }
             "leave_note" => {
                 let a: LeaveNote = args(call)?;
-                self.write_turn_note(w, exchange[1], &a.note)?;
+                self.write_turn_note(w, reply, &a.note)?;
                 Ok("note left".into())
             }
             other => Err(Error::Invalid(format!("there is no tool called {other:?}"))),
@@ -424,14 +581,20 @@ fn instructions(name: &str) -> String {
     )
 }
 
-pub(crate) fn listing(m: &Memory) -> String {
+/// One memory as the writer reads it. With `today`, also how long ago it was
+/// kept, so an old thread or a stale fact shows its age.
+pub(crate) fn listing(m: &Memory, today: Option<i64>) -> String {
     let facts = if m.facts.is_empty() {
         String::new()
     } else {
         format!(" facts {}", Value::Object(m.facts.clone()))
     };
+    let age = today
+        .and_then(|now| crate::context::age(now, m.created_at))
+        .map(|age| format!(", {age}"))
+        .unwrap_or_default();
     format!(
-        "#{} [{}, {}] {}{facts}",
+        "#{} [{}, {}{age}] {}{facts}",
         m.id,
         m.kind.as_str(),
         m.level.as_str(),
@@ -480,7 +643,7 @@ impl MemoryArgs {
         self,
         kind: MemoryType,
         level: Level,
-        exchange: &[i64; 2],
+        exchange: &[i64],
         spoken: &str,
     ) -> Result<(MemoryDraft, String)> {
         let mut facts = Map::new();
@@ -509,6 +672,24 @@ impl MemoryArgs {
         draft.valence = self.valence;
         draft.strength = self.strength;
         Ok((draft, note))
+    }
+}
+
+/// A tool call that failed because of where it ran, not what it asked for: a
+/// freeze, a changed persona or embedding model, a busy or broken database.
+/// The schema refusing a value (a constraint) is the model's to correct.
+fn not_the_models_doing(e: &Error) -> bool {
+    match e {
+        Error::Sqlite(e) => e
+            .sqlite_error_code()
+            .is_some_and(|code| code != rusqlite::ErrorCode::ConstraintViolation),
+        Error::Frozen
+        | Error::Archived
+        | Error::PersonaUnresolved
+        | Error::EmbedderChanged { .. }
+        | Error::Embedder(_)
+        | Error::Io { .. } => true,
+        _ => false,
     }
 }
 

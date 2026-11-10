@@ -12,8 +12,8 @@
 
 use clanka::setup::{self, Paths, SharedEmbedder};
 use clanka::turn::{self, Begin, Pending};
+use clanka_core::Companion;
 use clanka_core::deps::{Llm, LlmRequest, LlmResponse, Role};
-use clanka_core::{Companion, Ranking};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -193,9 +193,10 @@ impl PyCompanion {
     /// Memories for a deliberate attempt to remember, as interpretations.
     fn recall(&self, py: Python<'_>, query: &str) -> PyResult<Vec<String>> {
         py.detach(|| {
-            let found = lock(&self.chat)
-                .recall(query, &Ranking::default())
-                .map_err(err)?;
+            let found = {
+                let chat = lock(&self.chat);
+                chat.recall(query, chat.ranking()).map_err(err)?
+            };
             if let Some(p) = lock(&self.pending).as_mut() {
                 p.recalled.extend(found.iter().map(|r| r.memory.id));
             }

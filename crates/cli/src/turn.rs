@@ -1,13 +1,13 @@
 //! One exchange as a host sees it: `begin` before the model replies, `end`
-//! after. Shared by every front end where the host owns the conversation (MCP,
-//! the Hermes extension), so the doctor token and freeze behave the same in all.
+//! after. Shared by every front end (MCP, the Hermes extension, and `clanka
+//! chat` through `open`), so the doctor token and freeze behave the same in all.
 //!
 //! Such a host replays everything it was given on every later turn, so a turn
 //! carries only what the model hasn't seen this session: the first turn gets
 //! the whole context, later ones only what changed and memories new tonight.
 
 use clanka_core::model::Speaker;
-use clanka_core::{Companion, Context, Ranking, Result};
+use clanka_core::{Companion, Context, Result};
 
 /// The turn `begin` opened and `end` closes.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,20 +66,42 @@ pub fn stretch_hint(paragraphs: u32) -> String {
     )
 }
 
+/// A turn opened with its whole [`Context`], for a front end that builds the
+/// model's prompt itself (`clanka chat`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Opened {
+    /// See [`Begin::Doctor`].
+    Doctor,
+    /// See [`Begin::Frozen`].
+    Frozen,
+    Open(Box<Open>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Open {
+    pub context: Context,
+    /// The message as recorded: without a `>>N` marker.
+    pub message: String,
+    /// Paragraphs a `>>N` marker asked for.
+    pub stretch: Option<u32>,
+    pub pending: Pending,
+}
+
 /// Checks for the doctor token, assembles the turn's memory and records the
 /// user's message. `first` is true on the host conversation's first turn, when
 /// the model has seen nothing yet and gets the whole context; a clanka session
 /// outlives host conversations, so the host must say.
-pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Begin> {
+pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Opened> {
     if c.soul().is_doctor_token(message) {
         c.set_frozen(true)?;
-        return Ok(Begin::Doctor);
+        return Ok(Opened::Doctor);
     }
     if c.is_frozen()? {
-        return Ok(Begin::Frozen);
+        return Ok(Opened::Frozen);
     }
     let (stretch, message) = stretch(message);
-    let mut context = c.assemble(message, budget, &Ranking::default())?;
+    let ranking = c.ranking().clone();
+    let mut context = c.assemble(message, budget, &ranking)?;
     if !first {
         c.keep_new(&mut context)?;
     }
@@ -91,9 +113,29 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
         .chain(context.memories.iter().map(|r| &r.memory))
         .map(|m| m.id)
         .collect();
-    let mut context = render(context);
+    Ok(Opened::Open(Box::new(Open {
+        context,
+        message: message.to_owned(),
+        stretch,
+        pending: Pending {
+            session,
+            user_turn,
+            recalled,
+        },
+    })))
+}
+
+/// [`open`] for a host that keeps the persona and the history itself: the
+/// turn's memory comes back as one text to put in front of the model.
+pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Begin> {
+    let open = match open(c, message, budget, first)? {
+        Opened::Doctor => return Ok(Begin::Doctor),
+        Opened::Frozen => return Ok(Begin::Frozen),
+        Opened::Open(open) => *open,
+    };
+    let mut context = render(open.context);
     // Added after `keep_new`, so even a turn with nothing new carries it.
-    if let Some(n) = stretch {
+    if let Some(n) = open.stretch {
         if !context.is_empty() {
             context.push_str("\n\n");
         }
@@ -101,11 +143,7 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
     }
     Ok(Begin::Open {
         context,
-        pending: Pending {
-            session,
-            user_turn,
-            recalled,
-        },
+        pending: open.pending,
     })
 }
 

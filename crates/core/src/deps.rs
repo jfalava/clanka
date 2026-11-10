@@ -23,6 +23,17 @@ pub struct Deps {
 pub trait Llm: Send + Sync {
     fn complete(&self, request: &LlmRequest) -> Result<LlmResponse>;
 
+    /// Like [`Llm::complete`], but hands the reply's text to `on_text` piece by
+    /// piece as it arrives, so a terminal can show it being written. A model
+    /// with nothing to stream hands over the whole reply at once.
+    fn stream(&self, request: &LlmRequest, on_text: &mut dyn FnMut(&str)) -> Result<LlmResponse> {
+        let response = self.complete(request)?;
+        if !response.text.is_empty() {
+            on_text(&response.text);
+        }
+        Ok(response)
+    }
+
     /// Whether the model takes `tools` and answers with `tool_calls`. A host
     /// whose model API only returns text says no; the core then asks for the
     /// same calls as one JSON object of actions and runs them through the same

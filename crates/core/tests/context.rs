@@ -272,3 +272,46 @@ fn the_companion_lets_go_at_its_pushback_limit_but_never_on_core_values() {
     c.record_turn(s, Speaker::User, "ok").unwrap();
     assert_eq!(c.pushback_pressure().unwrap(), (0, 3));
 }
+
+#[test]
+fn a_soul_with_a_sense_of_time_knows_how_long_ago_it_kept_something() {
+    use clanka_core::context::age;
+    const DAY: i64 = 24 * 60 * 60 * 1000;
+    let ago = |days: i64| age(days * DAY, 0);
+    assert_eq!(age(DAY - 1, 0), None);
+    assert_eq!(ago(1).as_deref(), Some("yesterday"));
+    assert_eq!(ago(13).as_deref(), Some("13 days ago"));
+    assert_eq!(ago(14).as_deref(), Some("2 weeks ago"));
+    assert_eq!(ago(60).as_deref(), Some("8 weeks ago"));
+    assert_eq!(ago(61).as_deref(), Some("2 months ago"));
+    assert_eq!(ago(365).as_deref(), Some("12 months ago"));
+    assert_eq!(ago(800).as_deref(), Some("2 years ago"));
+
+    use clanka_core::context::date;
+    assert_eq!(date(0), "1970-01-01");
+    assert_eq!(date(-1), "1969-12-31");
+    assert_eq!(date(1_709_164_800_000), "2024-02-29");
+    assert_eq!(date(978_307_199_999), "2000-12-31");
+    assert_eq!(date(1_794_268_800_000), "2026-11-10");
+
+    let kept = |time_sense: bool| {
+        let f = fixture();
+        if !time_sense {
+            let soul = std::fs::read_to_string(&f.soul).unwrap();
+            assert!(soul.contains("time_sense = true"));
+            std::fs::write(
+                &f.soul,
+                soul.replace("time_sense = true", "time_sense = false"),
+            )
+            .unwrap();
+        }
+        let clk = common::clock();
+        let mut c = common::open_full(&f, |_| Default::default(), clk.clone());
+        let draft = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Laura plays cello");
+        c.write(Actor::Writer, &draft).unwrap();
+        clk.fetch_add(21 * DAY, std::sync::atomic::Ordering::SeqCst);
+        assemble(&c, 4000).render()
+    };
+    assert!(kept(true).contains("- (3 weeks ago) Laura plays cello"));
+    assert!(kept(false).contains("- Laura plays cello"));
+}

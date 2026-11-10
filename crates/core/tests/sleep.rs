@@ -509,3 +509,39 @@ fn a_long_episode_is_a_retelling_and_goes_back_to_be_shortened() {
         "A good night, and I said so."
     );
 }
+
+/// A session can outgrow the model's window; the prompt then carries the
+/// latest turns and says how many it left out, and no turn runs on forever.
+#[test]
+fn a_long_night_is_told_from_its_latest_turns() {
+    let f = fixture();
+    let prompts: Arc<Mutex<Vec<String>>> = Arc::default();
+    let night = vec![episode("We talked until the birds started.")];
+    let mut c = open_full(&f, sleeper(vec![night], prompts.clone()), clock());
+    let session = c.open_session().unwrap();
+    let filler = "word ".repeat(600); // 3000 characters, about 1000 tokens
+    for i in 0..40 {
+        let said = format!("turn {i} {filler}");
+        c.record_turn(session, Speaker::User, &said).unwrap();
+    }
+    let pasted = format!("pasted {}", "x".repeat(50_000));
+    c.record_turn(session, Speaker::User, &pasted).unwrap();
+    c.record_turn(session, Speaker::Companion, "the last word")
+        .unwrap();
+    c.sleep(session).unwrap();
+
+    let prompt = prompts.lock().unwrap()[0].clone();
+    assert!(prompt.contains("turn 39 ") && prompt.contains("the last word"));
+    assert!(!prompt.contains("turn 0 "));
+    assert!(
+        prompt.contains("turns before this are left out"),
+        "{prompt}"
+    );
+    // 42 000 tokens of turns went in; what is left fits the budget and its framing.
+    let tokens = clanka_core::context::estimate_tokens(&prompt);
+    assert!(
+        tokens <= clanka_core::sleep::TRANSCRIPT_TOKENS + 500,
+        "{tokens}"
+    );
+    assert!(prompt.contains("xxx […]") && !prompt.contains(&"x".repeat(7000)));
+}

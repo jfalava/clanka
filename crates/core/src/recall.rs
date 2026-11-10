@@ -7,13 +7,14 @@
 
 use crate::companion::{ensure_writable, log};
 use crate::model::{Actor, Level, MemoryType};
-use crate::{Companion, Memory, Result};
+use crate::{Companion, Error, Memory, Result};
 use rusqlite::{TransactionBehavior, params};
 use serde_json::json;
 
 /// The tuning surface for recall. The defaults are first guesses; tune them
 /// against real conversations.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Ranking {
     /// Most memories returned per turn.
     pub limit: usize,
@@ -58,9 +59,49 @@ impl Default for Ranking {
     }
 }
 
-/// Nearest neighbours considered per recall. A memory outside them is too far
-/// in meaning to pass `min_relevance` anyway.
-const CANDIDATES: usize = 256;
+impl Ranking {
+    /// Refuses values that would make recall fail or rank nonsense: a number
+    /// that isn't one, a negative weight, a half-life that isn't above zero.
+    pub fn check(&self) -> Result<()> {
+        for (name, value) in [
+            ("min_relevance", self.min_relevance),
+            ("min_score", self.min_score),
+        ] {
+            if !value.is_finite() {
+                return Err(Error::Invalid(format!("recall {name} is {value}")));
+            }
+        }
+        let at_least_zero = [
+            ("fts_weight", self.fts_weight),
+            ("mood_weight", self.mood_weight),
+            ("thread_boost", self.thread_boost),
+            ("vivid_floor", self.vivid_floor),
+            ("level_weights[0]", self.level_weights[0]),
+            ("level_weights[1]", self.level_weights[1]),
+            ("level_weights[2]", self.level_weights[2]),
+            ("level_weights[3]", self.level_weights[3]),
+        ];
+        let above_zero = [
+            ("faint_half_life", self.faint_half_life),
+            ("normal_half_life", self.normal_half_life),
+        ];
+        for (name, value) in at_least_zero {
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(Error::Invalid(format!(
+                    "recall {name} is {value}; it must be 0 or more"
+                )));
+            }
+        }
+        for (name, value) in above_zero {
+            if !(value.is_finite() && value > 0.0) {
+                return Err(Error::Invalid(format!(
+                    "recall {name} is {value}; it must be above 0"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recalled {
@@ -86,8 +127,15 @@ impl Companion {
     /// not yet recorded; the query adds your previous user turns from the open
     /// session, up to the soul's `recall_window` messages in all.
     pub fn recall(&self, message: &str, ranking: &Ranking) -> Result<Vec<Recalled>> {
-        let query = self.recall_query(message)?;
-        let embedding = self.embed(&query)?;
+        self.search(&self.recall_query(message)?, ranking)
+    }
+
+    /// What `query` alone brings up, whatever was said in the open session:
+    /// [`Companion::recall`] without the earlier messages. For looking into
+    /// recall and measuring a [`Ranking`]; a turn uses `recall`.
+    pub fn search(&self, query: &str, ranking: &Ranking) -> Result<Vec<Recalled>> {
+        ranking.check()?;
+        let embedding = self.embed(query)?;
         let mood = self.mood()?.map(|m| m.valence);
         let newest: i64 =
             self.conn
@@ -95,24 +143,25 @@ impl Companion {
                     r.get(0)
                 })?;
 
-        let fts = fts_query(&query);
+        let fts = fts_query(query);
         let fts_cte = if fts.is_some() {
             "SELECT rowid AS id, bm25(memories_fts) AS rank FROM memories_fts
              WHERE memories_fts MATCH ?2 ORDER BY rank LIMIT 64"
         } else {
             "SELECT NULL AS id, NULL AS rank WHERE 0 AND ?2 IS NULL"
         };
-        // Nearest neighbours by cosine first, then the filters. Superseded
-        // memories can take some of the slots, which a wide `k` absorbs.
+        // Every active memory is a candidate, each scored against the query:
+        // nearest-neighbour search runs before any filter, so superseded
+        // memories took its slots and a full-text match outside them was lost.
+        // vec0 has no index, so both read every vector; scoring them all here
+        // is slower (about 26 ms against 3 ms at 3,000 memories) and still
+        // far below what a turn's model call takes.
         let sql = format!(
-            "WITH fts AS MATERIALIZED ({fts_cte}),
-             knn AS MATERIALIZED (
-               SELECT memory_id AS id, distance FROM memory_vectors
-               WHERE embedding MATCH ?1 AND k = {CANDIDATES})
+            "WITH fts AS MATERIALIZED ({fts_cte})
              SELECT m.id, m.type, m.level, m.valence, m.recall_count, m.resolved_at IS NOT NULL,
-                    1 - knn.distance, fts.rank
-             FROM knn
-             JOIN memories m ON m.id = knn.id
+                    1 - vec_distance_cosine(v.embedding, ?1), fts.rank
+             FROM memories m
+             JOIN memory_vectors v ON v.memory_id = m.id
              LEFT JOIN fts ON fts.id = m.id
              WHERE m.status = 'active'"
         );
@@ -171,8 +220,9 @@ impl Companion {
         Ok(recalled)
     }
 
-    /// Records that these memories came up in a session: each recall slows their
-    /// burial, and sleep drifts only memories recalled that session.
+    /// Records that these memories came up in a session: each session a memory
+    /// comes up in slows its burial, however many turns of it, and sleep drifts
+    /// only memories recalled that session.
     pub fn mark_recalled(&mut self, session: i64, ids: &[i64]) -> Result<()> {
         let now = self.deps.clock.now_ms();
         let tx = self
@@ -181,7 +231,8 @@ impl Companion {
         ensure_writable(&tx, &self.soul.hash)?;
         for id in ids {
             tx.execute(
-                "UPDATE memories SET recall_count = recall_count + 1, last_recalled_session = ?1
+                "UPDATE memories SET recall_count = recall_count + (last_recalled_session IS NOT ?1),
+                   last_recalled_session = ?1
                  WHERE id = ?2",
                 [session, *id],
             )?;

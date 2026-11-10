@@ -1,16 +1,19 @@
 //! `clanka`: set up companions, check their souls and serve them over MCP.
 
 use anyhow::{Context, Result, bail};
-use clanka::setup::{
-    self, Config, MODEL_FILES, MODEL_REPO, Paths, SecretServiceKeys, SharedEmbedder,
-};
+use clanka::setup::{self, Config, Embedding, Keys, Paths, SharedEmbedder};
 use clanka_core::PersonaStatus;
 use clanka_core::soul::Soul;
 use clap::{Parser, Subcommand};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+mod doctor;
 mod hermes;
+mod probe;
+mod transfer;
+
+use doctor::DoctorCommand;
 
 #[derive(Parser)]
 #[command(
@@ -23,7 +26,8 @@ mod hermes;
         the companion through `clanka chat` or serve it to an MCP host with `clanka mcp`.",
     after_long_help = "Files (Linux):\n  \
         ~/.config/clanka/souls/<id>.md   each companion's soul.md\n  \
-        ~/.config/clanka/config.toml     the [model] chat and memory writing run on\n  \
+        ~/.config/clanka/config.toml     the [model] chat and memory writing run on, and\n\
+        \x20                                  optional [recall], [embedding] and [keys] settings\n  \
         ~/.local/share/clanka/           the databases and the embedding model\n\n\
         Every command explains itself: `clanka help <command>`, `clanka <command> help` or \
         `clanka <command> --help`."
@@ -42,6 +46,10 @@ enum Command {
     /// downloads the embedding model if it is missing. The database itself is created the
     /// first time the companion opens. Prints the soul.md path that every other command
     /// takes.
+    ///
+    /// On a machine with no Secret Service, put `[keys]` and `store = "file"` in
+    /// ~/.config/clanka/config.toml first: the key then goes in a file only you can read,
+    /// ~/.config/clanka/keys/<id>.key.
     #[command(after_long_help = "Example:\n  clanka init Nova\n  \
         clanka init Nova --from body.md     # a persona you or a model already wrote")]
     Init {
@@ -69,11 +77,15 @@ enum Command {
     },
     /// The doctor's tools for when a companion's memory goes wrong.
     ///
-    /// Freeze the companion first: while it is frozen nothing writes to its memory, and the
-    /// doctor's destructive commands refuse to run unless it is. Unfreeze when you are done.
+    /// Look first: `log` shows every write and `check-facts` the memories that claim things
+    /// never said. To repair, freeze the companion: while it is frozen nothing writes to its
+    /// memory, and `rollback`, `reinterpret` and `delete-all` refuse to run unless it is.
+    /// Unfreeze when you are done. `delete` removes single memories and `reembed` moves the
+    /// companion to another embedding model.
     #[command(after_long_help = "Example:\n  \
+        clanka doctor log ~/.config/clanka/souls/<id>.md --since 6h\n  \
         clanka doctor freeze ~/.config/clanka/souls/<id>.md\n  \
-        clanka doctor delete-all ~/.config/clanka/souls/<id>.md\n  \
+        clanka doctor rollback ~/.config/clanka/souls/<id>.md --to 2026-03-09T14:30:05\n  \
         clanka doctor unfreeze ~/.config/clanka/souls/<id>.md")]
     Doctor {
         #[command(subcommand)]
@@ -81,8 +93,8 @@ enum Command {
     },
     /// Print what a companion remembers: mood, sections, open threads and every memory.
     ///
-    /// Reads the memory and changes nothing, so it is safe while a host has the companion
-    /// open. For checking what a persona keeps from a conversation; `hermes/bench.sh` prints
+    /// Only reads the memory, so it is safe while a host has the companion open (a
+    /// companion that was never opened gets its empty database first). For checking what a persona keeps from a conversation; `hermes/bench.sh` prints
     /// it after a scripted evening.
     #[command(after_long_help = "Example:\n  clanka memories ~/.config/clanka/souls/<id>.md")]
     Memories {
@@ -122,6 +134,91 @@ enum Command {
         #[arg(long, default_value_t = 6000)]
         budget: usize,
     },
+    /// List the companions set up on this machine.
+    ///
+    /// One entry per soul.md under ~/.config/clanka/souls/: the name, the soul.md path every
+    /// other command takes, the ID and how big its memory is. Opens no database.
+    #[command(after_long_help = "Example:\n  clanka list")]
+    List,
+    /// Copy a companion into a new directory, to move it to another machine or keep a copy.
+    ///
+    /// Writes three files: soul.md, companion.db (a snapshot of the encrypted database,
+    /// safe to take while the companion is in use) and key, the database key in plain
+    /// text. Whoever has the directory can read every memory, so move it over a channel
+    /// you trust and delete it afterwards. Changes nothing here (a companion that was never
+    /// opened gets its empty database first).
+    #[command(after_long_help = "Example:\n  \
+        clanka export ~/.config/clanka/souls/<id>.md ~/nova-export\n  \
+        scp -r ~/nova-export other-machine:   # then there: clanka import ~/nova-export")]
+    Export {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+        /// The directory to create; it must not exist yet.
+        dir: PathBuf,
+    },
+    /// Set up the companion a `clanka export` directory holds.
+    ///
+    /// Stores its key (in the Secret Service, or a key file with `[keys] store = "file"` in
+    /// config.toml), then copies its database and soul.md into place and opens it once to
+    /// check the key fits. Never overwrites: it refuses if a companion with that ID is
+    /// already here. If its vectors came from another embedding model than this machine's
+    /// config names, it says to run `clanka doctor reembed`.
+    #[command(after_long_help = "Example:\n  clanka import ~/nova-export")]
+    Import {
+        /// A directory `clanka export` wrote.
+        dir: PathBuf,
+    },
+    /// Print what one query brings up from memory, with the numbers behind the order.
+    ///
+    /// The same search a turn runs, on the query alone: relevance (how close the memory is
+    /// to the query), the final score after level, age, mood and open threads, and the
+    /// memory. For seeing why something does or doesn't come up before changing `[recall]`
+    /// in config.toml. Only reads the memory: nothing is marked as recalled. (A companion
+    /// that was never opened gets its empty database first.)
+    #[command(after_long_help = "Example:\n  \
+        clanka recall ~/.config/clanka/souls/<id>.md \"how was the concert\"")]
+    Recall {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+        /// What the user would say.
+        query: String,
+    },
+    /// Measure recall over a file of queries and what each should bring up.
+    ///
+    /// The cases file is TOML, one [[case]] per query: `query`, `expect` (texts that must
+    /// appear in a recalled memory or in the value of one of its facts, in any letter case)
+    /// and `reject` (texts that must not); a case needs at least one of the two. Prints
+    /// each case, then how many expected memories came up and their mean
+    /// reciprocal rank; exits non-zero on a miss or an unwanted memory. Change a `[recall]`
+    /// value in config.toml, run it again and compare. Only reads the memory.
+    #[command(after_long_help = "Example cases.toml:\n  \
+        [[case]]\n  \
+        query = \"how was the concert\"\n  \
+        expect = [\"Laura\", \"concert\"]\n  \
+        reject = [\"dentist\"]\n\n\
+        Then:\n  clanka eval ~/.config/clanka/souls/<id>.md cases.toml\n\n\
+        [recall] in config.toml takes limit, seared_limit, min_relevance, min_score, \
+        fts_weight, mood_weight, thread_boost, faint_half_life, normal_half_life, vivid_floor \
+        and level_weights; `clanka recall` prints the limits in use.")]
+    Eval {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+        /// The TOML file of cases.
+        cases: PathBuf,
+    },
+    /// Download the embedding model config.toml names, if it is not here yet.
+    ///
+    /// The model turns text into the vectors recall searches. The default is a small
+    /// English one (about 23 MB); `[embedding] model = "multilingual"` in config.toml picks
+    /// a multilingual one (about 250 MB) for companions that talk in other languages. A
+    /// companion keeps the model its vectors were built with: after changing the setting,
+    /// run this, then `clanka doctor reembed` on each companion.
+    ///
+    /// `[embedding] duplicate_similarity` (above 0, at most 1; 0.92 unless set) is how alike
+    /// a new memory and one already kept must be for the new one to be refused as a copy. Models spread similar texts differently, so it may need changing with the
+    /// model.
+    #[command(after_long_help = "Example:\n  clanka embedding")]
+    Embedding,
     /// Run companions on Hermes: a profile per companion, and Nightshade, the agent that
     /// interviews you and makes one.
     ///
@@ -155,7 +252,9 @@ enum HermesCommand {
     /// root's own `providers:`, model aliases and reasoning overrides are copied in, and
     /// the keys those providers read are copied from ~/.hermes/.env into the profile's,
     /// since a profile loads only its own .env. Run it again after editing the persona to
-    /// refresh SOUL.md. A gateway already serving the profile re-reads its config on its own.
+    /// refresh SOUL.md; a toolset you added next to clanka on a platform (`hermes -p <profile>
+    /// config set platform_toolsets.telegram '[clanka, image_gen]'`) is kept. A gateway
+    /// already serving the profile re-reads its config on its own.
     #[command(after_long_help = "Example:\n  \
         clanka hermes profile nova ~/.config/clanka/souls/<id>.md\n  \
         hermes -p nova chat")]
@@ -292,38 +391,6 @@ enum SoulCommand {
     },
 }
 
-#[derive(Subcommand)]
-enum DoctorCommand {
-    /// Stop every write to the memory while the doctor works.
-    ///
-    /// Takes effect at once in every process that has the companion open: chat, MCP and
-    /// Hermes turns fail as frozen instead of being recorded. Sending the soul's
-    /// doctor_token in a chat does the same. Lasts until `clanka doctor unfreeze`.
-    Freeze {
-        #[arg(help = SOUL_HELP)]
-        soul: PathBuf,
-    },
-    /// Let writes through again.
-    ///
-    /// Lifts a freeze from `clanka doctor freeze` or from the doctor token.
-    Unfreeze {
-        #[arg(help = SOUL_HELP)]
-        soul: PathBuf,
-    },
-    /// Delete every stored memory, seared ones included. Refuses unless frozen.
-    ///
-    /// Irreversible. Deletes every memory, the whole transcript, the mood, the soul
-    /// sections the companion wrote and every session, so the companion starts blank. The
-    /// soul.md, the database key and the write log, which records only that deletes
-    /// happened, are kept. If some memories refuse to delete, it lists them, keeps the
-    /// transcript and sessions and exits non-zero; run it again once they are fixed. The
-    /// companion stays frozen afterwards.
-    DeleteAll {
-        #[arg(help = SOUL_HELP)]
-        soul: PathBuf,
-    },
-}
-
 /// `clanka <command> help` prints that command's help on every command, not
 /// only on those with subcommands, so `clanka init help` explains init instead
 /// of creating a companion named "help".
@@ -398,15 +465,22 @@ fn main() -> Result<()> {
         Command::Soul {
             command: SoulCommand::Fork { soul },
         } => fork(&paths, &soul),
-        Command::Doctor {
-            command: DoctorCommand::Freeze { soul },
-        } => doctor(&paths, &soul, DoctorAction::Freeze),
-        Command::Doctor {
-            command: DoctorCommand::Unfreeze { soul },
-        } => doctor(&paths, &soul, DoctorAction::Unfreeze),
-        Command::Doctor {
-            command: DoctorCommand::DeleteAll { soul },
-        } => doctor(&paths, &soul, DoctorAction::DeleteAll),
+        Command::Doctor { command } => doctor::run(&paths, command),
+        Command::List => transfer::list(&paths),
+        Command::Export { soul, dir } => transfer::export(&paths, &soul, &dir),
+        Command::Import { dir } => transfer::import(&paths, &dir),
+        Command::Recall { soul, query } => probe::recall(&paths, &soul, &query),
+        Command::Eval { soul, cases } => probe::eval(&paths, &soul, &cases),
+        Command::Embedding => {
+            let embedding = Config::load(&paths)?.embedding.model;
+            download_model(&paths, embedding)?;
+            println!(
+                "The embedding model is {} in {}.",
+                embedding.id(),
+                embedding.dir(&paths).display()
+            );
+            Ok(())
+        }
         Command::Memories { soul } => memories(&paths, &soul),
         Command::Hermes {
             command: HermesCommand::Profile { profile, soul },
@@ -470,70 +544,6 @@ fn open_pair(
     Ok((chat, writer))
 }
 
-enum DoctorAction {
-    Freeze,
-    Unfreeze,
-    DeleteAll,
-}
-
-/// The doctor opens the companion without a model: none of its work calls one.
-fn doctor(paths: &Paths, soul: &Path, action: DoctorAction) -> Result<()> {
-    let embedder = SharedEmbedder::load(paths)?;
-    let mut companion = setup::open(paths, soul, embedder, None)?;
-    match action {
-        DoctorAction::Freeze => {
-            companion.set_frozen(true)?;
-            println!(
-                "Frozen {}. Nothing writes to its memory until you unfreeze.",
-                soul.display()
-            );
-        }
-        DoctorAction::Unfreeze => {
-            companion.set_frozen(false)?;
-            println!("Unfrozen {}. Writes go through again.", soul.display());
-        }
-        DoctorAction::DeleteAll => {
-            if !companion.is_frozen()? {
-                bail!(
-                    "{} is not frozen; run `clanka doctor freeze {}` first, so nothing writes \
-                     to the memory while it is deleted",
-                    soul.display(),
-                    soul.display()
-                );
-            }
-            let report = companion.delete_all_memory()?;
-            if report.failed.is_empty() {
-                println!(
-                    "Deleted {} memories and {} turns, then {} leftover turns and {} sessions, \
-                     from {}.",
-                    report.memories,
-                    report.turns,
-                    report.leftover_turns,
-                    report.sessions,
-                    soul.display()
-                );
-                return Ok(());
-            }
-            println!(
-                "Deleted {} memories and {} turns from {}.",
-                report.memories,
-                report.turns,
-                soul.display()
-            );
-            for (id, why) in &report.failed {
-                println!("  #{id}: {why}");
-            }
-            bail!(
-                "{} memories failed to delete, so the transcript and sessions were kept; \
-                 fix the failures and run `clanka doctor delete-all {}` again",
-                report.failed.len(),
-                soul.display()
-            );
-        }
-    }
-    Ok(())
-}
-
 fn memories(paths: &Paths, soul: &Path) -> Result<()> {
     use clanka_core::model::{MemoryType, Section};
     let companion = setup::open(paths, soul, SharedEmbedder::load(paths)?, None)?;
@@ -565,9 +575,10 @@ fn memories(paths: &Paths, soul: &Path) -> Result<()> {
     for m in threads {
         let urgency = m.urgency.map(|u| u.as_str()).unwrap_or("?");
         println!(
-            "#{} [{urgency}, {}] {}",
+            "#{} [{urgency}, {}, {}] {}",
             m.id,
             m.level.as_str(),
+            clanka_core::context::date(m.created_at),
             m.interpretation
         );
     }
@@ -580,10 +591,11 @@ fn memories(paths: &Paths, soul: &Path) -> Result<()> {
             format!(" facts {}", serde_json::Value::Object(m.facts.clone()))
         };
         println!(
-            "#{} [{}, {}{valence}] {}{facts}",
+            "#{} [{}, {}{valence}, {}] {}{facts}",
             m.id,
             m.kind.as_str(),
             m.level.as_str(),
+            clanka_core::context::date(m.created_at),
             m.interpretation
         );
     }
@@ -675,7 +687,7 @@ fn fork(paths: &Paths, soul: &Path) -> Result<()> {
     let new = uuid::Uuid::now_v7();
     let forked = with_id(&text, old, new)?;
     let mut companion = setup::open(paths, soul, SharedEmbedder::load(paths)?, None)?;
-    SecretServiceKeys::store(new, &setup::random_hex(32))?;
+    Keys::new(paths, &Config::load(paths)?).store(new, &setup::random_hex(32))?;
     companion.archive()?;
     drop(companion);
     let partial = soul.with_extension("md.part");
@@ -716,9 +728,10 @@ fn create(paths: &Paths, name: &str, body: &str) -> Result<PathBuf> {
     Soul::parse(&text).context("the persona body does not make a valid soul.md")?;
     std::fs::create_dir_all(&paths.souls)?;
     let soul = paths.souls.join(format!("{id}.md"));
-    SecretServiceKeys::store(id, &setup::random_hex(32))?;
+    let config = Config::load(paths)?;
+    Keys::new(paths, &config).store(id, &setup::random_hex(32))?;
     std::fs::write(&soul, text).with_context(|| format!("writing {}", soul.display()))?;
-    download_model(&paths.models)?;
+    download_model(paths, config.embedding.model)?;
     println!("Created {name} ({id}).");
     Ok(soul)
 }
@@ -940,26 +953,27 @@ defended against the user, so keep them few; everything else is personality. -->
     )
 }
 
-fn download_model(dir: &Path) -> Result<()> {
-    std::fs::create_dir_all(dir)?;
-    for (local, remote) in MODEL_FILES {
+/// Downloads the embedding model's files that are not there yet.
+fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
+    let dir = embedding.dir(paths);
+    std::fs::create_dir_all(&dir)?;
+    for (local, remote) in embedding.files() {
         let path = dir.join(local);
         if path.exists() {
             continue;
         }
-        let url = format!("{MODEL_REPO}/{remote}");
+        let url = format!("{}/{remote}", embedding.repo());
         eprintln!("Downloading {url}");
-        let bytes = ureq::get(&url)
-            .call()
-            .with_context(|| url.clone())?
+        let mut response = ureq::get(&url).call().with_context(|| url.clone())?;
+        let mut body = response
             .body_mut()
             .with_config()
-            .limit(200 * 1024 * 1024)
-            .read_to_vec()
-            .with_context(|| url.clone())?;
+            .limit(1024 * 1024 * 1024)
+            .reader();
         // Written whole and renamed, so an interrupted download never looks complete.
         let partial = path.with_extension("part");
-        std::fs::write(&partial, bytes)?;
+        let mut file = std::fs::File::create(&partial)?;
+        std::io::copy(&mut body, &mut file).with_context(|| url.clone())?;
         std::fs::rename(&partial, &path)?;
     }
     Ok(())
@@ -1133,6 +1147,14 @@ mod tests {
             "clanka init help",
             "clanka chat help",
             "clanka doctor delete-all help",
+            "clanka doctor log help",
+            "clanka doctor rollback help",
+            "clanka list help",
+            "clanka export help",
+            "clanka import help",
+            "clanka recall help",
+            "clanka eval help",
+            "clanka embedding help",
             "clanka soul help",
             "clanka help soul help",
         ] {
@@ -1143,6 +1165,11 @@ mod tests {
         assert!(parse("clanka init Nova --from -").is_ok());
         assert!(parse("clanka soul lint --json --strict x.md").is_ok());
         assert!(parse("clanka soul draft Mara --brief dry").is_ok());
+        assert!(parse("clanka doctor log x.md --since 6h").is_ok());
+        assert!(parse("clanka doctor rollback x.md --to 2026-03-09T14:30:05").is_ok());
+        assert!(parse("clanka doctor delete x.md 12 15").is_ok());
+        assert!(parse("clanka export x.md out").is_ok());
+        assert!(parse("clanka recall x.md concert").is_ok());
     }
 
     #[test]

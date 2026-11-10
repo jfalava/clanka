@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0001_init.sql"),
     include_str!("migrations/0002_memory_valence.sql"),
     include_str!("migrations/0003_pushbacks.sql"),
+    include_str!("migrations/0004_reflections.sql"),
 ];
 
 /// How long a write waits for another process holding the lock.

@@ -6,6 +6,7 @@
 //! stays open, escalation won't repeat, and a memory drifts at most once a session.
 
 use crate::companion::ensure_writable;
+use crate::context::estimate_tokens;
 use crate::deps::{ToolCall, ToolSpec};
 use crate::memory::ensure_open;
 use crate::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
@@ -25,6 +26,16 @@ const MIN_DRIFT: f64 = 0.05;
 /// model tried retold the evening at 60–80 words whatever it was asked for,
 /// so the ask is a number and this is the check behind it.
 const EPISODE_WORDS: usize = 55;
+
+/// Estimated tokens of the night's conversation the sleep prompt carries. A
+/// session on a host with its own history can outgrow the model's window, and
+/// a prompt that doesn't fit fails every retry, so the session never ends.
+/// The reflections already kept what the earliest turns earned.
+pub const TRANSCRIPT_TOKENS: usize = 24_000;
+
+/// Longest single turn quoted, in characters: one pasted document must not
+/// push the rest of the night out.
+const TURN_CHARS: usize = 6_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SleepReport {
@@ -154,9 +165,10 @@ impl Companion {
                     Speaker::User => user.as_str(),
                     Speaker::Companion => "you",
                 };
-                Ok(format!("({who}) {}", r.get::<_, String>(1)?))
+                Ok(format!("({who}) {}", clip(&r.get::<_, String>(1)?)))
             })?
             .collect::<rusqlite::Result<_>>()?;
+        let turns = newest_that_fit(turns, TRANSCRIPT_TOKENS);
         // What the evening's reflections kept, so the episode doesn't keep it again.
         let kept: Vec<String> = self
             .conn
@@ -168,7 +180,7 @@ impl Companion {
             .query_map([session], |r| r.get::<_, i64>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
-            .map(|id| self.memory(id).map(|m| crate::writer::listing(&m)))
+            .map(|id| self.memory(id).map(|m| crate::writer::listing(&m, None)))
             .collect::<Result<_>>()?;
         let kept = if kept.is_empty() {
             "(nothing)".to_owned()
@@ -296,6 +308,37 @@ impl Companion {
             other => Err(Error::Invalid(format!("there is no tool called {other:?}"))),
         }
     }
+}
+
+/// The turn, cut short when it runs past [`TURN_CHARS`].
+fn clip(content: &str) -> String {
+    match content.char_indices().nth(TURN_CHARS) {
+        Some((end, _)) => format!("{} […]", &content[..end]),
+        None => content.to_owned(),
+    }
+}
+
+/// The latest turns that fit in `budget` estimated tokens, in order, with a
+/// line in place of the earlier ones left out.
+fn newest_that_fit(turns: Vec<String>, budget: usize) -> Vec<String> {
+    let mut used = 0;
+    let fit = turns
+        .iter()
+        .rev()
+        .take_while(|turn| {
+            used += estimate_tokens(turn);
+            used <= budget
+        })
+        .count();
+    let omitted = turns.len() - fit;
+    if omitted == 0 {
+        return turns;
+    }
+    let mut kept = vec![format!(
+        "(the {omitted} turns before this are left out: it was a long night)"
+    )];
+    kept.extend(turns.into_iter().skip(omitted));
+    kept
 }
 
 /// A seed as a uniform draw in [0, 1), through SplitMix64 so nearby seeds

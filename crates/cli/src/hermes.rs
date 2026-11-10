@@ -239,8 +239,25 @@ fn create_profile(home: &Path, profile: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// The platforms whose toolsets in the profile's `platform_toolsets` do not
+/// list clanka yet: a new profile's stock toolbox, which becomes `[clanka]`
+/// alone. A list that already has clanka was set by an earlier run, so it is
+/// left as it is and a toolset added to it since (say `image_gen`) stays.
+fn without_clanka(toolsets: Option<&serde_json::Value>) -> Vec<&'static str> {
+    let has_clanka = |platform: &str| {
+        toolsets
+            .and_then(|t| t.get(platform)?.as_array())
+            .is_some_and(|list| list.iter().any(|t| t == "clanka"))
+    };
+    PLATFORMS
+        .into_iter()
+        .filter(|platform| !has_clanka(platform))
+        .collect()
+}
+
 /// Makes a Hermes profile that is one companion and nothing else: clanka's two
-/// tools are the only toolset on every platform; Hermes's own memory, user
+/// tools are the only toolset on every platform, plus any you added to a
+/// platform's list after the first run; Hermes's own memory, user
 /// profile, coding brief, toolchain probe and agent-style guidance are off; the
 /// terminal and Telegram notes are a line each; and SOUL.md is the persona. The
 /// root's own providers, model aliases and their keys are shared with it.
@@ -283,7 +300,8 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         "plugins.entries.clanka.settings.soul",
         soul_str,
     ])?;
-    for platform in PLATFORMS {
+    let toolsets = config_get(&home, Some(profile), "platform_toolsets")?;
+    for platform in without_clanka(toolsets.as_ref()) {
         h(&[
             "config",
             "set",
@@ -384,6 +402,22 @@ mod tests {
             missing_env_lines(root, profile, &["A_KEY", "B_KEY", "C_KEY", "B_KEY_"]);
         assert_eq!(lines, ["A_KEY=1"]);
         assert_eq!(missing, ["C_KEY", "B_KEY_"]);
+    }
+
+    #[test]
+    fn a_rerun_keeps_toolsets_added_next_to_clanka() {
+        // A new profile: every platform still has Hermes's stock toolbox.
+        assert_eq!(without_clanka(None), PLATFORMS);
+        let toolsets = serde_json::json!({
+            "cli": ["clanka"],
+            "telegram": ["clanka", "image_gen"],
+            "discord": ["hermes-discord"],
+            "slack": "clanka-ish",
+        });
+        let reset = without_clanka(Some(&toolsets));
+        assert!(!reset.contains(&"cli") && !reset.contains(&"telegram"));
+        assert!(reset.contains(&"discord") && reset.contains(&"slack"));
+        assert_eq!(reset.len(), PLATFORMS.len() - 2);
     }
 
     #[test]

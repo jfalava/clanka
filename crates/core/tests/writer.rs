@@ -2,10 +2,11 @@ mod common;
 
 use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
 use clanka_core::model::{Actor, Level, MemoryType, Speaker, Status};
-use clanka_core::writer::MAX_ROUNDS;
+use clanka_core::writer::{MAX_ROUNDS, REFLECTION_ATTEMPTS};
 use clanka_core::{Companion, Error, MemoryDraft, Ranking};
-use common::{count, fixture, open, open_text_only, open_with_llm, raw};
+use common::{count, fixture, open, open_fallible, open_text_only, open_with_llm, raw};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 type Requests = Arc<Mutex<Vec<LlmRequest>>>;
@@ -602,4 +603,171 @@ fn the_prompt_names_the_user_once_they_have_given_their_name() {
         prompt.contains(&format!("What Sam said (turn {said})")),
         "{prompt}"
     );
+}
+
+/// A model that fails while `down` is set and otherwise keeps nothing. Records
+/// which exchange each call was about: the user's words in its prompt.
+fn flaky(f: &common::Fixture) -> (Companion, Arc<AtomicBool>, Arc<Mutex<Vec<String>>>) {
+    let (c, down, _, asked) = failing(f);
+    (c, down, asked)
+}
+
+/// [`flaky`], with a second switch that fails the reflection for a reason
+/// other than the model being out of reach, as a broken embedding model does.
+#[allow(clippy::type_complexity)]
+fn failing(
+    f: &common::Fixture,
+) -> (
+    Companion,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+    Arc<Mutex<Vec<String>>>,
+) {
+    let down = Arc::new(AtomicBool::new(false));
+    let broken = Arc::new(AtomicBool::new(false));
+    let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+    let (is_down, is_broken, seen) = (down.clone(), broken.clone(), asked.clone());
+    let c = open_fallible(f, move |r: &LlmRequest| {
+        let prompt = &r.messages[0].content;
+        let said = ["one", "two", "three", "four", "five"]
+            .into_iter()
+            .find(|said| prompt.contains(&format!("exchange {said}")))
+            .unwrap();
+        seen.lock().unwrap().push(said.to_owned());
+        if is_down.load(Ordering::SeqCst) {
+            return Err(Error::Llm("the provider is down".into()));
+        }
+        if is_broken.load(Ordering::SeqCst) {
+            return Err(Error::Embedder("model file missing".into()));
+        }
+        Ok(LlmResponse::default())
+    });
+    (c, down, broken, asked)
+}
+
+#[test]
+fn a_reflection_that_failed_or_never_ran_is_caught_up_on_with_the_next() {
+    let f = fixture();
+    let (mut c, down, asked) = flaky(&f);
+    let one = exchange(&mut c, "exchange one", "Hey");
+    down.store(true, Ordering::SeqCst);
+    assert!(matches!(c.reflect(one.0, one.1), Err(Error::Llm(_))));
+    // The process exited before this one's reflection started.
+    let _two = exchange(&mut c, "exchange two", "Hm");
+    down.store(false, Ordering::SeqCst);
+
+    let three = exchange(&mut c, "exchange three", "Right");
+    assert_eq!(c.reflect(three.0, three.1).unwrap().caught_up, 2);
+    // Oldest first, and each exactly once more.
+    assert_eq!(*asked.lock().unwrap(), ["one", "one", "two", "three"]);
+
+    // Done is done: neither a repeat nor the next exchange reflects on them again.
+    assert_eq!(c.reflect(one.0, one.1).unwrap().rounds, 0);
+    let four = exchange(&mut c, "exchange four", "Sure");
+    assert_eq!(c.reflect(four.0, four.1).unwrap().caught_up, 0);
+    assert_eq!(asked.lock().unwrap().len(), 5);
+    let db = raw(c.db_path(), "k");
+    assert_eq!(
+        count(&db, "SELECT count(*) FROM reflections WHERE state = 'done'"),
+        4
+    );
+}
+
+#[test]
+fn an_exchange_that_keeps_failing_is_given_up_on_and_another_session_is_left_alone() {
+    let f = fixture();
+    let (mut c, _, down, asked) = failing(&f);
+    down.store(true, Ordering::SeqCst);
+    for said in ["one", "two", "three", "four"] {
+        let turns = exchange(&mut c, &format!("exchange {said}"), "Hey");
+        assert!(c.reflect(turns.0, turns.1).is_err());
+    }
+    let tries = |said: &str| asked.lock().unwrap().iter().filter(|a| *a == said).count();
+    assert_eq!(tries("one") as i64, REFLECTION_ATTEMPTS);
+    let db = raw(c.db_path(), "k");
+    assert_eq!(
+        count(&db, "SELECT max(attempts) FROM reflections"),
+        REFLECTION_ATTEMPTS
+    );
+
+    // The night closed the session: sleep read its turns itself, so what was
+    // missed in it is not reflected on from the next session.
+    let session = c.open_session().unwrap();
+    db.execute(
+        "UPDATE sessions SET ended_at = 1, ended_by = 'sleep' WHERE id = ?1",
+        [session],
+    )
+    .unwrap();
+    down.store(false, Ordering::SeqCst);
+    let before = asked.lock().unwrap().len();
+    let five = exchange(&mut c, "exchange five", "Morning");
+    assert_eq!(c.reflect(five.0, five.1).unwrap().caught_up, 0);
+    assert_eq!(asked.lock().unwrap().len(), before + 1);
+}
+
+/// The provider being down for a few messages is no reason to give up on them:
+/// those tries don't count, and the exchanges are caught up on when it is back.
+#[test]
+fn an_outage_does_not_use_up_an_exchanges_tries() {
+    let f = fixture();
+    let (mut c, down, asked) = flaky(&f);
+    down.store(true, Ordering::SeqCst);
+    for said in ["one", "two", "three", "four"] {
+        let turns = exchange(&mut c, &format!("exchange {said}"), "Hey");
+        assert!(matches!(c.reflect(turns.0, turns.1), Err(Error::Llm(_))));
+    }
+    let tries = |said: &str| asked.lock().unwrap().iter().filter(|a| *a == said).count();
+    assert!(tries("one") as i64 > REFLECTION_ATTEMPTS);
+    let db = raw(c.db_path(), "k");
+    assert_eq!(count(&db, "SELECT max(attempts) FROM reflections"), 0);
+
+    down.store(false, Ordering::SeqCst);
+    let before = asked.lock().unwrap().len();
+    let five = exchange(&mut c, "exchange five", "Back");
+    assert_eq!(c.reflect(five.0, five.1).unwrap().caught_up, 2);
+    assert_eq!(asked.lock().unwrap()[before..], ["one", "two", "five"]);
+}
+
+/// A message whose reply never came (the model failed) belongs to the next
+/// exchange: the reflection reads it, and a fact quoted from it cites it.
+#[test]
+fn a_message_that_got_no_reply_is_reflected_on_with_the_next_one() {
+    let f = fixture();
+    let remember = (
+        "remember",
+        json!({ "type": "episode", "level": "vivid",
+            "interpretation": "Their dad died last night", "facts": { "who": "my dad" } }),
+    );
+    // Nothing kept from the first exchange, one memory from the second.
+    let (model, requests) = script(vec![vec![], vec![remember]]);
+    let mut c = open_with_llm(&f, model);
+    let (hello, hi) = exchange(&mut c, "hello", "Hi");
+    c.reflect(hello, hi).unwrap();
+    let session = c.open_session().unwrap();
+    let unanswered = c
+        .record_turn(session, Speaker::User, "my dad died last night")
+        .unwrap();
+    let (said, replied) = exchange(&mut c, "are you there?", "I'm here.");
+
+    let reflection = c.reflect(said, replied).unwrap();
+    assert!(reflection.calls[0].ok, "{:#?}", reflection.calls);
+    assert!(!reflection.calls[0].result.contains("left out"));
+    let prompt = &requests.lock().unwrap()[1].messages[0].content;
+    assert!(
+        prompt.contains(&format!(
+            "(turn {unanswered}, {said}), the only source for facts and for anything they did \
+             or said:\nmy dad died last night\nare you there?"
+        )),
+        "{prompt}"
+    );
+    // The exchange before it was answered, so it is not part of this one.
+    assert!(!prompt.contains("hello"), "{prompt}");
+    let sources: Vec<i64> = c
+        .recall("dad", &Ranking::default())
+        .unwrap()
+        .remove(0)
+        .memory
+        .source_turns;
+    assert_eq!(sources, [unanswered, said, replied]);
+    assert!(!sources.contains(&hello) && !sources.contains(&hi));
 }

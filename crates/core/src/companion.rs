@@ -1,7 +1,11 @@
+use crate::deps::Embedder;
+use crate::memory::DUPLICATE_SIMILARITY;
+use crate::recall::Ranking;
 use crate::soul::Soul;
 use crate::{Deps, Error, Result, db};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -16,6 +20,8 @@ pub struct Companion {
     db_path: PathBuf,
     pub(crate) deps: Deps,
     persona: PersonaStatus,
+    ranking: Ranking,
+    pub(crate) duplicate_similarity: f32,
 }
 
 /// How the soul.md on disk relates to the one its memories were written under.
@@ -105,6 +111,8 @@ impl Companion {
             db_path,
             deps,
             persona,
+            ranking: Ranking::default(),
+            duplicate_similarity: DUPLICATE_SIMILARITY,
         })
     }
 
@@ -118,6 +126,47 @@ impl Companion {
 
     pub fn db_path(&self) -> &Path {
         &self.db_path
+    }
+
+    /// How this handle ranks recall on its own turns: the front end's setting,
+    /// the defaults unless [`Companion::set_ranking`] changed it.
+    pub fn ranking(&self) -> &Ranking {
+        &self.ranking
+    }
+
+    /// Refuses a ranking recall can't work with (see [`Ranking::check`]).
+    pub fn set_ranking(&mut self, ranking: Ranking) -> Result<()> {
+        ranking.check()?;
+        self.ranking = ranking;
+        Ok(())
+    }
+
+    /// The cosine similarity from which a new memory counts as a copy of one
+    /// of the same type; [`DUPLICATE_SIMILARITY`] unless set. It depends on the
+    /// embedding model: another model spreads similar texts differently.
+    /// Above 0 and at most 1: anything else would refuse every write or none.
+    pub fn set_duplicate_similarity(&mut self, similarity: f32) -> Result<()> {
+        if !(similarity > 0.0 && similarity <= 1.0) {
+            return Err(Error::Invalid(format!(
+                "duplicate_similarity is {similarity}; it must be above 0 and at most 1"
+            )));
+        }
+        self.duplicate_similarity = similarity;
+        Ok(())
+    }
+
+    /// Writes a copy of the whole database, as it is at this moment, to a new
+    /// file under the same key. Safe while other processes write: the copy is
+    /// one consistent snapshot. Refuses to overwrite a file.
+    pub fn export_to(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            return Err(Error::Invalid(format!("{} already exists", path.display())));
+        }
+        let target = path
+            .to_str()
+            .ok_or_else(|| Error::Invalid(format!("{} is not valid UTF-8", path.display())))?;
+        self.conn.execute("VACUUM INTO ?1", [target])?;
+        Ok(())
     }
 
     pub fn deps(&self) -> &Deps {
@@ -169,46 +218,107 @@ impl Companion {
 
 impl Companion {
     fn rebuild_vectors(&mut self) -> Result<()> {
-        let memories: Vec<(i64, String)> = self
-            .conn
-            .prepare("SELECT id, interpretation FROM memories ORDER BY id")?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?;
+        // Embedding is slow, so it happens before the write lock is taken.
+        let memories = interpretations(&self.conn)?;
         let embedder = &self.deps.embedder;
-        let mut vectors = Vec::with_capacity(memories.len());
-        for chunk in memories.chunks(64) {
-            let texts: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
-            let embedded = embedder.embed(&texts)?;
-            if embedded.len() != chunk.len()
-                || embedded.iter().any(|v| v.len() != embedder.dimensions())
-            {
-                return Err(Error::Embedder(format!(
-                    "expected {} vectors of {} dimensions",
-                    chunk.len(),
-                    embedder.dimensions()
-                )));
-            }
-            vectors.extend(embedded);
-        }
+        let vectors = embed_all(embedder.as_ref(), &memories)?;
+        let mut ready: HashMap<i64, (String, Vec<u8>)> = memories
+            .into_iter()
+            .zip(vectors)
+            .map(|((id, text), vector)| (id, (text, vector)))
+            .collect();
         let (model, dimensions) = (embedder.model_id().to_owned(), embedder.dimensions());
         let now = self.deps.clock.now_ms();
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // Another process may have written or reworded a memory meanwhile:
+        // whatever isn't in the first pass is embedded now, under the lock.
+        let current = interpretations(&tx)?;
+        let late: Vec<(i64, String)> = current
+            .iter()
+            .filter(|(id, text)| ready.get(id).is_none_or(|(embedded, _)| embedded != text))
+            .cloned()
+            .collect();
+        for ((id, text), vector) in late
+            .iter()
+            .cloned()
+            .zip(embed_all(embedder.as_ref(), &late)?)
+        {
+            ready.insert(id, (text, vector));
+        }
         tx.execute_batch("DROP TABLE IF EXISTS memory_vectors")?;
         tx.execute("DELETE FROM meta WHERE key = 'embedder_model'", [])?;
         ensure_vectors(&tx, &model, dimensions)?;
-        for ((id, _), vector) in memories.iter().zip(vectors) {
-            let blob: Vec<u8> = vector.iter().flat_map(|x| x.to_le_bytes()).collect();
+        for (id, _) in &current {
             tx.execute(
                 "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?1, ?2)",
-                params![id, blob],
+                params![id, ready[id].1],
             )?;
         }
-        let summary = json!({ "model": model, "memories": memories.len() });
+        let summary = json!({ "model": model, "memories": current.len() });
         log(&tx, "doctor", "reembed", "companion", None, &summary, now)?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+fn interpretations(conn: &Connection) -> Result<Vec<(i64, String)>> {
+    Ok(conn
+        .prepare("SELECT id, interpretation FROM memories ORDER BY id")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// One sqlite-vec blob per memory, in order.
+fn embed_all(embedder: &dyn Embedder, memories: &[(i64, String)]) -> Result<Vec<Vec<u8>>> {
+    let mut vectors = Vec::with_capacity(memories.len());
+    for chunk in memories.chunks(64) {
+        let texts: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
+        let embedded = embedder.embed(&texts)?;
+        if embedded.len() != chunk.len() {
+            return Err(Error::Embedder(format!(
+                "expected {} vectors, got {}",
+                chunk.len(),
+                embedded.len()
+            )));
+        }
+        for vector in &embedded {
+            vectors.push(blob(vector, embedder.dimensions())?);
+        }
+    }
+    Ok(vectors)
+}
+
+/// A vector as sqlite-vec's little-endian f32 blob. Refuses one of the wrong
+/// size, and one that is all zeros or not finite: its cosine similarity is
+/// undefined, and a single such row makes every recall fail.
+pub(crate) fn blob(vector: &[f32], dimensions: usize) -> Result<Vec<u8>> {
+    if vector.len() != dimensions {
+        return Err(Error::Embedder(format!(
+            "expected a vector of {dimensions} dimensions, got {}",
+            vector.len()
+        )));
+    }
+    let norm: f32 = vector.iter().map(|x| x * x).sum();
+    if !norm.is_finite() || norm == 0.0 {
+        return Err(Error::Embedder(
+            "the model returned a vector that is all zeros or not a number".into(),
+        ));
+    }
+    Ok(vector.iter().flat_map(|x| x.to_le_bytes()).collect())
+}
+
+/// Checked inside every transaction that writes a vector: the doctor may have
+/// re-embedded from another process after this handle embedded its text, and
+/// a vector from the old model would sit among the new ones as noise.
+pub(crate) fn ensure_embedder(conn: &Connection, model: &str) -> Result<()> {
+    match meta(conn, "embedder_model")? {
+        Some(stored) if stored != model => Err(Error::EmbedderChanged {
+            stored,
+            current: model.to_owned(),
+        }),
+        _ => Ok(()),
     }
 }
 

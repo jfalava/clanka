@@ -189,3 +189,35 @@ fn a_leading_stretch_marker_lifts_the_length_rule_for_one_reply() {
         ]
     );
 }
+
+/// `clanka chat` builds the prompt itself: it gets the whole context, with the
+/// session's earlier turns but not the message it is about to send.
+#[test]
+fn an_opened_turn_carries_the_history_before_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(dir.path());
+    let first = match turn::open(&mut c, "hi", 4000, true).unwrap() {
+        turn::Opened::Open(open) => *open,
+        other => panic!("not open: {other:?}"),
+    };
+    assert!(first.context.turns.is_empty());
+    assert!(first.context.render().contains("Nova"));
+    assert_eq!(turn::end(&mut c, first.pending, "hello").unwrap(), (1, 2));
+
+    let second = match turn::open(&mut c, ">>3 and then?", 4000, true).unwrap() {
+        turn::Opened::Open(open) => *open,
+        other => panic!("not open: {other:?}"),
+    };
+    let said: Vec<&str> = second
+        .context
+        .turns
+        .iter()
+        .map(|t| t.content.as_str())
+        .collect();
+    assert_eq!(said, ["hi", "hello"]);
+    assert_eq!(
+        (second.message.as_str(), second.stretch),
+        ("and then?", Some(3))
+    );
+    assert_eq!(second.pending.user_turn, 3);
+}

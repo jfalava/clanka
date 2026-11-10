@@ -382,3 +382,31 @@ fn delete_removes_everything_but_shared_turns_and_restores_the_past() {
     );
     assert_ne!(nearest, lisbon);
 }
+
+/// The nearest few of all vectors can all be memories the check must ignore
+/// (old versions, another type); the copy behind them is still found.
+#[test]
+fn a_copy_is_refused_however_many_other_vectors_sit_as_near() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let fact = c
+        .write(
+            Actor::Writer,
+            &draft(MemoryType::UserFact, "Laura lives in Lisbon"),
+        )
+        .unwrap();
+    let kind = MemoryType::Preference;
+    let mut other = c
+        .write(Actor::Writer, &draft(kind, "Laura likes fado"))
+        .unwrap();
+    for i in 0..40 {
+        let text = format!("Laura likes fado, take {i}");
+        other = c
+            .supersede(Actor::Writer, other, &draft(kind, &text))
+            .unwrap();
+    }
+    assert!(matches!(
+        c.write(Actor::Writer, &draft(MemoryType::UserFact, "Laura again")),
+        Err(Error::Duplicate { existing, .. }) if existing == fact
+    ));
+}

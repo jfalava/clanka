@@ -75,6 +75,9 @@ pub struct Context {
     pub mood: Option<Mood>,
     /// Only for souls with `time_sense`, early in a session after a gap.
     pub time_away: Option<TimeAway>,
+    /// Now, in milliseconds since the Unix epoch, for souls with `time_sense`:
+    /// each memory is shown with how long ago it was kept.
+    pub today: Option<i64>,
     pub turn_note: Option<String>,
     pub hot_threads: Vec<Memory>,
     pub memories: Vec<Recalled>,
@@ -95,6 +98,15 @@ pub struct Context {
 }
 
 impl Companion {
+    /// Now, for a soul with a sense of time: it also knows how long ago it
+    /// kept something. `None` for a soul without.
+    pub(crate) fn today(&self) -> Option<i64> {
+        self.soul
+            .traits
+            .time_sense
+            .then(|| self.deps.clock.now_ms())
+    }
+
     /// The context for answering `message`, your current message (not yet
     /// recorded), within `budget` estimated tokens. Leave room for the reply
     /// when choosing the budget.
@@ -131,9 +143,11 @@ impl Companion {
             .map(|(_, note)| note)
             .filter(|n| fits(&render_note(n)));
 
+        // A soul with a sense of time also knows how long ago it kept something.
+        let today = self.today();
         let mut hot_threads = Vec::new();
         for memory in self.hot_threads()? {
-            if !fits(&render_memory(&memory)) {
+            if !fits(&render_memory(&memory, today)) {
                 break;
             }
             hot_threads.push(memory);
@@ -143,7 +157,7 @@ impl Companion {
             if hot_threads.iter().any(|t| t.id == recalled.memory.id) {
                 continue;
             }
-            if !fits(&render_memory(&recalled.memory)) {
+            if !fits(&render_memory(&recalled.memory, today)) {
                 break;
             }
             memories.push(recalled);
@@ -176,6 +190,7 @@ impl Companion {
         Ok(Context {
             let_go: pushbacks >= limit,
             time_away,
+            today,
             persona,
             sections,
             mood,
@@ -369,7 +384,11 @@ impl Context {
         out.extend(self.mood.iter().map(render_mood));
         out.extend(self.turn_note.iter().map(|n| render_note(n)));
         if !self.hot_threads.is_empty() {
-            let threads: Vec<String> = self.hot_threads.iter().map(render_memory).collect();
+            let threads: Vec<String> = self
+                .hot_threads
+                .iter()
+                .map(|m| render_memory(m, self.today))
+                .collect();
             out.push(format!(
                 "Unresolved, and it matters to you; one comes up when it fits, as a remark:\n{}",
                 threads.join("\n")
@@ -379,7 +398,7 @@ impl Context {
             let memories: Vec<String> = self
                 .memories
                 .iter()
-                .map(|r| render_memory(&r.memory))
+                .map(|r| render_memory(&r.memory, self.today))
                 .collect();
             out.push(format!("What you remember:\n{}", memories.join("\n")));
         }
@@ -414,8 +433,41 @@ fn render_note(note: &str) -> String {
     format!("Your note from last turn: {note}")
 }
 
-fn render_memory(m: &Memory) -> String {
-    let mut line = format!("- {}", m.interpretation);
+/// How long ago, in the words a person would use. Nothing for the last day:
+/// what was kept tonight needs no date.
+pub fn age(now: i64, then: i64) -> Option<String> {
+    let days = (now - then) / (24 * 60 * 60 * 1000);
+    let plural = |n: i64, unit: &str| format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" });
+    Some(match days {
+        ..1 => return None,
+        1 => "yesterday".into(),
+        2..14 => plural(days, "day"),
+        14..61 => plural(days / 7, "week"),
+        61..730 => plural(days * 12 / 365, "month"),
+        _ => plural(days / 365, "year"),
+    })
+}
+
+/// The UTC calendar date of a timestamp in milliseconds, as `2026-03-09`.
+pub fn date(ms: i64) -> String {
+    // Days since the epoch to a civil date (Howard Hinnant's algorithm).
+    let z = ms.div_euclid(24 * 60 * 60 * 1000) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn render_memory(m: &Memory, now: Option<i64>) -> String {
+    let mut line = match now.and_then(|now| age(now, m.created_at)) {
+        Some(age) => format!("- ({age}) {}", m.interpretation),
+        None => format!("- {}", m.interpretation),
+    };
     if m.level == Level::Seared {
         line.push_str(" (this one is burned into you)");
     }

@@ -518,6 +518,81 @@ impl Embedder for Broken {
     }
 }
 
+/// [`Wider`], while another process writes a memory during the first batch.
+struct WrittenDuring(Mutex<Option<Companion>>);
+impl Embedder for WrittenDuring {
+    fn model_id(&self) -> &str {
+        Wider.model_id()
+    }
+    fn dimensions(&self) -> usize {
+        Wider.dimensions()
+    }
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if let Some(mut other) = self.0.lock().unwrap().take() {
+            other
+                .write(
+                    Actor::Writer,
+                    &draft(MemoryType::Episode, Level::Normal, "concert"),
+                )
+                .unwrap();
+        }
+        Wider.embed(texts)
+    }
+}
+
+#[test]
+fn a_memory_written_during_a_reembed_gets_its_vector() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let laura = c
+        .write(
+            Actor::Writer,
+            &draft(MemoryType::Episode, Level::Normal, "Laura"),
+        )
+        .unwrap();
+    let mut d = deps("k", "unused");
+    d.embedder = Box::new(WrittenDuring(Mutex::new(Some(c))));
+    let c = Companion::reembed(f.dir.path(), &f.soul, d).unwrap();
+    assert_eq!(ids(&c, "Laura"), [laura]);
+    assert_eq!(ids(&c, "concert"), [laura + 1]);
+}
+
+/// All zeros has no direction: stored, it would make every recall fail.
+struct Zeros;
+impl Embedder for Zeros {
+    fn model_id(&self) -> &str {
+        "model-a"
+    }
+    fn dimensions(&self) -> usize {
+        4
+    }
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| vec![0.0; 4]).collect())
+    }
+}
+
+#[test]
+fn a_vector_of_zeros_is_never_stored() {
+    let f = fixture();
+    let laura = open(&f, "k")
+        .unwrap()
+        .write(
+            Actor::Writer,
+            &draft(MemoryType::Episode, Level::Normal, "Laura"),
+        )
+        .unwrap();
+    let mut d = deps("k", "model-a");
+    d.embedder = Box::new(Zeros);
+    let mut c = Companion::open(f.dir.path(), &f.soul, d).unwrap();
+    let written = c.write(
+        Actor::Writer,
+        &draft(MemoryType::Episode, Level::Normal, "concert"),
+    );
+    assert!(matches!(written, Err(Error::Embedder(_))), "{written:?}");
+    drop(c);
+    assert_eq!(ids(&open(&f, "k").unwrap(), "Laura"), [laura]);
+}
+
 #[test]
 fn reembed_rebuilds_every_vector_or_none() {
     let f = fixture();
@@ -551,8 +626,22 @@ fn reembed_rebuilds_every_vector_or_none() {
         d.embedder = Box::new(Wider);
         d
     };
+    // A handle opened before the re-embed still holds the old model.
+    let mut stale = open(&f, "k").unwrap();
     let c = Companion::reembed(f.dir.path(), &f.soul, wider()).unwrap();
     assert_eq!(ids(&c, "Laura"), [laura]);
+    assert!(matches!(
+        stale.recall("Laura", &Ranking::default()),
+        Err(Error::EmbedderChanged { .. })
+    ));
+    assert!(matches!(
+        stale.write(
+            Actor::Writer,
+            &draft(MemoryType::Episode, Level::Normal, "concert")
+        ),
+        Err(Error::EmbedderChanged { .. })
+    ));
+    drop(stale);
     assert_eq!(
         count(
             &raw(c.db_path(), "k"),

@@ -335,3 +335,44 @@ fn the_cast_is_the_souls_own_people_and_the_persona_says_to_talk() {
         "the hint is added at chat time, not part of the persona's identity"
     );
 }
+
+/// An export is the whole companion in one file under the same key: moved to
+/// another directory it opens and recalls as the original does.
+#[test]
+fn an_export_opens_elsewhere_with_the_same_key() {
+    use clanka_core::model::{Actor, Level, MemoryType};
+    use clanka_core::{MemoryDraft, Ranking};
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let laura = c
+        .write(
+            Actor::Cli,
+            &MemoryDraft::new(MemoryType::Episode, Level::Normal, "Laura came by"),
+        )
+        .unwrap();
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let copy = elsewhere.path().join(format!("{}.db", f.id));
+    c.export_to(&copy).unwrap();
+    assert!(c.export_to(&copy).is_err(), "an export never overwrites");
+    // Written after the export: not in it.
+    c.write(
+        Actor::Cli,
+        &MemoryDraft::new(MemoryType::Episode, Level::Normal, "the concert"),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        Companion::open(elsewhere.path(), &f.soul, deps("other", "model-a")),
+        Err(Error::WrongKey(_))
+    ));
+    let moved = Companion::open(elsewhere.path(), &f.soul, deps("k", "model-a")).unwrap();
+    let found: Vec<i64> = moved
+        .search("Laura", &Ranking::default())
+        .unwrap()
+        .iter()
+        .map(|r| r.memory.id)
+        .collect();
+    assert_eq!(found, [laura]);
+    assert_eq!(moved.active_memories().unwrap().len(), 1);
+}
