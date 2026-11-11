@@ -431,6 +431,37 @@ fn tics(body: &str) -> (Vec<String>, Vec<String>) {
     (warnings, notes)
 }
 
+/// Notes on em dashes: clanka takes them out of every reply (see
+/// [`clanka_core::tics::Dashless`]), so a rule against them is a line the
+/// persona pays for on every turn and does not need, and a persona written
+/// with them shows the model a mark its replies will not keep.
+fn dashes(body: &str) -> Vec<String> {
+    let mut notes: Vec<String> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            let line = line.to_lowercase();
+            ["em dash", "em-dash", "emdash"]
+                .iter()
+                .any(|d| line.contains(d))
+        })
+        .map(|line| {
+            format!(
+                "clanka takes the em dashes out of every reply, so this line can go: \"{line}\""
+            )
+        })
+        .collect();
+    let written = body.matches('\u{2014}').count();
+    if written > 0 {
+        notes.push(format!(
+            "the persona has {written} em dash{}; each one in a reply becomes a comma, so write \
+             the persona with commas and full stops",
+            if written == 1 { "" } else { "es" }
+        ));
+    }
+    notes
+}
+
 /// Rules of the body that ask for a tic outright: "You speak in images",
 /// "You close on the one sentence that will stay". A rule about manner is
 /// followed in every reply, which is what makes a turn of phrase a tic.
@@ -531,7 +562,8 @@ impl LintReport {
                  on a statement"
             ));
         }
-        let (repeated, notes) = tics(&soul.body);
+        let (repeated, mut notes) = tics(&soul.body);
+        notes.extend(dashes(&soul.body));
         warnings.extend(repeated);
         warnings.extend(asked_tics(&soul.body));
         let chat_tokens = clanka_core::context::estimate_tokens(&soul.persona());
@@ -701,6 +733,22 @@ mod tests {
         assert!(
             once.text(std::path::Path::new("x.md"))
                 .contains("note: negation-first")
+        );
+
+        // The tool takes em dashes out of replies, so the soul needn't.
+        let notes = super::dashes(
+            "You are Harrow \u{2014} a ferryman.\n\n- Never write an em dash. Full stops \
+             instead.\n- A well-kept boat - two oars.\n",
+        );
+        assert_eq!(notes.len(), 2, "{notes:#?}");
+        assert!(
+            notes[0]
+                .ends_with("this line can go: \"- Never write an em dash. Full stops instead.\"")
+        );
+        assert!(notes[1].starts_with("the persona has 1 em dash;"));
+        assert_eq!(
+            super::dashes("You are Harrow, a ferryman."),
+            Vec::<String>::new()
         );
     }
 

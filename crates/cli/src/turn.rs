@@ -282,10 +282,11 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
     })
 }
 
-/// Records the reply and marks what was recalled. Returns the (user, companion)
-/// turn IDs to reflect on.
+/// Records the reply, without its em dashes, and marks what was recalled.
+/// Returns the (user, companion) turn IDs to reflect on.
 pub fn end(c: &mut Companion, pending: Pending, reply: &str) -> Result<(i64, i64)> {
-    let turn = c.record_turn(pending.session, Speaker::Companion, reply)?;
+    let reply = clanka_core::tics::without_dashes(reply);
+    let turn = c.record_turn(pending.session, Speaker::Companion, &reply)?;
     c.mark_recalled(pending.session, &pending.recalled)?;
     Ok((pending.user_turn, turn))
 }

@@ -289,8 +289,15 @@ fn wake_up_tool() -> (String, String) {
     (spec.description, spec.parameters)
 }
 
+/// A reply without its em dashes, the way `end_turn` records it.
+#[pyfunction]
+fn without_dashes(reply: &str) -> String {
+    clanka_core::tics::without_dashes(reply)
+}
+
 #[pymodule]
 fn _clanka(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompanion>()?;
+    m.add_function(wrap_pyfunction!(without_dashes, m)?)?;
     m.add_function(wrap_pyfunction!(wake_up_tool, m)?)
 }

@@ -58,11 +58,16 @@ impl Write for Closed {
 
 /// A message whose reply failed stays on record with no reply after it. The
 /// next request carries it joined to the next message, so the model never gets
-/// two user messages in a row, and the history after that alternates again.
+/// two user messages in a row, and the history after that alternates again. A
+/// reply is shown and kept without its em dashes.
 #[test]
 fn a_message_whose_reply_failed_goes_out_with_the_next() {
     let dir = tempfile::tempdir().unwrap();
-    let (model, asked) = scripted(vec![Err("503"), Ok("\n\n I'm here."), Ok("Always.")]);
+    let (model, asked) = scripted(vec![
+        Err("503"),
+        Ok("\n\n I'm here \u{2014} sit down."),
+        Ok("Always."),
+    ]);
     let chat = open_with(dir.path(), model);
     let writer = open(dir.path());
     let (mut out, notes) = (Vec::new(), Notes::default());
@@ -85,7 +90,7 @@ fn a_message_whose_reply_failed_goes_out_with_the_next() {
             vec![user("my dad died\n\nare you there?")],
             vec![
                 user("my dad died\n\nare you there?"),
-                nova("I'm here."),
+                nova("I'm here, sit down."),
                 user("thanks")
             ],
         ]
@@ -93,7 +98,7 @@ fn a_message_whose_reply_failed_goes_out_with_the_next() {
     // Only replies reach stdout, without the model's leading whitespace.
     assert_eq!(
         String::from_utf8(out).unwrap(),
-        "Nova> I'm here.\nNova> Always.\n"
+        "Nova> I'm here, sit down.\nNova> Always.\n"
     );
     let notes = notes.text();
     assert!(notes.contains("no reply: "), "{notes}");

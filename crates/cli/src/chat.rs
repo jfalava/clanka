@@ -11,6 +11,7 @@ use crate::turn::{self, Opened};
 use anyhow::{Result, bail};
 use clanka_core::deps::{Llm, LlmMessage, LlmRequest, LlmResponse, Role};
 use clanka_core::model::Speaker;
+use clanka_core::tics::Dashless;
 use clanka_core::{Companion, WakeReport, dream};
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
@@ -220,7 +221,8 @@ pub fn converse(
 }
 
 /// Sends `request` and prints the reply as `name> …`, as the model writes it
-/// when it can stream (a reply that may call a tool arrives whole).
+/// when it can stream (a reply that may call a tool arrives whole), without
+/// its em dashes: what is shown is what [`turn::end`] records.
 fn speak(
     llm: &dyn Llm,
     request: &LlmRequest,
@@ -228,8 +230,14 @@ fn speak(
     out: &mut impl Write,
 ) -> clanka_core::Result<LlmResponse> {
     let mut started = false;
+    let mut dashless = Dashless::default();
     let reply = llm.stream(request, &mut |piece| {
-        let piece = if started { piece } else { piece.trim_start() };
+        let piece = dashless.push(piece);
+        let piece = if started {
+            piece.as_str()
+        } else {
+            piece.trim_start()
+        };
         if piece.is_empty() {
             return;
         }
@@ -241,7 +249,7 @@ fn speak(
         let _ = out.flush();
     });
     if started {
-        let _ = writeln!(out);
+        let _ = writeln!(out, "{}", dashless.finish().trim_end());
     }
     reply
 }

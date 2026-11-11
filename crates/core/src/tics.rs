@@ -442,6 +442,82 @@ pub fn is_maxim(sentence: &str) -> bool {
         && !w.iter().any(|(s, _)| any(PERSONS, s))
 }
 
+/// Takes the em dashes out of a reply as it is written. A model that writes
+/// one writes one in almost every reply (Kestrel in 13 of 13, Mira in 35 of
+/// 37) whatever its persona says about them, and its own replies teach it the
+/// next, so they go before the reply is shown or recorded. Pieces go in as
+/// they arrive and come out with the dashes gone; spaces and dashes are held
+/// back until what follows them is known, so call [`Dashless::finish`] last.
+#[derive(Debug, Default)]
+pub struct Dashless {
+    /// The last character written on this line that is not a space.
+    last: Option<char>,
+    /// Spaces and dashes not yet written.
+    held: String,
+}
+
+impl Dashless {
+    pub fn push(&mut self, piece: &str) -> String {
+        let mut out = String::with_capacity(piece.len());
+        for c in piece.chars() {
+            if c == ' ' || "\u{2013}\u{2014}\u{2015}".contains(c) {
+                self.held.push(c);
+                continue;
+            }
+            self.release(Some(c), &mut out);
+            out.push(c);
+            self.last = (c != '\n').then_some(c);
+        }
+        out
+    }
+
+    /// What was held back at the end of the reply.
+    pub fn finish(&mut self) -> String {
+        let mut out = String::new();
+        self.release(None, &mut out);
+        out
+    }
+
+    fn release(&mut self, next: Option<char>, out: &mut String) {
+        let held = std::mem::take(&mut self.held);
+        // An en dash stands for an em dash only with a space beside it:
+        // "1914–1918" is a range.
+        let dash = held.contains(['\u{2014}', '\u{2015}'])
+            || (held.contains('\u{2013}') && held.contains(' '));
+        if !dash {
+            out.push_str(&held);
+            return;
+        }
+        let digit = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
+        out.push_str(match (self.last, next) {
+            // A line that opens on a dash: dialogue, or a name under a quote.
+            (None, _) => "",
+            (_, _) if digit(self.last) && digit(next) && !held.contains(' ') => "-",
+            (Some(last), _) if "([\"\u{201c}\u{2018}*_".contains(last) => "",
+            // Speech that breaks off: "I would never—"
+            (Some(last), None | Some('\n' | '"' | '\u{201d}' | '*' | '_' | ')')) => {
+                if ".,;:!?\u{2026}".contains(last) {
+                    ""
+                } else {
+                    "..."
+                }
+            }
+            (Some(last), _) if ".,;:!?\u{2026}".contains(last) => " ",
+            (_, Some(next)) if ".,;:!?".contains(next) => "",
+            _ => ", ",
+        });
+    }
+}
+
+/// `text` without its em dashes: each becomes a comma, and one that breaks a
+/// sentence off becomes "...".
+pub fn without_dashes(text: &str) -> String {
+    let mut dashless = Dashless::default();
+    let mut out = dashless.push(text);
+    out.push_str(&dashless.finish());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,6 +628,83 @@ mod tests {
             "```\nRun it. Check it. Ship it.\n```",
         ] {
             assert_eq!(kinds(text), [], "{text}");
+        }
+    }
+
+    #[test]
+    fn em_dashes_leave_a_reply_and_the_rest_of_it_stays() {
+        // The first six are from Kestrel's and Mira's replies.
+        for (said, kept) in [
+            (
+                "He roars \u{2014} more surprise than pain, pain comes later.",
+                "He roars, more surprise than pain, pain comes later.",
+            ),
+            (
+                "covering their ears in unison, which \u{2014} fair. Old Ines says",
+                "covering their ears in unison, which, fair. Old Ines says",
+            ),
+            (
+                "and I would never \u{2014} never \u{2014} keep a letter",
+                "and I would never, never, keep a letter",
+            ),
+            (
+                "until they're ready \u{2014} fine \u{2014} but tonight the tide came up",
+                "until they're ready, fine, but tonight the tide came up",
+            ),
+            (
+                "\u{2014} knife hisses past where your throat was \u{2014} and your blade sweeps low.",
+                "knife hisses past where your throat was, and your blade sweeps low.",
+            ),
+            (
+                "the chair is empty \u{2014} but warm.",
+                "the chair is empty, but warm.",
+            ),
+            // No spaces, an en dash used as one, two together.
+            (
+                "Sit down\u{2014}the good chair's free.",
+                "Sit down, the good chair's free.",
+            ),
+            (
+                "Sit down \u{2013} the chair's free.",
+                "Sit down, the chair's free.",
+            ),
+            (
+                "Sit down \u{2014}\u{2014} the chair's free.",
+                "Sit down, the chair's free.",
+            ),
+            // Speech that breaks off, with and without a quote mark after it.
+            ("I would never\u{2014}", "I would never..."),
+            ("\"Wait \u{2014}\" she said.", "\"Wait...\" she said."),
+            ("Wait\u{2014}\nNo.", "Wait...\nNo."),
+            // Punctuation already there is enough.
+            ("Fine. \u{2014} Sit down.", "Fine. Sit down."),
+            ("Fine, \u{2014} sit down.", "Fine, sit down."),
+            ("Fine \u{2014}, sit down.", "Fine, sit down."),
+            ("Really?\u{2014}", "Really?"),
+            ("(\u{2014} quietly)", "(quietly)"),
+            // A line that opens on one.
+            ("Good.\n\n\u{2014} Kestrel", "Good.\n\nKestrel"),
+            // Ranges, hyphens and plain text are left alone.
+            ("1914\u{2014}1918", "1914-1918"),
+            (
+                "1914\u{2013}1918, pages 3\u{2013}5",
+                "1914\u{2013}1918, pages 3\u{2013}5",
+            ),
+            (
+                "A well-kept hall - swept twice.  Two spaces. ",
+                "A well-kept hall - swept twice.  Two spaces. ",
+            ),
+            ("", ""),
+        ] {
+            assert_eq!(without_dashes(said), kept, "{said}");
+            // A reply arrives in pieces cut anywhere, and comes out the same.
+            for cut in (0..=said.len()).filter(|&i| said.is_char_boundary(i)) {
+                let mut dashless = Dashless::default();
+                let mut out = dashless.push(&said[..cut]);
+                out.push_str(&dashless.push(&said[cut..]));
+                out.push_str(&dashless.finish());
+                assert_eq!(out, kept, "{said} cut at {cut}");
+            }
         }
     }
 }

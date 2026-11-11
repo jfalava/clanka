@@ -6,6 +6,11 @@ A general plugin on Hermes's public plugin API only:
   frozen), blocks every turn while memory is frozen or cannot be opened, then
   records the user's message and adds the turn's memory, mood and notes as
   context.
+- ``transform_llm_output``: takes the em dashes out of the reply before Hermes
+  keeps it, so the model's own history stops teaching it the next one. The
+  reply is not held back for this: on a surface that streams, the user sees it
+  as written and then as kept. Text written before a tool call never reaches
+  this hook; clanka records it without them all the same.
 - ``post_llm_call``: records the reply, text written before a tool call
   included, then reflects on the exchange on a background thread. Reflection
   runs on ``ctx.llm``, the user's active model, so the companion's memory is
@@ -65,6 +70,13 @@ def _said(history, final):
             before.append(str(content).strip())
     parts = [*reversed(before), (final or "").strip()]
     return "\n\n".join(p for p in parts if p)
+
+
+def _dashless(response_text="", **_):
+    from . import _clanka
+
+    plain = _clanka.without_dashes(response_text or "")
+    return plain if plain != response_text else None
 
 
 class _Plugin:
@@ -278,6 +290,7 @@ def register(ctx):
 
     plugin = _Plugin(ctx)
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
+    ctx.register_hook("transform_llm_output", _dashless)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
     ctx.register_hook("on_session_reset", plugin.on_session_reset)
     ctx.register_tool(
