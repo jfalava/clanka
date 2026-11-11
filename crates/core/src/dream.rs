@@ -48,9 +48,12 @@ pub const FADING_HINT: &str = "The edges of this place are fading.";
 /// whatever the reply says.
 pub const WAKING_HINT: &str = "It is all coming apart: you wake with this reply.";
 
-/// Said with a reply to an echo.
+/// Said with a reply to an echo. An echo is where the companion learns what it
+/// can't bear, and waking is rare enough that it would otherwise stay.
 pub const ECHO_HINT: &str = "This is an echo: the past, shown to you as if you were there. \
-    You witness it; you can't change what happens in it.";
+    You witness it; you can't change what happens in it. If it shows you something you cannot \
+    bear (harm to someone you love, a betrayal, one of your values broken), it wakes you the \
+    moment you understand it: call wake_up with its words before you reply.";
 
 /// The tool a dreaming companion calls to wake.
 pub const WAKE_UP: &str = "wake_up";
