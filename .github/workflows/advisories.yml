@@ -1,0 +1,28 @@
+name: Advisories
+
+# RustSec advisories against the locked dependencies (deny.toml). Weekly, so
+# one published against a version already locked shows up even when nothing
+# here changes; and whenever the lockfile or the check itself changes. A
+# scheduled run that fails emails whoever last changed this schedule.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  push:
+    branches: [main]
+    paths: [Cargo.lock, deny.toml, .github/workflows/advisories.yml]
+  pull_request:
+    paths: [Cargo.lock, deny.toml, .github/workflows/advisories.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories

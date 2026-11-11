@@ -1,0 +1,7 @@
+# `cargo deny check advisories`, run weekly by .github/workflows/advisories.yml.
+# Vulnerabilities and unsound code fail it wherever they are in the tree.
+[advisories]
+# An unmaintained crate fails it only when a workspace crate depends on it
+# directly: deeper down there is nothing to do until the crate in between
+# moves (paste under tokenizers, zbus 5's zvariant crates under the keyring).
+unmaintained = "workspace"
