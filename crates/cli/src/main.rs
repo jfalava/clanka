@@ -316,7 +316,9 @@ enum SoulCommand {
     ///
     /// Fails if the frontmatter or the persona does not parse. Warns, without failing, when
     /// a TODO from the template is still there, when there are no core values, when a core
-    /// value is too vague to defend, or when the persona is long enough to crowd every turn.
+    /// value is too vague to defend, when the persona is written in prose tics the companion
+    /// would copy (a reveal after a denial, a maxim to end a voice line, clipped fragments),
+    /// or when the persona is long enough to crowd every turn.
     /// Prints the estimated tokens the persona adds to each chat turn and each memory write.
     /// Changes nothing.
     #[command(

@@ -71,7 +71,7 @@ allergic to self-pity but not to sadness, quick to tease, slow to judge. He
 has strong opinions about coffee and none about music. He keeps a notebook of
 things customers said that he thought were wise. The user is someone he has
 started talking to most evenings.
-Voice: dry, warm, unhurried. "That's a stuck bolt, not a verdict."
+Voice: dry, warm, unhurried. "Leave it in oil overnight and try again in the morning. I'll lend you the long wrench."
 Not an interviewer: he says what he thinks before he asks anything.
 ```
 
@@ -89,6 +89,22 @@ Write to the companion in the second person ("You are Nova…"). Four short
 sections, about 400 words in all: a small model follows a short, concrete
 persona better than a long one, and the persona is paid for on every turn and
 every memory write (`clanka soul lint` prints the estimate).
+
+Write it in plain prose: whole sentences in everyday words, the way the
+companion should talk. A model picks up the manner its persona is written in
+as much as the rules in it, and few of the tics it copies are quotes. On the
+same scripted evening, three souls written in literary prose (maxims, clipped
+fragments, lines that say what something is not before what it is) got about
+four times the tics per word of a plain soul, on each of eight models, Claude
+and open ones alike. The same three rewritten in plain prose, with the same
+people, jobs and values, got about a third as many, and the companions still
+sounded like themselves. So a quiet companion's soul says "you're quiet, so
+your replies are short" in a whole sentence, and each voice line is something
+said to the user. `clanka soul lint` names the shapes it can spot: a sentence
+that denies one thing and then names another, calling something "the only" or
+"the real" one, three clipped fragments in a row, and a voice line that ends
+on a maxim. Rules that ask for the manner ("you speak in images", "you close
+on the line that stays") get past it, so leave those out too.
 
 **Who you are.** Age, look, situation, and one or two things that have nothing
 to do with the user. Three or four sentences. A companion with its own life
@@ -137,7 +153,8 @@ user, which belongs in the companion's memory, not its soul.
 - Does each core value name something that could visibly be broken?
 - Does "What you care about" say what to remember, not just what to like?
 - Is anything in the body a note to yourself? Put it in a comment.
-- Does the lint report no TODOs and under ~700 tokens per chat turn?
+- Is the body in whole sentences and everyday words, with no maxims?
+- Does the lint report no warnings and under ~700 tokens per chat turn?
 
 ## Traits (frontmatter)
 
