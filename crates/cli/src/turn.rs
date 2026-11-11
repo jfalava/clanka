@@ -27,8 +27,9 @@ pub struct Pending {
     /// The turn is part of a dream: nothing is reflected on, and the reply
     /// may wake the companion (the `wake_up` tool).
     pub dream: bool,
-    /// The dream fills the session's budget and ends with this reply: the
-    /// front end wakes the companion once the reply is recorded.
+    /// The dream ends with this reply: it fills the session's budget, or the
+    /// companion's `wake_up` woke it. The front end wakes the companion once
+    /// the reply is recorded.
     pub wake: bool,
 }
 
@@ -164,9 +165,26 @@ impl Open {
     }
 }
 
-/// Whether a reply called `wake_up`.
-pub fn wakes(calls: &[clanka_core::deps::ToolCall]) -> bool {
-    calls.iter().any(|c| c.name == WAKE_UP)
+/// The words a reply's `wake_up` call quotes as what wakes the companion, or
+/// `None` when the reply didn't call it.
+pub fn wake_call(calls: &[clanka_core::deps::ToolCall]) -> Option<String> {
+    let call = calls.iter().find(|c| c.name == WAKE_UP)?;
+    let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+    Some(args["because"].as_str().unwrap_or_default().to_owned())
+}
+
+/// Answers the companion's `wake_up` call in the turn `pending` holds, quoting
+/// `because` as the words that wake it (see [`Companion::wake_up`]). When it
+/// wakes, the dream ends with this turn's reply. Returns whether it wakes and
+/// what to tell the model.
+pub fn wake_up(
+    c: &Companion,
+    pending: &mut Pending,
+    because: &str,
+) -> Result<(bool, &'static str)> {
+    let (wakes, note) = c.wake_up(because)?;
+    pending.wake |= wakes;
+    Ok((wakes, note))
 }
 
 /// Checks for the doctor token, assembles the turn's memory and records the

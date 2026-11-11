@@ -1,7 +1,7 @@
 mod common;
 
 use clanka_core::deps::{LlmRequest, LlmResponse, ToolCall};
-use clanka_core::dream::{exaggerate, hint};
+use clanka_core::dream::{NOT_DREAMING, STAY, WAKING, exaggerate, hint};
 use clanka_core::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Urgency};
 use clanka_core::soul::Soul;
 use clanka_core::{Companion, Error, MemoryDraft, Ranking};
@@ -348,6 +348,49 @@ fn a_dream_starts_after_sleep_and_a_lost_one_is_dropped() {
     // An echo outside a dream is refused: there is nothing for it to show.
     let awake = other.open_session().unwrap();
     assert!(other.record_echo(awake, "Years ago").is_err());
+}
+
+/// Nothing the companion imagines wakes it: wake_up must quote three or more
+/// words of what the user wrote in this dream, an echo included, whatever the
+/// case, quotation marks or closing stop. Its own words in the dream, a waking
+/// evening's, a misquote, and two words don't wake it. Answering wakes
+/// nothing by itself: the front end does once the reply is recorded.
+#[test]
+fn only_what_the_dream_told_it_can_wake_it() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    assert_eq!(
+        c.wake_up("the sea is glass").unwrap(),
+        (false, NOT_DREAMING)
+    );
+    awake_evening(&mut c, "Laura knew all along.");
+    let dream = c.start_dream().unwrap();
+    c.record_turn(
+        dream,
+        Speaker::User,
+        "You're in the lamp room. The sea is glass.",
+    )
+    .unwrap();
+    c.record_turn(
+        dream,
+        Speaker::Companion,
+        "The lamp is out and I can't relight it.",
+    )
+    .unwrap();
+    c.record_echo(dream, "Sam says Vesna will hang at Dawnfort.")
+        .unwrap();
+    for woke in ["“the SEA is glass.”", "Vesna will hang", "the sea is"] {
+        assert_eq!(c.wake_up(woke).unwrap(), (true, WAKING), "{woke}");
+    }
+    for stays in [
+        "the sea",
+        "The lamp is out",
+        "Laura knew all along",
+        "the sea was glass",
+    ] {
+        assert_eq!(c.wake_up(stays).unwrap(), (false, STAY), "{stays}");
+    }
+    assert_eq!(c.dreaming().unwrap(), Some(dream));
 }
 
 /// What was written out of earshot is the transcript's, never memory's: the

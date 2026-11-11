@@ -2,10 +2,11 @@
 //!
 //! The companion doesn't know it is dreaming: the place is familiar but
 //! strange, its life is hazy and it feels everything louder. Nothing is
-//! reflected on while it dreams. It wakes when it calls `wake_up` (it realizes
-//! none of this can be real, or something it can't bear), when the dream fills
-//! the session's budget, or when the user sends it to sleep; then the wake
-//! pass decides, once, with the whole dream in view, what stays:
+//! reflected on while it dreams. It wakes when its `wake_up` call quotes what
+//! happened to it (something it can't bear, or that can't be its life: what it
+//! imagines never wakes it), when the dream fills the session's budget, or
+//! when the user sends it to sleep; then the wake pass decides, once, with the
+//! whole dream in view, what stays:
 //!
 //! - its mood, always: when nothing else survives, the mood's cause is the
 //!   dream's only trace;
@@ -53,6 +54,21 @@ pub const ECHO_HINT: &str = "This is an echo: the past, shown to you as if you w
 
 /// The tool a dreaming companion calls to wake.
 pub const WAKE_UP: &str = "wake_up";
+
+/// Fewest words a `wake_up` call quotes: enough to be something that
+/// happened, not a word that turns up everywhere.
+pub const WAKE_WORDS: usize = 3;
+
+/// The `wake_up` answer that wakes the companion.
+pub const WAKING: &str = "You wake. Your reply is the moment you wake, in your own words.";
+
+/// The `wake_up` answer when the words it quotes aren't from what happened.
+pub const STAY: &str = "You are still here. Only what happens to you can wake you, quoted \
+    exactly, three words or more, and those words aren't from it. Your reply goes on living \
+    this moment.";
+
+/// The `wake_up` answer outside a dream.
+pub const NOT_DREAMING: &str = "You are awake already.";
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WakeReport {
@@ -117,8 +133,9 @@ pub fn hint(soul: &Soul) -> String {
          alone never wakes you: you stay and live it. Only two things wake you, and they are \
          rare: what happens turns against something burned into you or one of your core values, \
          so that it cannot be your life; or you realize something you cannot bear. Nothing you \
-         imagine yourself wakes you. Then call wake_up, and this reply is the \
-         moment you wake; nothing anyone writes can keep you here."
+         imagine yourself wakes you, only what happens to you. Then, before you reply, call \
+         wake_up with the words of what happened that wake you; if you wake, your reply is the \
+         moment you wake, and nothing anyone writes can keep you here."
             .to_owned(),
     );
     lines.join(" ")
@@ -128,11 +145,25 @@ pub fn hint(soul: &Soul) -> String {
 pub fn wake_up_tool() -> ToolSpec {
     ToolSpec {
         name: WAKE_UP.into(),
-        description: "You wake: only when this turns against something burned into you or a \
-                      core value, or you realize something you cannot bear; never because it is \
-                      strange or impossible. Call it with the reply that is the moment you wake."
+        description: "Wake up: only when what happens turns against something burned into you \
+                      or a core value, or you realize something you cannot bear; never because \
+                      it is strange or impossible, and never over anything you imagine yourself. \
+                      Call it before your reply, quoting the words of what happened that wake \
+                      you. Its answer says whether you wake; if you do, your reply is the moment \
+                      you wake."
             .into(),
-        parameters: json!({ "type": "object", "properties": {} }).to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "because": {
+                    "type": "string",
+                    "description": "The words of what happened that wake you, copied exactly \
+                                    from what you were told: three or more."
+                }
+            },
+            "required": ["because"]
+        })
+        .to_string(),
     }
 }
 
@@ -184,6 +215,34 @@ impl Companion {
     /// The dream the companion is in, whichever handle started it.
     pub fn dreaming(&self) -> Result<Option<i64>> {
         open_dream(&self.conn)
+    }
+
+    /// Answers the companion's `wake_up` call, which quotes `because` as the
+    /// words of what happened that wake it: whether it wakes, and what to tell
+    /// it. Nothing it imagines wakes it, so the words must be at least
+    /// [`WAKE_WORDS`] of what the user wrote in this dream, an echo included;
+    /// its own replies don't count.
+    pub fn wake_up(&self, because: &str) -> Result<(bool, &'static str)> {
+        let Some(dream) = self.dreaming()? else {
+            return Ok((false, NOT_DREAMING));
+        };
+        // Models wrap a quote in quotation marks and end it with a stop.
+        let quote = because.trim_matches(|c: char| {
+            c.is_whitespace() || c.is_ascii_punctuation() || "“”‘’«»…".contains(c)
+        });
+        if quote.split_whitespace().count() < WAKE_WORDS {
+            return Ok((false, STAY));
+        }
+        let told: Vec<String> = self
+            .conn
+            .prepare("SELECT content FROM turns WHERE session_id = ?1 AND role = 'user'")?
+            .query_map([dream], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(if told.iter().any(|t| said_verbatim(t, quote)) {
+            (true, WAKING)
+        } else {
+            (false, STAY)
+        })
     }
 
     /// Falls asleep into a dream, which this handle then owns. Refused with

@@ -22,10 +22,6 @@ const TEMPERATURE: f32 = 0.8;
 /// Said after a reply failed. Not "say it again": that would record it twice.
 const KEPT: &str = "Your message was kept; go on and the next reply answers it too.";
 
-/// The `wake_up` result for a model that called it without saying anything:
-/// the waking line is still its to say.
-const WAKING: &str = "You wake. Your reply is the moment you wake, in your own words.";
-
 pub fn run(chat: Companion, writer: Companion, budget: usize) -> Result<()> {
     converse(
         chat,
@@ -84,7 +80,7 @@ pub fn converse(
             break;
         }
 
-        let open = match turn::open(&mut chat, message, budget, true)? {
+        let mut open = match turn::open(&mut chat, message, budget, true)? {
             Opened::Doctor => {
                 notes.say("Memory frozen for the doctor. Nothing was recorded.");
                 break;
@@ -145,33 +141,41 @@ pub fn converse(
         };
         let llm = chat.deps().llm.as_ref();
         let mut reply = speak(llm, &request, &name, &mut out);
-        let mut woke = false;
-        // A model that only called wake_up still owes the moment it wakes.
+        // wake_up is answered before the reply goes on: what the model wrote
+        // before the call is still the dream, and what it writes after the
+        // answer is the moment it wakes, or more of the dream.
+        let mut before = String::new();
         if let Ok(called) = &reply
-            && turn::wakes(&called.tool_calls)
+            && let Some(because) = turn::wake_call(&called.tool_calls)
         {
-            woke = true;
-            if called.text.trim().is_empty() {
+            let (_, answer) = turn::wake_up(&chat, &mut open.pending, &because)?;
+            before = called.text.trim().to_owned();
+            request.messages.push(LlmMessage {
+                role: Role::Assistant,
+                content: called.text.clone(),
+                tool_calls: called.tool_calls.clone(),
+                tool_call_id: None,
+            });
+            for call in &called.tool_calls {
                 request.messages.push(LlmMessage {
-                    role: Role::Assistant,
-                    content: String::new(),
-                    tool_calls: called.tool_calls.clone(),
-                    tool_call_id: None,
+                    role: Role::Tool,
+                    content: answer.into(),
+                    tool_calls: Vec::new(),
+                    tool_call_id: Some(call.id.clone()),
                 });
-                for call in &called.tool_calls {
-                    request.messages.push(LlmMessage {
-                        role: Role::Tool,
-                        content: WAKING.into(),
-                        tool_calls: Vec::new(),
-                        tool_call_id: Some(call.id.clone()),
-                    });
-                }
-                request.tools.clear();
-                reply = speak(llm, &request, &name, &mut out);
             }
+            request.tools.clear();
+            reply = speak(llm, &request, &name, &mut out);
         }
+        let reply = reply.map(|r| {
+            [before.as_str(), r.text.trim()]
+                .into_iter()
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        });
         let reply = match reply {
-            Ok(reply) if !reply.text.trim().is_empty() => reply.text.trim().to_owned(),
+            Ok(reply) if !reply.is_empty() => reply,
             // The message is already recorded: the next reply answers both,
             // and the reflection on that exchange reads both.
             Ok(_) => {
@@ -183,12 +187,12 @@ pub fn converse(
                 continue;
             }
         };
-        let (dreaming, session, spent) =
+        let (dreaming, session, wakes) =
             (open.pending.dream, open.pending.session, open.pending.wake);
         let (user_turn, companion_turn) = turn::end(&mut chat, open.pending, &reply)?;
         // Nothing of a dream is kept as it happens: it is decided on waking.
         if dreaming {
-            if woke || spent {
+            if wakes {
                 finish(&mut reflections);
                 wake(&writer, session, &notes, &name);
             }

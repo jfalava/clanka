@@ -6,11 +6,12 @@ A general plugin on Hermes's public plugin API only:
   frozen), blocks every turn while memory is frozen or cannot be opened, then
   records the user's message and adds the turn's memory, mood and notes as
   context.
-- ``post_llm_call``: records the reply, then reflects on the exchange on a
-  background thread. Reflection runs on ``ctx.llm``, the user's active model,
-  so the companion's memory is written by the same model it chats with.
-- Tools ``recall_memory`` and ``go_to_sleep``. Sleep waits until the reply is
-  recorded, then consolidates the conversation.
+- ``post_llm_call``: records the reply, text written before a tool call
+  included, then reflects on the exchange on a background thread. Reflection
+  runs on ``ctx.llm``, the user's active model, so the companion's memory is
+  written by the same model it chats with.
+- Tools ``recall_memory``, ``go_to_sleep`` and, in a dream, ``wake_up``. Sleep
+  and waking wait until the reply is recorded, then consolidate.
 - ``on_session_reset`` (``/new``, ``/reset``, a session-reset policy plugin):
   the companion sleeps on whatever was said since it last slept, so a
   conversation the user walked away from still becomes a memory. Nothing
@@ -45,6 +46,27 @@ def _block(message):
     return {"action": "block", "message": message}
 
 
+def _said(history, final):
+    """The whole reply, as the user saw it. Hermes passes ``post_llm_call`` only
+    the text after the last tool call; what the model wrote before a call (a
+    dream's last moment before ``wake_up``) is on this turn's assistant
+    messages that made the calls, which the gateway shows too."""
+    before = []
+    for m in reversed(history or []):
+        role = m.get("role") if isinstance(m, dict) else None
+        if role == "user":
+            break
+        if role == "assistant" and m.get("tool_calls"):
+            content = m.get("content") or ""
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(p.get("text", "")) for p in content if isinstance(p, dict)
+                )
+            before.append(str(content).strip())
+    parts = [*reversed(before), (final or "").strip()]
+    return "\n\n".join(p for p in parts if p)
+
+
 class _Plugin:
     def __init__(self, ctx):
         self._ctx = ctx
@@ -53,7 +75,6 @@ class _Plugin:
         # Reflections and sleep run one at a time, in order, off the turn thread.
         self._work_lock = threading.Lock()
         self._sleep_requested = False
-        self._wake_requested = False
 
     # The companion opens on first use, so a slow Secret Service or model load
     # never counts against Hermes's plugin load timeout. It opens on a thread
@@ -152,7 +173,7 @@ class _Plugin:
             return {"context": context}
         return None
 
-    def post_llm_call(self, assistant_response="", **_):
+    def post_llm_call(self, assistant_response="", conversation_history=None, **_):
         # Hermes calls this for a blocked turn too. One that pre_llm_call
         # blocked because memory did not open has nothing to record, and
         # waiting for the open here would hold the blocked reply back until
@@ -161,17 +182,16 @@ class _Plugin:
         opening = self._opening
         if opening is None or not opening.done() or opening.exception() is not None:
             return
-        ended = opening.result().end_turn(assistant_response or "")
+        ended = opening.result().end_turn(_said(conversation_history, assistant_response))
         sleep, self._sleep_requested = self._sleep_requested, False
-        wake, self._wake_requested = self._wake_requested, False
         turns = None
         if ended is not None:
-            user, companion, spent = ended
+            user, companion, wakes = ended
             turns = (user, companion)
-            # The dream filled the session: it ends with this reply.
-            wake = wake or spent
-        # In a dream, sleep wakes the companion; reflect does nothing there.
-        sleep = sleep or wake
+            # The dream ends with this reply (wake_up woke the companion, or
+            # the dream filled the session). In a dream, sleep wakes the
+            # companion; reflect does nothing there.
+            sleep = sleep or wakes
         if turns is None and not sleep:
             return
         # A copied context keeps Hermes's live model selection for ctx.llm.
@@ -238,11 +258,10 @@ class _Plugin:
         return json.dumps({"memories": found or [], "note": "" if found else "Nothing comes to mind."})
 
     def wake_up(self, args, **_):
-        if not self.companion().dreaming():
-            return json.dumps({"ok": False, "note": "You are awake already."})
-        self._wake_requested = True
-        # Like go_to_sleep: the reply is the moment, in the companion's words.
-        return json.dumps({"ok": True, "note": "Your reply is the moment you wake, in your own words."})
+        # Only what the dream told the companion wakes it, never what it made
+        # up; when it wakes, end_turn says so and the reply is the moment.
+        wakes, note = self.companion().wake_up(str(args.get("because", "")))
+        return json.dumps({"ok": wakes, "note": note})
 
     def go_to_sleep(self, args, **_):
         self._sleep_requested = True
@@ -255,7 +274,7 @@ def register(ctx):
     # Load the native core now, so a broken build fails at plugin load and the
     # process that holds it is known before the first turn. The companion
     # itself still opens lazily, on the first hook.
-    from . import _clanka  # noqa: F401
+    from . import _clanka
 
     plugin = _Plugin(ctx)
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
@@ -288,16 +307,11 @@ def register(ctx):
         },
         handler=plugin.go_to_sleep,
     )
+    # The core's own wake_up, so every front end tells the model the same.
+    description, parameters = _clanka.wake_up_tool()
     ctx.register_tool(
         name="wake_up",
         toolset="clanka",
-        schema={
-            "name": "wake_up",
-            "description": "Wake from a dream. Never because it is strange or impossible: dreams "
-            "are. Only when it turns against something burned into you or a core value, or you "
-            "realize something you cannot bear: call this before your reply. Your reply is the "
-            "moment you wake.",
-            "parameters": {"type": "object", "properties": {}},
-        },
+        schema={"name": "wake_up", "description": description, "parameters": json.loads(parameters)},
         handler=plugin.wake_up,
     )

@@ -153,50 +153,63 @@ fn a_closed_terminal_ends_the_chat_without_a_model_call() {
     assert!(asked.lock().unwrap().is_empty());
 }
 
-/// A dream starts with `~~`, its replies may call wake_up, and the reply that
-/// does is the moment the companion wakes: a model that only called the tool
-/// is asked once more for the words. The wake pass settles a mood, and the
-/// chat goes on awake, without wake_up.
+/// A dream starts with `~~`, and its replies may call wake_up, quoting what
+/// woke the companion. The call is answered before the reply goes on: words
+/// it made up itself, even ones it said earlier in the dream, don't wake it,
+/// and it carries on; words the dream told it this turn do, and what it says
+/// after the answer is the moment it wakes. The text on both sides of the
+/// call is the reply. The wake pass settles a mood, and the chat goes on
+/// awake, without wake_up.
 #[test]
 fn a_dream_wakes_by_the_companions_choice_and_the_chat_goes_on_awake() {
     let dir = tempfile::tempdir().unwrap();
-    let tools = Arc::new(Mutex::new(Vec::new()));
+    // Each request's tools and its last message.
+    let asked = Arc::new(Mutex::new(Vec::new()));
     let (seen, mut replies) = (
-        tools.clone(),
+        asked.clone(),
         vec![
-            ("I'm in the kitchen.", false),
-            ("", true),
-            ("I wake, shaking.", false),
-            ("Hello.", false),
+            ("Her ring is gone from the sill.", None),
+            ("I search the drawers.", Some("her ring is gone")),
+            ("Steam fills the room.", None),
+            ("", Some("“The ring went with her.”")),
+            ("I wake, shaking.", None),
+            ("Hello.", None),
         ]
         .into_iter(),
     );
     let chat = open_with(
         dir.path(),
         Scripted::new(move |r: &LlmRequest| {
-            seen.lock()
-                .unwrap()
-                .push(r.tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>());
-            let (text, wakes) = replies.next().expect("a reply for every request");
+            let last = r.messages.last().unwrap();
+            seen.lock().unwrap().push((
+                r.tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
+                last.role,
+                last.content.clone(),
+            ));
+            let (text, because) = replies.next().expect("a reply for every request");
             Ok(LlmResponse {
                 text: text.into(),
-                tool_calls: if wakes {
-                    vec![ToolCall {
+                tool_calls: because
+                    .map(|b| ToolCall {
                         id: "w".into(),
                         name: "wake_up".into(),
-                        arguments: "{}".into(),
-                    }]
-                } else {
-                    Vec::new()
-                },
+                        arguments: serde_json::json!({ "because": b }).to_string(),
+                    })
+                    .into_iter()
+                    .collect(),
             })
         }),
     );
     // The writer settles a mood when it wakes, and keeps nothing otherwise.
+    let dreamt = Arc::new(Mutex::new(String::new()));
+    let kept = dreamt.clone();
     let writer = open_with(
         dir.path(),
-        Scripted::new(|r: &LlmRequest| {
+        Scripted::new(move |r: &LlmRequest| {
             let waking = r.system.contains("waking up") && r.messages.len() == 1;
+            if waking {
+                *kept.lock().unwrap() = r.messages[0].content.clone();
+            }
             Ok(LlmResponse {
                 text: String::new(),
                 tool_calls: if waking {
@@ -216,7 +229,9 @@ fn a_dream_wakes_by_the_companions_choice_and_the_chat_goes_on_awake() {
         chat,
         writer,
         4000,
-        "~~ You're in your mother's kitchen.\nThe kettle screams.\nhi\n".as_bytes(),
+        "~~ You're in your mother's kitchen.\nThe kettle screams.\n\
+         Her voice, from nowhere: the ring went with her to the grave.\nhi\n"
+            .as_bytes(),
         &mut out,
         notes.clone(),
     )
@@ -224,12 +239,24 @@ fn a_dream_wakes_by_the_companions_choice_and_the_chat_goes_on_awake() {
 
     assert_eq!(
         String::from_utf8(out).unwrap(),
-        "Nova> I'm in the kitchen.\nNova> I wake, shaking.\nNova> Hello.\n"
+        "Nova> Her ring is gone from the sill.\nNova> I search the drawers.\n\
+         Nova> Steam fills the room.\nNova> I wake, shaking.\nNova> Hello.\n"
     );
-    let wake: Vec<String> = vec!["wake_up".into()];
+    let asked = asked.lock().unwrap();
+    let tools: Vec<_> = asked.iter().map(|(tools, _, _)| tools.len()).collect();
+    assert_eq!(tools, [1, 1, 0, 1, 0, 0]);
     assert_eq!(
-        *tools.lock().unwrap(),
-        [wake.clone(), wake, Vec::new(), Vec::new()]
+        (asked[2].1, asked[2].2.as_str()),
+        (Role::Tool, clanka_core::dream::STAY)
+    );
+    assert_eq!(
+        (asked[4].1, asked[4].2.as_str()),
+        (Role::Tool, clanka_core::dream::WAKING)
+    );
+    let dreamt = dreamt.lock().unwrap();
+    assert!(
+        dreamt.contains("(you) I search the drawers.\n\nSteam fills the room."),
+        "{dreamt}"
     );
     let notes = notes.text();
     assert!(notes.contains("Nova wakes: 0 fragments linger"), "{notes}");

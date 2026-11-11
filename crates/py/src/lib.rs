@@ -152,9 +152,10 @@ impl PyCompanion {
 
     /// After the reply: records it and marks what was recalled. Fast. Returns
     /// the `(user, companion)` turn IDs to pass to `reflect` and whether the
-    /// dream ends with this reply (it filled the session: call `sleep`, which
-    /// wakes it), or `None` when no turn was open (the doctor token, a frozen
-    /// memory, or a vetoed turn). `reflect` on a dream's turns does nothing.
+    /// dream ends with this reply (it filled the session, or `wake_up` woke
+    /// the companion: call `sleep`, which wakes it), or `None` when no turn
+    /// was open (the doctor token, a frozen memory, or a vetoed turn).
+    /// `reflect` on a dream's turns does nothing.
     fn end_turn(&self, py: Python<'_>, reply: &str) -> PyResult<Option<(i64, i64, bool)>> {
         py.detach(|| {
             let Some(pending) = lock(&self.pending).take() else {
@@ -164,6 +165,20 @@ impl PyCompanion {
             let (user, companion) =
                 turn::end(&mut lock(&self.chat), pending, reply).map_err(err)?;
             Ok(Some((user, companion, spent)))
+        })
+    }
+
+    /// Answers the reply model's `wake_up` call, which quotes `because` as the
+    /// words of what happened that wake the companion. Returns whether it
+    /// wakes and the answer to give the model. When it wakes, `end_turn` says
+    /// the dream ends with this reply.
+    fn wake_up(&self, py: Python<'_>, because: &str) -> PyResult<(bool, &'static str)> {
+        py.detach(|| {
+            let mut pending = lock(&self.pending);
+            let Some(p) = pending.as_mut() else {
+                return Ok((false, "No turn is open: call wake_up before your reply."));
+            };
+            turn::wake_up(&lock(&self.chat), p, because).map_err(err)
         })
     }
 
@@ -266,7 +281,16 @@ impl PyCompanion {
     }
 }
 
+/// The `wake_up` tool for the host to register: its description and its
+/// parameters' JSON schema.
+#[pyfunction]
+fn wake_up_tool() -> (String, String) {
+    let spec = clanka_core::dream::wake_up_tool();
+    (spec.description, spec.parameters)
+}
+
 #[pymodule]
 fn _clanka(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyCompanion>()
+    m.add_class::<PyCompanion>()?;
+    m.add_function(wrap_pyfunction!(wake_up_tool, m)?)
 }

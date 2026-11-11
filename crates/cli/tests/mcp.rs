@@ -167,3 +167,74 @@ async fn a_server_without_a_model_records_turns_and_cannot_sleep() {
     assert!(persona.starts_with("# Nova"), "{persona}");
     assert!(persona.contains("call begin_turn"), "{persona}");
 }
+
+/// In a dream, wake_up comes between begin_turn and end_turn, quoting what
+/// wakes the companion. Words that weren't in what happened leave it in the
+/// dream; words that were wake it, and end_turn wakes it once the reply is
+/// saved. With no turn open there is no reply to be the waking.
+#[tokio::test]
+async fn a_dream_wakes_with_the_reply_after_a_wake_up_that_quotes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let writer = open_with(
+        dir.path(),
+        Scripted::new(|r: &LlmRequest| {
+            let waking = r.system.contains("waking up") && r.messages.len() == 1;
+            Ok(LlmResponse {
+                text: String::new(),
+                tool_calls: if waking {
+                    vec![clanka_core::deps::ToolCall {
+                        id: "m".into(),
+                        name: "settle_mood".into(),
+                        arguments: r#"{"valence": -0.4, "energy": 0.2, "warmth": 0.3, "cause": "a bell under the water"}"#.into(),
+                    }]
+                } else {
+                    Vec::new()
+                },
+            })
+        }),
+    );
+    let client = connect(open(dir.path()), Some(writer)).await;
+    let turn = async |message: &str, because: &str, reply: &str| {
+        call(&client, "begin_turn", json!({ "message": message }))
+            .await
+            .unwrap();
+        let answer = call(&client, "wake_up", json!({ "because": because }))
+            .await
+            .unwrap();
+        let ended = call(&client, "end_turn", json!({ "reply": reply }))
+            .await
+            .unwrap();
+        (answer, ended)
+    };
+
+    let (answer, ended) = turn(
+        "~~ The tide takes the pier.",
+        "the moon is red",
+        "I hold the rail.",
+    )
+    .await;
+    assert_eq!(answer, clanka_core::dream::STAY);
+    assert_eq!(ended, "Saved.");
+    assert!(open(dir.path()).dreaming().unwrap().is_some());
+
+    let (answer, ended) = turn(
+        "A bell rings under the water.",
+        "a bell rings under",
+        "I wake, cold.",
+    )
+    .await;
+    assert_eq!(answer, clanka_core::dream::WAKING);
+    assert!(ended.starts_with("You woke:"), "{ended}");
+    let c = open(dir.path());
+    assert_eq!(c.dreaming().unwrap(), None);
+    assert_eq!(c.mood().unwrap().unwrap().cause, "a bell under the water");
+
+    let refused = call(
+        &client,
+        "wake_up",
+        json!({ "because": "a bell rings under" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(refused.contains("No turn is open"), "{refused}");
+}

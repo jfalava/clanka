@@ -2,8 +2,9 @@
 //! host. Five tools with one fixed order (begin_turn, reply, end_turn), so any
 //! current model can follow it, plus the persona as an MCP prompt. The doctor
 //! is never a tool: the doctor token freezes memory and the CLI does the rest.
-//! A dream ends with wake_up, or by itself when it fills the session; the
-//! server drops one still open when it exits.
+//! A dream ends with the reply after a wake_up that woke the companion, or by
+//! itself when it fills the session; the server drops one still open when it
+//! exits.
 
 use crate::turn::{self, Begin, Pending};
 use anyhow::Result;
@@ -24,7 +25,8 @@ do these three steps in order: 1) call begin_turn with the user's message, exact
 2) write your reply in character, using what begin_turn returned as your own memories and mood; \
 3) call end_turn with your reply, exactly as written. When the user says goodnight or asks you to \
 sleep, call sleep after replying. In a dream (begin_turn tells you of a place you know that is \
-strange), when your reply is the moment you wake, call wake_up after end_turn.";
+strange), to wake, call wake_up after begin_turn and before your reply, quoting the words that \
+wake you; if it says you wake, your reply is the moment you wake.";
 
 #[derive(Deserialize, JsonSchema)]
 pub struct BeginTurn {
@@ -36,6 +38,12 @@ pub struct BeginTurn {
 pub struct EndTurn {
     /// Your reply to the user, exactly as you wrote it.
     reply: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WakeUp {
+    /// The words of what happened that wake you, copied exactly from what you were told: three or more.
+    because: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -158,8 +166,8 @@ impl Server {
         })
         .await?;
         // Nothing of a dream is kept as it happens: it is decided on waking.
-        if let Some((session, spent)) = dream {
-            if !spent {
+        if let Some((session, wakes)) = dream {
+            if !wakes {
                 return Ok("Saved.".into());
             }
             let (chat, writer) = (self.chat.clone(), self.writer.clone());
@@ -210,16 +218,23 @@ impl Server {
     }
 
     #[tool(
-        description = "Call after end_turn when your reply was the moment you woke from the strange, familiar place begin_turn told you of. Takes a while."
+        description = "In the strange, familiar place begin_turn told you of: wake up, only when what happens turns against something burned into you or a core value, or you realize something you cannot bear; never because it is strange or impossible, and never over anything you imagine yourself. Call it after begin_turn and before your reply, quoting the words of what happened that wake you. Its answer says whether you wake; if you do, your reply is the moment you wake, and end_turn wakes you."
     )]
-    async fn wake_up(&self) -> Result<String, String> {
-        let (chat, writer) = (self.chat.clone(), self.writer.clone());
+    async fn wake_up(
+        &self,
+        Parameters(WakeUp { because }): Parameters<WakeUp>,
+    ) -> Result<String, String> {
+        let (chat, pending) = (self.chat.clone(), self.pending.clone());
         blocking(move || {
-            let dream = lock(&chat).dreaming().map_err(|e| e.to_string())?;
-            match dream {
-                Some(dream) => wake(&chat, writer.as_deref(), dream),
-                None => Ok("You are awake already.".into()),
-            }
+            let mut pending = lock(&pending);
+            let Some(p) = pending.as_mut() else {
+                return Err(
+                    "No turn is open: call wake_up after begin_turn, before your reply.".into(),
+                );
+            };
+            let (_, answer) =
+                turn::wake_up(&lock(&chat), p, &because).map_err(|e| e.to_string())?;
+            Ok(answer.into())
         })
         .await
     }
