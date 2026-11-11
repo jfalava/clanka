@@ -1,0 +1,186 @@
+---
+title: Configuration
+description: Where clanka keeps its files and every setting config.toml takes.
+sidebar:
+  order: 1
+---
+
+clanka reads one optional file, `config.toml`. Every section in it is
+optional, and an unknown section or key is an error.
+
+## Files
+
+On Linux:
+
+| Path                             | What it holds                                     |
+| -------------------------------- | ------------------------------------------------- |
+| `~/.config/clanka/config.toml`   | The settings on this page.                        |
+| `~/.config/clanka/souls/<id>.md` | Each companion's `soul.md`.                       |
+| `~/.config/clanka/keys/<id>.key` | Database keys, only with `[keys] store = "file"`. |
+| `~/.local/share/clanka/`         | The databases and the embedding model.            |
+
+On macOS, config and data both live in
+`~/Library/Application Support/clanka`.
+
+## `[model]`
+
+The model the companion talks and remembers with: any OpenAI-compatible chat
+completions endpoint with tool calls. `clanka chat`, memory writing, sleep,
+`clanka soul update`, `clanka soul draft` and `clanka doctor reinterpret`
+need it.
+
+```toml
+[model]
+base_url = "https://api.example.com/v1"
+model = "some-model"
+api_key_env = "CLANKA_MODEL_API_KEY"
+```
+
+### `base_url`
+
+The endpoint, up to and including `/v1`. Required.
+
+### `model`
+
+The model's name as the endpoint knows it. Required.
+
+### `api_key_env`
+
+The environment variable that holds the API key. The key itself is never in
+the file.
+
+- Default: `CLANKA_MODEL_API_KEY`
+
+## `[embedding]`
+
+The local model that turns text into vectors for recall.
+
+```toml
+[embedding]
+model = "multilingual"
+duplicate_similarity = 0.9
+```
+
+### `model`
+
+`english` is a small English model (about 23 MB). `multilingual` is for
+companions that talk in other languages (about 250 MB, and slower per text).
+
+- Default: `english`
+
+A companion keeps the model its vectors were built with, and refuses to open
+until they match. After changing this setting, run
+[`clanka embedding`](/cli/embedding/), then
+[`clanka doctor reembed`](/cli/doctor/#reembed) on each companion.
+
+### `duplicate_similarity`
+
+How alike a new memory and one already kept must be for the new one to be
+refused as a copy. Above 0, at most 1.
+
+- Default: `0.92`
+
+Models spread similar texts differently, so it may need changing with the
+model.
+
+## `[recall]`
+
+The ranking recall uses. Set any of the keys; the rest keep their defaults.
+[Tuning recall](/guides/tuning-recall/) shows how to measure a change.
+
+```toml
+[recall]
+limit = 6
+min_relevance = 0.3
+```
+
+### `limit`
+
+Most memories returned per turn.
+
+- Default: `8`
+
+### `seared_limit`
+
+Most seared memories per turn, so the same moments do not come up forever.
+
+- Default: `2`
+
+### `min_relevance`
+
+Below this relevance a memory is never recalled, seared or not.
+
+- Default: `0.25`
+
+### `min_score`
+
+Below this final score a memory has faded out of reach.
+
+- Default: `0.05`
+
+### `fts_weight`
+
+Added to the relevance for the best full-text match, and scaled down for
+weaker matches. It lets the names and places in a memory's facts count.
+
+- Default: `0.15`
+
+### `mood_weight`
+
+How strongly the companion's mood pulls same-feeling memories up and others
+down.
+
+- Default: `0.15`
+
+### `thread_boost`
+
+Multiplier for open threads that have not been resolved.
+
+- Default: `1.2`
+
+### `faint_half_life`
+
+The number of newer memories after which a faint memory's rank halves.
+
+- Default: `40`
+
+### `normal_half_life`
+
+The same for normal and vivid memories.
+
+- Default: `400`
+
+### `vivid_floor`
+
+Vivid memories never sink below this factor, however old they are.
+
+- Default: `0.35`
+
+### `level_weights`
+
+The weight per level, in the order faint, normal, vivid, seared.
+
+- Default: `[0.8, 1.0, 1.15, 1.3]`
+
+## `[keys]`
+
+Where a new companion's database key is put.
+
+```toml
+[keys]
+store = "file"
+```
+
+### `store`
+
+`secret-service` puts the key in the Secret Service (the login keychain on
+macOS), under the service `clanka`. `file` puts it in
+`~/.config/clanka/keys/<id>.key`, a file only you can read, for a machine
+with no Secret Service.
+
+- Default: `secret-service`
+
+<Aside type="caution">
+  With `file`, whoever can read your files can read the database too: the key no
+  longer waits on your login.
+</Aside>

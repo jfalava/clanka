@@ -1,0 +1,78 @@
+---
+title: chat
+description: Talk with a companion in the terminal, on its configured model.
+---
+
+```sh
+clanka chat [--budget <tokens>] <soul>
+```
+
+Needs a [`[model]`](/configuration/#model) section in `config.toml`. Type a
+message and press Enter. Each reply is remembered in the background.
+
+It refuses to start if the persona changed since the companion's memories
+were written. Settle the change with [`clanka soul`](/cli/soul/) first.
+
+```sh
+clanka chat ~/.config/clanka/souls/<id>.md
+```
+
+## Flags
+
+### `--budget <tokens>`
+
+Estimated tokens the memory context may use per turn.
+
+- Default: `6000`
+
+```sh
+clanka chat --budget 4000 ~/.config/clanka/souls/<id>.md
+```
+
+## In the conversation
+
+### `/sleep`
+
+Ends the conversation and turns it into memories. See
+[Sleep](/concepts/sleep-and-dreams/#sleep).
+
+### The doctor token
+
+Sending the soul's `doctor_token` as a whole message freezes the memory and
+quits without recording anything. See
+[Repairing memory](/guides/repairing-memory/).
+
+### `>>N`
+
+At the start of a message, asks for a reply of about N paragraphs.
+
+```text
+you> >>3 Tell me about the cello lesson.
+```
+
+### `~~`
+
+As the first message after sleep, starts a
+[dream](/concepts/sleep-and-dreams/#dreams). What you write is what happens
+to the companion, as "you", and it lives it without knowing it dreams.
+
+```text
+you> ~~ You're standing in your mother's kitchen. It is too quiet.
+```
+
+### `<<`
+
+In a dream, shows the companion an echo of the past.
+
+```text
+you> << >>3 Years ago, in this room, the judge reads the sentence aloud.
+```
+
+### `||`
+
+Anywhere in a waking message, text between `||` and `||` is said out of the
+companion's earshot. It plays along without hearing it, and never keeps it.
+
+```text
+you> Dinner was fine. ||I haven't told her about the job yet.||
+```

@@ -1,0 +1,15 @@
+{
+  "name": "clanka",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": ["docs", "iac"],
+  "scripts": {
+    "deploy": "bun run --cwd iac deploy",
+    "destroy": "bun run --cwd iac destroy",
+    "docs:build": "bun run --cwd docs build",
+    "docs:check": "bun run --cwd docs lint && bun run --cwd docs typecheck && bun run --cwd iac typecheck",
+    "docs:dev": "bun run --cwd docs dev",
+    "plan": "bun run --cwd iac plan"
+  }
+}

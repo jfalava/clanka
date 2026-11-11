@@ -1,0 +1,239 @@
+---
+title: doctor
+description: The doctor's tools for when a companion's memory goes wrong.
+---
+
+```sh
+clanka doctor <subcommand>
+```
+
+Look first: [`log`](#log) shows every write and [`check-facts`](#check-facts)
+the memories that claim things never said.
+
+To repair, [freeze](#freeze) the companion. While it is frozen nothing writes
+to its memory, and [`rollback`](#rollback), [`reinterpret`](#reinterpret) and
+[`delete-all`](#delete-all) refuse to run unless it is.
+[Unfreeze](#unfreeze) when you are done.
+
+[Repairing memory](/guides/repairing-memory/) walks through each repair.
+
+```sh
+clanka doctor log ~/.config/clanka/souls/<id>.md --since 6h
+clanka doctor freeze ~/.config/clanka/souls/<id>.md
+clanka doctor rollback ~/.config/clanka/souls/<id>.md --to 2026-03-09T14:30:05
+clanka doctor unfreeze ~/.config/clanka/souls/<id>.md
+```
+
+Every subcommand takes the companion's `soul.md`, as printed by
+`clanka init`.
+
+## freeze
+
+```sh
+clanka doctor freeze <soul>
+```
+
+Stops every write to the memory while the doctor works.
+
+It takes effect at once in every process that has the companion open, and
+nothing said meanwhile is recorded or remembered:
+
+- `clanka chat` stops.
+- A Hermes turn is answered with a note that memory is frozen instead of by
+  the model.
+- An MCP host, which calls its model itself, is told to answer without
+  memory.
+
+Sending the soul's `doctor_token` in a chat does the same. The freeze lasts
+until `clanka doctor unfreeze`.
+
+```sh
+clanka doctor freeze ~/.config/clanka/souls/<id>.md
+```
+
+## unfreeze
+
+```sh
+clanka doctor unfreeze <soul>
+```
+
+Lets writes through again. Lifts a freeze from `clanka doctor freeze` or
+from the doctor token.
+
+```sh
+clanka doctor unfreeze ~/.config/clanka/souls/<id>.md
+```
+
+## log
+
+```sh
+clanka doctor log [--since <when>] <soul>
+```
+
+Prints every write to the memory since a point in time, oldest first. There
+is one line per write: when (UTC), who (writer, sleep, doctor, cli), what,
+and the details.
+
+This is where you find the time to give `clanka doctor rollback`. It reads
+the log and changes nothing.
+
+### `--since <when>`
+
+A time in UTC as `clanka doctor log` prints it (`2026-03-09T14:30:05`,
+`2026-03-09T14:30` or `2026-03-09`), or how long ago: `45m`, `6h`, `2d`.
+
+- Default: `1d`
+
+```sh
+clanka doctor log ~/.config/clanka/souls/<id>.md --since 2d
+```
+
+## rollback
+
+```sh
+clanka doctor rollback --to <when> <soul>
+```
+
+Puts the memory back as it was at a point in time. Refuses unless the
+companion is frozen.
+
+It undoes every write logged at that time or later:
+
+- memories written since are removed,
+- memories changed since get their earlier text and level back,
+- threads resolved since are open again,
+- the mood, notes and soul sections return to what they were.
+
+Seared memories are never touched. The transcript and the write log are
+kept, so nothing said is lost. The exchanges are not reflected on again.
+
+<Aside type="caution">
+  There is no undo. Check what will go with `clanka doctor log --since` the same
+  time first.
+</Aside>
+
+### `--to <when>`
+
+Required. A time in UTC as `clanka doctor log` prints it
+(`2026-03-09T14:30:05`, `2026-03-09T14:30` or `2026-03-09`), or how long
+ago: `45m`, `6h`, `2d`.
+
+```sh
+clanka doctor rollback ~/.config/clanka/souls/<id>.md --to 2026-03-09T14:30:05
+```
+
+## check-facts
+
+```sh
+clanka doctor check-facts <soul>
+```
+
+Lists memories whose facts were never said in the turns they cite.
+
+A memory's facts (names, dates, places) must appear word for word in the
+turns it was written from. This lists every active memory with a fact that
+does not, or with facts and no turns to check them against. They are
+candidates for [`delete`](#delete) or [`reinterpret`](#reinterpret).
+
+It reads the memory and changes nothing.
+
+```sh
+clanka doctor check-facts ~/.config/clanka/souls/<id>.md
+```
+
+## reinterpret
+
+```sh
+clanka doctor reinterpret <soul> <id>...
+```
+
+Has the companion re-read what was said and rewrite these memories. Refuses
+unless the companion is frozen. Needs the
+[`[model]`](/configuration/#model).
+
+For each memory, the model gets the turns it was written from and writes how
+the companion sees it now. The old text stays in the memory's history.
+Seared memories and memories that cite no turns are refused.
+
+### `<id>...`
+
+The memories to re-read, as [`clanka memories`](/cli/memories/) numbers
+them.
+
+```sh
+clanka doctor reinterpret ~/.config/clanka/souls/<id>.md 12 15
+```
+
+## delete
+
+```sh
+clanka doctor delete <soul> <id>...
+```
+
+Deletes memories for good, with the turns only they cite.
+
+<Aside type="caution">
+  Irreversible. It removes each memory, its history and the turns no other
+  memory cites, so what was said is gone from the transcript too.
+</Aside>
+
+It works on seared memories, frozen or not. If a memory had replaced an
+older one, the older one is current again.
+
+### `<id>...`
+
+The memories to delete, as [`clanka memories`](/cli/memories/) numbers them.
+
+```sh
+clanka doctor delete ~/.config/clanka/souls/<id>.md 12
+```
+
+## reembed
+
+```sh
+clanka doctor reembed <soul>
+```
+
+Rebuilds every memory's vector with the embedding model in `config.toml`.
+
+Use it after changing [`[embedding] model`](/configuration/#embedding): the
+companion refuses to open until its vectors come from the configured model.
+All vectors are replaced at once or not at all, at a few seconds per
+thousand memories.
+
+A process that had the companion open (a Hermes gateway, `clanka mcp`) still
+holds the old model. Its turns fail until you restart it.
+
+Running it when the model did not change does the work again, harmlessly.
+
+```sh
+clanka embedding
+clanka doctor reembed ~/.config/clanka/souls/<id>.md
+```
+
+## delete-all
+
+```sh
+clanka doctor delete-all <soul>
+```
+
+Deletes every stored memory, seared ones included. Refuses unless the
+companion is frozen.
+
+<Aside type="caution">
+  Irreversible. It deletes every memory, the whole transcript, the mood, the
+  soul sections the companion wrote and every session, so the companion starts
+  blank.
+</Aside>
+
+The `soul.md`, the database key and the write log, which records only that
+deletes happened, are kept.
+
+If some memories refuse to delete, it lists them, keeps the transcript and
+sessions and exits non-zero. Run it again once they are fixed. The companion
+stays frozen afterwards.
+
+```sh
+clanka doctor freeze ~/.config/clanka/souls/<id>.md
+clanka doctor delete-all ~/.config/clanka/souls/<id>.md
+```

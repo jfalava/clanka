@@ -1,0 +1,89 @@
+---
+title: Memory
+description: How a companion writes memories, how deeply they are kept, and how recall brings them back.
+sidebar:
+  order: 2
+---
+
+Each companion has one encrypted database (SQLCipher) under
+`~/.local/share/clanka/`. Its key is in the Secret Service, or in a key file
+when [`[keys]`](/configuration/#keys) says so. The database holds the
+transcript, the memories, the companion's mood and a log of every write.
+
+## Writing
+
+After each reply, the companion's own model reflects on the exchange in
+character and decides what to keep. One exchange can earn at most a memory, a
+thread, a pushback, a mood change and a note.
+
+The model cannot edit a memory's facts, lower a level, touch a seared memory
+or write the persona. There is no tool for those.
+
+When the conversation ends, the companion [sleeps](/concepts/sleep-and-dreams/)
+on it and writes an episode for the night.
+
+## What a memory holds
+
+A memory has a type: a fact about the user, a preference, an episode, a note
+on the relationship, a promise, an opinion, an open thread or a note on the
+persona.
+
+It also cites the turns it was written from. A memory's **facts** (names,
+dates, places) must appear word for word in those turns.
+[`clanka doctor check-facts`](/cli/doctor/#check-facts) lists the memories
+that break this rule.
+
+A new memory that is too close to one already kept is refused as a copy. The
+threshold is [`duplicate_similarity`](/configuration/#duplicate_similarity).
+
+## Levels
+
+A level is how deeply a memory is burned in.
+
+| Level    | What it means                                                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `faint`  | Fades fastest. Blurs the most in sleep.                                                                                                                            |
+| `normal` | The default. Fades slowly.                                                                                                                                         |
+| `vivid`  | Never fades below a floor. Changes only in detail during sleep.                                                                                                    |
+| `seared` | Never fades and never changes: not in sleep, not on `clanka soul update`, not on `clanka doctor rollback`. Only `clanka doctor delete` and `delete-all` remove it. |
+
+The companion can only raise a level. A thread left open too long is raised
+one step for it, but that stops at `vivid`: an escalation the companion did
+not choose never sears a memory.
+
+## Open threads
+
+An open thread is something unresolved: a question the user did not answer, a
+promise not kept yet. Threads are either simmering or hot. Until a thread is
+resolved, recall ranks it higher, and the `persistence` trait sets how hard
+the companion chases it.
+
+## Mood
+
+The companion carries a mood between conversations: how good or bad it feels,
+how tired or lively it is, how warm it feels toward the user, and one line on
+why. Mood pulls memories with the same feeling up in recall. With the
+`time_sense` trait on, time away shifts its warmth.
+
+## Recall
+
+Before each reply, recall searches memory with the user's recent messages
+(the `recall_window` trait says how many). A local embedding model turns text
+into vectors, and full-text matches on names and places add to the result.
+
+Each candidate gets a **relevance** (how close it is to the query) and a
+final **score** after its level, its age, the mood and open threads. Age is
+counted in newer memories, not in days. The best few are given to the model
+as the companion's own memories, with at most a couple of seared ones so the
+same moments do not come up forever.
+
+[`clanka recall`](/cli/recall/) prints both numbers for one query, and
+[Tuning recall](/guides/tuning-recall/) shows how to change the ranking and
+measure the result.
+
+## The write log
+
+Every write is logged with its time and who made it: the writer after an
+exchange, sleep, the doctor or the CLI. [`clanka doctor log`](/cli/doctor/#log)
+prints it, and [`clanka doctor rollback`](/cli/doctor/#rollback) uses it to
+put the memory back as it was.

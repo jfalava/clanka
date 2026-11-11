@@ -1,0 +1,29 @@
+[install]
+# Alchemy and the Cloudflare packages it pins ship daily; everything else
+# waits a day after release.
+minimumReleaseAge = 86400
+minimumReleaseAgeExcludes = [
+  "@types/node",
+  "@cloudflare/workers-types",
+  "alchemy",
+  "@alchemy.run/acme",
+  "@alchemy.run/cloudflare",
+  "@alchemy.run/cloudflare-runtime",
+  "@alchemy.run/docker",
+  "@alchemy.run/node-utils",
+  "@alchemy.run/sql",
+  "@alchemy.run/sigil",
+  "@distilled.cloud/aws",
+  "@distilled.cloud/axiom",
+  "@distilled.cloud/cloudflare",
+  "@distilled.cloud/core",
+  "@distilled.cloud/fly-io",
+  "@distilled.cloud/hetzner",
+  "@distilled.cloud/neon",
+  "@distilled.cloud/planetscale",
+  "@distilled.cloud/prisma",
+  "@distilled.cloud/railway",
+  "@distilled.cloud/stripe",
+  "workerd",
+  "miniflare",
+]

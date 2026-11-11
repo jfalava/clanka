@@ -1,0 +1,121 @@
+---
+title: Getting started
+description: Build clanka, create a companion, point it at a model and have the first conversation.
+sidebar:
+  order: 1
+---
+
+A companion is a `soul.md` (its persona and traits) plus an encrypted database
+of what it remembers. This page takes you from a clone of the repository to a
+companion that remembers a conversation.
+
+## Build
+
+clanka is built from source. You need Rust 1.95, a C toolchain and `perl`
+(for the vendored OpenSSL).
+
+```sh
+git clone https://github.com/jfalava/clanka.git
+cd clanka
+cargo build --release -p clanka
+```
+
+The binary is `target/release/clanka`. Put it on your `PATH`.
+
+Python 3.11 or newer is needed only for `crates/py`, the bindings the
+[Hermes plugin](/guides/hermes/) uses.
+
+## Create a companion
+
+<Steps>
+<Step title="Choose where the database key goes">
+
+`clanka init` stores a random database key in the Secret Service (the login
+keychain on macOS). On a machine with no Secret Service, such as a headless
+server, put this in `~/.config/clanka/config.toml` first:
+
+```toml
+[keys]
+store = "file"
+```
+
+The key then goes in a file only you can read, `~/.config/clanka/keys/<id>.key`.
+See [Configuration](/configuration/#keys).
+
+</Step>
+<Step title="Run init">
+
+```sh
+clanka init Nova
+```
+
+This writes a `soul.md` template under `~/.config/clanka/souls/` with a fresh
+ID and doctor token, stores the database key, and downloads the embedding
+model (about 23 MB) if it is missing. It prints the path of the new `soul.md`.
+Every other command takes that path.
+
+</Step>
+<Step title="Write the persona">
+
+Open the `soul.md` and replace every `TODO`. The Markdown body is the persona:
+who the companion is, how it talks, what it cares about and its core values.
+[Writing a soul](/guides/writing-a-soul/) explains what makes a good one.
+
+```sh
+$EDITOR ~/.config/clanka/souls/<id>.md
+clanka soul lint ~/.config/clanka/souls/<id>.md
+```
+
+Repeat until the lint prints no warnings.
+
+</Step>
+</Steps>
+
+To skip the blank page, [`clanka soul draft`](/cli/soul/#draft) has a model
+write the soul from a short brief.
+
+## Set the model
+
+`clanka chat` needs the model the companion talks and remembers with. Any
+OpenAI-compatible endpoint works. Add it to `~/.config/clanka/config.toml`:
+
+```toml
+[model]
+base_url = "https://api.example.com/v1"
+model = "some-model"
+api_key_env = "CLANKA_MODEL_API_KEY"
+```
+
+`api_key_env` names the environment variable that holds the key, so the key
+itself is never in the file:
+
+```sh
+export CLANKA_MODEL_API_KEY=...
+```
+
+## Talk
+
+```sh
+clanka chat ~/.config/clanka/souls/<id>.md
+```
+
+Type a message and press Enter. After each reply the companion decides, in
+character, what to keep. Send `/sleep` to end the conversation: the companion
+sleeps on it and writes the night down.
+
+Then see what it kept:
+
+```sh
+clanka memories ~/.config/clanka/souls/<id>.md
+```
+
+The next conversation recalls those memories.
+
+## Next steps
+
+- [Souls](/concepts/souls/) and [Memory](/concepts/memory/) explain how a
+  companion works.
+- [Hermes](/guides/hermes/) runs a companion as a Hermes profile, on Telegram
+  or any other platform Hermes serves.
+- [MCP](/guides/mcp/) serves a companion to an MCP host.
+- The [CLI reference](/cli/) documents every command.

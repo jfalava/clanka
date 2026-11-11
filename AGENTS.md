@@ -95,3 +95,13 @@ env HOME=<dir> ./target/debug/clanka ...
 ```
 
 A schema change is a new file in `crates/core/src/migrations/`, added to `MIGRATIONS` in `crates/core/src/db.rs`; never edit a migration that has shipped.
+
+## Docs site
+
+`docs/` is the Nimbus (Astro) documentation site for `clanka.jfa.dev` and `iac/alchemy.run.ts` is the Alchemy stack that deploys it: one `Cloudflare.Website.StaticSite` that runs `bun run build` in `docs/` and takes the custom domain. They form a Bun workspace (root `package.json`) that the Rust build and CI do not use. `docs/AGENT.md` covers authoring.
+
+- Install: `bun install` (repo root)
+- Check: `bun run docs:check`, then `bun run docs:build`; only the build validates the sidebar and produces `docs/dist/pagefind/`
+- Plan: `bun run plan` (read-only); deploy: `bun run deploy`. Deploy only when asked.
+
+The CLI pages under `docs/src/content/docs/cli/` mirror `clanka help <command>`, and `configuration.mdx` mirrors the defaults in `crates/core`. Update them with the command or setting they describe.

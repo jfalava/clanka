@@ -1,0 +1,81 @@
+---
+title: Hermes
+description: Install the clanka plugin for Hermes Agent, run a companion as a profile, and let Nightshade write a soul for you.
+sidebar:
+  order: 2
+---
+
+On Hermes Agent a companion is a profile of its own: its persona is the
+profile's `SOUL.md`, and clanka's tools are the only toolset it has.
+
+## Install the plugin
+
+You need `hermes` on your `PATH` and a clone of the clanka repository.
+
+```sh
+hermes/install.sh
+```
+
+The script:
+
+- builds the Python extension and the `clanka` CLI,
+- installs the plugin under `~/.hermes/plugins/clanka`,
+- installs the soul-writer skill under `~/.agents/skills/clanka-soul-writer`,
+  so any agent on the machine can write a soul the same way,
+- runs [`clanka hermes refresh`](/cli/hermes/#refresh).
+
+## Make a profile for a companion
+
+```sh
+clanka hermes profile nova ~/.config/clanka/souls/<id>.md
+hermes -p nova chat
+```
+
+The profile is that companion and nothing else. Hermes's own memory, user
+profile, coding brief and agent-style guidance are off, so each turn carries
+the persona and the conversation instead of Hermes's whole toolbox.
+
+The root's own providers, model aliases and the keys they read are copied
+into the profile, so `/model <alias>` works in its chat.
+
+Run the command again after [changing the persona](/concepts/souls/#changing-the-persona)
+to refresh the profile's `SOUL.md`. A gateway that already serves the profile
+re-reads its config on its own.
+
+To give a companion another toolset on one platform, add it next to clanka.
+`clanka hermes profile` keeps it on later runs:
+
+```sh
+hermes -p nova config set platform_toolsets.telegram '[clanka, image_gen]'
+```
+
+## Let Nightshade write the soul
+
+Nightshade is a Hermes agent that interviews you about the companion you
+want, writes its `soul.md`, lints it and makes the profile.
+
+```sh
+clanka hermes nightshade --model claude-opus-5-5
+hermes -p nightshade chat
+```
+
+Without `--model` it runs on the Hermes default. A stronger model interviews
+better, and the session is short.
+
+## Update
+
+Pull the repository and run the installer again:
+
+```sh
+git pull
+hermes/install.sh
+```
+
+It ends with `clanka hermes refresh`, which gives every profile clanka made
+the new plugin and restarts the gateway.
+
+<Aside type="caution">
+  Where systemd runs the gateway, the restart interrupts live sessions without
+  asking. Use `hermes/install.sh --no-restart` to leave the gateway running the
+  old build, and restart it yourself later.
+</Aside>

@@ -1,0 +1,41 @@
+---
+title: tics
+description: Find the prose tics in replies, the shapes a model repeats.
+---
+
+```sh
+clanka tics [--json] [replies...]
+```
+
+Reads each file as one reply and prints the tics in it: a reveal after a
+denial, calling something the real or only one, a run of clipped fragments.
+
+The tics are guesses from a few words. They miss four in ten of the reveals,
+half of the labels a reader would mark, and nearly every run of fragments.
+One hit means little. The count over an evening is what to compare, and
+`hermes/bench.sh` in the repository prints it.
+
+[`clanka soul lint`](/cli/soul/#lint) looks for the same shapes in a
+persona, since a companion copies the manner its soul is written in.
+
+## Arguments
+
+### `[replies...]`
+
+Files holding one reply each. Without files, it reads standard input.
+
+```sh
+clanka tics bench/nova/t*.txt
+```
+
+## Flags
+
+### `--json`
+
+Print the tics as one JSON array, with an object per reply.
+
+- Default: `false`
+
+```sh
+pbpaste | clanka tics --json
+```

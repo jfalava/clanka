@@ -1,0 +1,85 @@
+---
+title: Sleep and dreams
+description: What happens when a conversation ends, how dreams work, and how to say something out of the companion's earshot.
+sidebar:
+  order: 3
+---
+
+## Sleep
+
+Sleep ends a conversation. In `clanka chat` you send `/sleep`; an MCP host
+calls the `sleep` tool when the user says goodnight.
+
+While it sleeps, the companion:
+
+- raises the threads that were left open too long,
+- writes the night's episode in its own voice,
+- settles its mood,
+- lets the memories that came up tonight drift.
+
+Drift is how much a memory blurs. The `drift` trait sets the amount: 0 is a
+tape recorder. Faint memories shift the most, vivid ones only in detail, and
+seared ones never.
+
+Sleep needs the [`[model]`](/configuration/#model). If it fails before the
+episode is written, the session stays open and you can try again.
+
+## Getting tired
+
+Each turn's context has a budget (`--budget`, 6000 estimated tokens by
+default). The persona, the recalled memories and the mood come first; what is
+left is for the conversation so far. Once the conversation fills the
+`tired_at` share of that room the companion gets tired, and past the
+`sleep_at` share it asks to sleep. It asks, but never forces it.
+
+## Dreams
+
+After the companion has slept, a message that starts with `~~` sends it into
+a dream. What you write there is what happens to it, as "you". It lives the
+dream in first person without knowing it is dreaming, with its temperament
+louder and its life hazy.
+
+In a dream, a message that starts with `<<` shows it an echo, a scene from
+the past.
+
+```text
+you> ~~ You're standing in your mother's kitchen. It is too quiet.
+you> << >>3 Years ago, in this room, the judge reads the sentence aloud.
+```
+
+### Waking
+
+The companion wakes:
+
+- when it chooses to, over something it cannot bear or that turns against a
+  core value or a seared memory. It has to quote what you wrote in the dream:
+  nothing it imagines wakes it.
+- when the dream fills the session,
+- on `/sleep`.
+
+### What stays
+
+Waking keeps the companion's mood, a few fragments that come back only in
+later dreams, and at most one seared memory: a name, date or place that an
+echo showed and that you had also written while it was awake. Anything the
+dream made up fades.
+
+Leaving mid-dream keeps nothing.
+
+## Out of earshot
+
+Anywhere in a waking message, text between `||` and `||` is said out of the
+companion's earshot. It is told not to acknowledge it, and memory never keeps
+it, until an echo reveals it.
+
+```text
+you> Dinner was fine. ||I haven't told her about the job yet.||
+```
+
+## Reply length
+
+`>>N` at the start of a message asks for a reply of about N paragraphs.
+
+```text
+you> >>3 Tell me about the cello lesson.
+```

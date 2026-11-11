@@ -1,0 +1,45 @@
+---
+title: export
+description: Copy a companion into a new directory, to move it to another machine or keep a copy.
+---
+
+```sh
+clanka export <soul> <dir>
+```
+
+Writes three files into a new directory:
+
+| File           | What it is                                                                        |
+| -------------- | --------------------------------------------------------------------------------- |
+| `soul.md`      | The companion's soul.                                                             |
+| `companion.db` | A snapshot of the encrypted database. Safe to take while the companion is in use. |
+| `key`          | The database key, in plain text.                                                  |
+
+<Aside type="caution">
+  Whoever has the directory can read every memory. Move it over a channel you
+  trust and delete it afterwards.
+</Aside>
+
+It changes nothing here. A companion that was never opened gets its empty
+database first.
+
+It needs no embedding model, so it also works after `[embedding] model`
+changed and before `clanka doctor reembed`.
+
+Set the companion up on the other machine with
+[`clanka import`](/cli/import/).
+
+## Arguments
+
+### `<soul>`
+
+The companion's `soul.md`, as printed by `clanka init`.
+
+### `<dir>`
+
+The directory to create. It must not exist yet.
+
+```sh
+clanka export ~/.config/clanka/souls/<id>.md ~/nova-export
+scp -r ~/nova-export other-machine:
+```

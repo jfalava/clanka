@@ -1,0 +1,26 @@
+---
+title: embedding
+description: Download the embedding model config.toml names, if it is not here yet.
+---
+
+```sh
+clanka embedding
+```
+
+Downloads the embedding model that
+[`[embedding] model`](/configuration/#embedding) names. Files already here
+are checked against the expected checksums, and any that is missing or
+damaged, such as an interrupted download, is fetched again.
+
+The model turns text into the vectors recall searches. The default is a
+small English one (about 23 MB). `model = "multilingual"` picks a
+multilingual one (about 250 MB) for companions that talk in other languages.
+
+A companion keeps the model its vectors were built with. After changing the
+setting, run this command, then
+[`clanka doctor reembed`](/cli/doctor/#reembed) on each companion.
+
+```sh
+clanka embedding
+clanka doctor reembed ~/.config/clanka/souls/<id>.md
+```

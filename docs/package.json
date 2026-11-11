@@ -1,0 +1,55 @@
+{
+  "name": "@clanka/docs",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev --host",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "lint": "bun run lint:astro && bun run lint:docs",
+    "lint:astro": "eslint \"src/**/*.astro\"",
+    "lint:astro:fix": "eslint \"src/**/*.astro\" --fix",
+    "lint:docs": "nimbus-docs lint",
+    "lint:docs:fix": "nimbus-docs lint --fix",
+    "lint:fix": "bun run lint:astro:fix && bun run lint:docs:fix",
+    "preview": "astro preview",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@cloudflare/nimbus-docs": "0.19.2",
+    "@fontsource/google-sans-code": "5.3.2",
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@fontsource/zilla-slab": "5.3.0",
+    "@iconify-json/ph": "1.2.2",
+    "astro": "~7.4.5",
+    "astro-icon": "1.2.0",
+    "astro-og-canvas": "0.13.3",
+    "canvaskit-wasm": "0.42.0",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.7.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "@astrojs/compiler": "4.0.0",
+    "@tailwindcss/vite": "4.3.4",
+    "@typescript-eslint/parser": "8.72.1",
+    "cross-spawn": "7.0.6",
+    "eslint": "10.14.0",
+    "eslint-plugin-astro": "3.2.1",
+    "pagefind": "1.6.0",
+    "prettier": "3.9.10",
+    "prettier-plugin-astro": "1.1.2",
+    "satteri": "0.11.6",
+    "satteri-source-parser": "npm:satteri@0.11.6",
+    "tailwindcss": "4.3.4",
+    "typescript": "6.0.2"
+  },
+  "optionalDependencies": {
+    "@bruits/satteri-darwin-arm64": "0.11.6",
+    "@bruits/satteri-linux-arm64-gnu": "0.11.6",
+    "@bruits/satteri-linux-x64-gnu": "0.11.6",
+    "@bruits/satteri-win32-x64-msvc": "0.11.6"
+  }
+}

@@ -1,0 +1,127 @@
+---
+title: hermes
+description: Run companions on Hermes, with a profile per companion and Nightshade, the agent that interviews you and makes one.
+---
+
+```sh
+clanka hermes <subcommand>
+```
+
+Needs the clanka plugin that `hermes/install.sh` builds and installs under
+`~/.hermes/plugins/clanka`, and `hermes` on your `PATH`. See the
+[Hermes guide](/guides/hermes/).
+
+The commands drive the Hermes CLI and are safe to run again: they set the
+same values and rewrite the profile's `SOUL.md`. They work the same from a
+shell and from an agent's terminal inside Hermes.
+
+## profile
+
+```sh
+clanka hermes profile <profile> <soul>
+```
+
+Makes a Hermes profile that is one companion and nothing else:
+
+- clanka's two tools are the only toolset on every platform, listed directly
+  instead of behind Hermes's tool-search bridge.
+- Hermes's own memory, user profile, coding brief, toolchain probe and
+  agent-style guidance are off.
+- `SOUL.md` is the persona.
+
+Each turn then carries the persona and the conversation instead of Hermes's
+whole toolbox. On Haiku, the system prompt and tools went from about 19k
+tokens on a stock profile to about 1.2k.
+
+The root's own `providers:`, model aliases, reasoning overrides and
+`model_overrides` are copied in. The keys those providers read are copied
+from `~/.hermes/.env` into the profile's, since a profile loads only its own
+`.env`.
+
+Run it again after editing the persona to refresh `SOUL.md`. A toolset you
+added next to clanka on a platform is kept. A gateway that already serves
+the profile re-reads its config on its own.
+
+### `<profile>`
+
+The Hermes profile to make or refresh. Lower case, one word.
+
+### `<soul>`
+
+The companion's `soul.md`, as printed by `clanka init`.
+
+```sh
+clanka hermes profile nova ~/.config/clanka/souls/<id>.md
+hermes -p nova chat
+```
+
+## nightshade
+
+```sh
+clanka hermes nightshade [--profile <profile>] [--model <model>]
+```
+
+Makes the Nightshade profile: an agent that interviews you about the
+companion you want, writes its `soul.md`, lints it and wires it in with
+`clanka hermes profile`.
+
+The terminal and file tools are all it has. The root's own `providers:`,
+model aliases and their keys are shared with it, so `/model <alias>` works
+in its chat.
+
+### `--profile <profile>`
+
+The Hermes profile to make or refresh.
+
+- Default: `nightshade`
+
+```sh
+clanka hermes nightshade --profile soulwriter
+```
+
+### `--model <model>`
+
+The model it runs on, as Hermes names it. A stronger model interviews
+better, and the session is short.
+
+- Default: the Hermes default
+
+```sh
+clanka hermes nightshade --model claude-opus-5-5
+hermes -p nightshade chat
+```
+
+## refresh
+
+```sh
+clanka hermes refresh [--no-restart]
+```
+
+Brings every profile clanka made up to the installed plugin, then restarts
+the gateway. `hermes/install.sh` runs it, because each profile runs a copy
+of the plugin and a running gateway keeps the build it loaded.
+
+- A profile with a soul in its clanka settings gets what
+  `clanka hermes profile` does with that soul.
+- A profile whose `SOUL.md` is Nightshade's gets what
+  `clanka hermes nightshade` does, on the model it has.
+- Any other profile is left alone.
+
+A profile that fails is named, the rest are still done, and the command
+fails.
+
+<Aside type="caution">
+  Where systemd runs the `hermes-gateway` and `hermes-serve` units, the restart
+  is `systemctl --user restart`, which interrupts live sessions without asking.
+  Otherwise it is `hermes gateway restart`, which asks first.
+</Aside>
+
+### `--no-restart`
+
+Leave the gateway running the build it loaded.
+
+- Default: `false`
+
+```sh
+clanka hermes refresh --no-restart
+```

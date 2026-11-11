@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "rules": {
+    "nimbus/frontmatter-shape": "error",
+    "nimbus/internal-link": "error"
+  },
+  "collections": {},
+  "site": "https://clanka.jfa.dev",
+  "markdownFeatures": {
+    "gfm": true,
+    "smartPunctuation": true
+  },
+  "base": ""
+}

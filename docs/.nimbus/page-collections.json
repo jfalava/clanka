@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "collections": [
+    "docs"
+  ],
+  "mdxFiles": [
+    "src/content/docs/cli/chat.mdx",
+    "src/content/docs/cli/doctor.mdx",
+    "src/content/docs/cli/embedding.mdx",
+    "src/content/docs/cli/eval.mdx",
+    "src/content/docs/cli/export.mdx",
+    "src/content/docs/cli/hermes.mdx",
+    "src/content/docs/cli/import.mdx",
+    "src/content/docs/cli/index.mdx",
+    "src/content/docs/cli/init.mdx",
+    "src/content/docs/cli/list.mdx",
+    "src/content/docs/cli/mcp.mdx",
+    "src/content/docs/cli/memories.mdx",
+    "src/content/docs/cli/recall.mdx",
+    "src/content/docs/cli/soul.mdx",
+    "src/content/docs/cli/tics.mdx",
+    "src/content/docs/concepts/memory.mdx",
+    "src/content/docs/concepts/sleep-and-dreams.mdx",
+    "src/content/docs/concepts/souls.mdx",
+    "src/content/docs/configuration.mdx",
+    "src/content/docs/getting-started.mdx",
+    "src/content/docs/guides/hermes.mdx",
+    "src/content/docs/guides/mcp.mdx",
+    "src/content/docs/guides/repairing-memory.mdx",
+    "src/content/docs/guides/tuning-recall.mdx",
+    "src/content/docs/guides/writing-a-soul.mdx"
+  ]
+}

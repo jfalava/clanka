@@ -1,0 +1,38 @@
+---
+title: recall
+description: Print what one query brings up from memory, with the numbers behind the order.
+---
+
+```sh
+clanka recall <soul> <query>
+```
+
+Runs the same search a turn runs, on the query alone. For each memory it
+prints:
+
+- the relevance: how close the memory is to the query,
+- the final score after level, age, mood and open threads,
+- the memory.
+
+It also prints the limits in use.
+
+Use it to see why something does or does not come up before changing
+[`[recall]`](/configuration/#recall) in `config.toml`.
+[Tuning recall](/guides/tuning-recall/) shows the whole loop.
+
+It only reads the memory: nothing is marked as recalled. A companion that
+was never opened gets its empty database first.
+
+## Arguments
+
+### `<soul>`
+
+The companion's `soul.md`, as printed by `clanka init`.
+
+### `<query>`
+
+What the user would say.
+
+```sh
+clanka recall ~/.config/clanka/souls/<id>.md "how was the concert"
+```

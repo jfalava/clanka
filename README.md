@@ -7,6 +7,8 @@ of what it remembers. After each exchange the companion's own model decides, in
 character, what to keep; when the conversation ends it sleeps on it and writes
 the night down. Later conversations recall those memories.
 
+Documentation: <https://clanka.jfa.dev>
+
 ## Layout
 
 | Path | What it is |
@@ -16,6 +18,8 @@ the night down. Later conversations recall those memories.
 | `crates/py` | Python bindings (`_clanka`) for host plugins. |
 | `hermes/` | The Hermes Agent plugin, its installer and the Nightshade persona. |
 | `skills/soul-writer` | An agent skill for writing a soul.md. |
+| `docs/` | The documentation site (Nimbus, Astro), served at `clanka.jfa.dev`. |
+| `iac/` | The Alchemy stack that builds and deploys `docs/` to Cloudflare. |
 
 ## Build
 
@@ -92,6 +96,20 @@ cargo test --workspace
 
 The tests need no model provider, keyring, Hermes or network. CI runs the same
 three commands.
+
+### Docs
+
+`docs/` and `iac/` are a Bun workspace of their own; the Rust build does not
+need it.
+
+```sh
+bun install
+bun run docs:dev      # dev server, port 4321
+bun run docs:check    # lint and typecheck docs/, typecheck iac/
+bun run docs:build    # docs/dist
+bun run plan          # what a deploy would change
+bun run deploy        # build and publish to clanka.jfa.dev
+```
 
 ## License
 

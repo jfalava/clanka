@@ -1,0 +1,22 @@
+---
+/** Button that opens the search dialog. Cmd+K on macOS, Ctrl+K elsewhere. */
+import Icon from "@cloudflare/nimbus-docs/components/Icon.astro";
+---
+
+<button
+  data-search-trigger
+  type="button"
+  class="flex items-center gap-2 rounded-md border border-border bg-card p-2 text-sm text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground sm:px-2.5 sm:py-1.5"
+  aria-label="Search documentation"
+  aria-keyshortcuts="Control+K"
+>
+  <Icon name="ph:magnifying-glass" class="size-4" />
+  <span class="hidden md:inline">Search</span>
+  <kbd class="hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground sm:inline-flex">
+    <span data-shortcut-key>Ctrl</span>K
+  </kbd>
+</button>
+
+<script>
+  import "./search-trigger.client";
+</script>

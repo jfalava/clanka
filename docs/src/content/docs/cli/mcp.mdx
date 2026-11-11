@@ -1,0 +1,38 @@
+---
+title: mcp
+description: Serve a companion to an MCP host over stdio.
+---
+
+```sh
+clanka mcp [--budget <tokens>] <soul>
+```
+
+Serves one companion to an MCP host over stdio, for trying it out. The host
+does the talking and calls the tools: `begin_turn` before each reply,
+`end_turn` after it, `recall` to search memory on purpose, and `sleep` to
+end the conversation. The persona prompt tells the host's model how to use
+them.
+
+Memory is written by the [`[model]`](/configuration/#model) in
+`config.toml`, so set the host to the same model. Without one, turns are
+recorded but never turned into memories, and `sleep` is unavailable.
+
+stdout carries the MCP protocol; notes go to stderr.
+
+[MCP](/guides/mcp/) shows how to add it to a host.
+
+```sh
+clanka mcp ~/.config/clanka/souls/<id>.md
+```
+
+## Flags
+
+### `--budget <tokens>`
+
+Estimated tokens the memory context may use per turn.
+
+- Default: `6000`
+
+```sh
+clanka mcp --budget 4000 ~/.config/clanka/souls/<id>.md
+```

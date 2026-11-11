@@ -1,0 +1,28 @@
+---
+title: memories
+description: Print what a companion remembers, with its mood, sections, open threads and every memory.
+---
+
+```sh
+clanka memories <soul>
+```
+
+Prints the companion's mood, the soul sections it wrote, its open threads
+and every memory. Each memory has a `#` number, which
+[`clanka doctor delete`](/cli/doctor/#delete) and
+[`clanka doctor reinterpret`](/cli/doctor/#reinterpret) take.
+
+It only reads the memory, so it is safe while a host has the companion open.
+A companion that was never opened gets its empty database first.
+
+Use it to check what a persona keeps from a conversation.
+
+## Arguments
+
+### `<soul>`
+
+The companion's `soul.md`, as printed by `clanka init`.
+
+```sh
+clanka memories ~/.config/clanka/souls/<id>.md
+```

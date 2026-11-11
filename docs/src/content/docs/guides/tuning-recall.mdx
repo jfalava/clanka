@@ -1,0 +1,97 @@
+---
+title: Tuning recall
+description: See why a memory does or does not come up, change the ranking, and measure the result with a cases file.
+sidebar:
+  order: 5
+---
+
+The ranking defaults are first guesses. Tune them against real conversations:
+look at one query, write down what should come up, then change a value and
+compare.
+
+## Look at one query
+
+```sh
+clanka recall ~/.config/clanka/souls/<id>.md "how was the concert"
+```
+
+[`clanka recall`](/cli/recall/) runs the same search a turn runs, on the
+query alone. For each memory it prints the relevance (how close the memory is
+to the query) and the final score after level, age, mood and open threads.
+It also prints the limits in use.
+
+It only reads the memory. Nothing is marked as recalled.
+
+## Write the cases
+
+Put the queries and what each should bring up in a TOML file:
+
+```toml
+[[case]]
+query = "how was the concert"
+expect = ["Laura", "concert"]
+reject = ["dentist"]
+
+[[case]]
+query = "what do I do for work"
+expect = ["radiographer"]
+```
+
+- `expect` lists texts that must appear in a recalled memory or in the value
+  of one of its facts, in any letter case.
+- `reject` lists texts that must not.
+
+A case needs at least one of the two.
+
+## Measure
+
+```sh
+clanka eval ~/.config/clanka/souls/<id>.md cases.toml
+```
+
+[`clanka eval`](/cli/eval/) prints each case, then how many expected
+memories came up and their mean reciprocal rank. It exits non-zero on a miss
+or an unwanted memory, so it works in a script.
+
+## Change a value and compare
+
+Set a key under [`[recall]`](/configuration/#recall) in `config.toml`, then
+run the eval again:
+
+```toml
+[recall]
+min_relevance = 0.3
+limit = 6
+```
+
+Some starting points:
+
+| Symptom                                      | Try                                            |
+| -------------------------------------------- | ---------------------------------------------- |
+| Unrelated memories come up                   | Raise `min_relevance`.                         |
+| A name or place does not bring up its memory | Raise `fts_weight`.                            |
+| Old memories never come up                   | Raise `faint_half_life` or `normal_half_life`. |
+| The same seared moments come up every turn   | Lower `seared_limit`.                          |
+| Too much memory in each turn                 | Lower `limit`.                                 |
+
+A process that has the companion open keeps the values it loaded. Restart it
+to pick up the change.
+
+## Other languages
+
+The default embedding model is English. For companions that talk in other
+languages, switch to the multilingual one and rebuild the vectors:
+
+```toml
+[embedding]
+model = "multilingual"
+```
+
+```sh
+clanka embedding
+clanka doctor reembed ~/.config/clanka/souls/<id>.md
+```
+
+Models spread similar texts differently, so
+[`duplicate_similarity`](/configuration/#duplicate_similarity) may need
+changing with the model.

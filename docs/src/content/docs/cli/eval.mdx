@@ -1,0 +1,56 @@
+---
+title: eval
+description: Measure recall over a file of queries and what each should bring up.
+---
+
+```sh
+clanka eval <soul> <cases>
+```
+
+Prints each case, then how many expected memories came up and their mean
+reciprocal rank. It exits non-zero on a miss or an unwanted memory.
+
+Change a [`[recall]`](/configuration/#recall) value in `config.toml`, run it
+again and compare. [Tuning recall](/guides/tuning-recall/) shows the whole
+loop.
+
+It only reads the memory.
+
+## Arguments
+
+### `<soul>`
+
+The companion's `soul.md`, as printed by `clanka init`.
+
+### `<cases>`
+
+The TOML file of cases.
+
+```sh
+clanka eval ~/.config/clanka/souls/<id>.md cases.toml
+```
+
+## The cases file
+
+The file is TOML, with one `[[case]]` per query. A case needs at least one
+of `expect` and `reject`.
+
+```toml
+[[case]]
+query = "how was the concert"
+expect = ["Laura", "concert"]
+reject = ["dentist"]
+```
+
+### `query`
+
+What the user would say.
+
+### `expect`
+
+Texts that must appear in a recalled memory or in the value of one of its
+facts, in any letter case.
+
+### `reject`
+
+Texts that must not appear.

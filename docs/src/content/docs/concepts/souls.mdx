@@ -1,0 +1,94 @@
+---
+title: Souls
+description: What a soul.md holds, what each trait does, and what happens when you edit the persona.
+sidebar:
+  order: 1
+---
+
+A `soul.md` is one Markdown file per companion, under
+`~/.config/clanka/souls/`. It has two parts: TOML frontmatter between `+++`
+lines, and a Markdown body.
+
+```markdown
++++
+id = "…"
+name = "Nova"
+contrariness = 0.5
+persistence = 0.5
+time_sense = true
+recall_window = 2
+drift = 0.3
+tired_at = 0.7
+sleep_at = 0.9
+pushback_window = 20
+doctor_token = "…"
++++
+
+# Nova
+
+You are Nova. …
+```
+
+## The persona
+
+The body is the persona: who the companion is. The chat model reads it on
+every turn, and the same model reads it again after each exchange to decide,
+in character, what to remember. The persona shapes what the companion keeps
+as much as how it talks.
+
+Everything inside `<!-- -->` comments is dropped before any model sees it and
+never changes the companion's identity, so you can leave notes in the file.
+
+A persona has four short sections: who the companion is, how it talks, what
+it cares about, and its core values. [Writing a soul](/guides/writing-a-soul/)
+covers each one.
+
+## Traits
+
+The frontmatter holds the companion's ID, its name and its traits.
+
+| Key               | Range  | Default   | Effect                                                                                                            |
+| ----------------- | ------ | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `contrariness`    | 0 to 1 | `0.5`     | How often it pushes back. 0.5 argues sometimes; 0.8 is a handful.                                                 |
+| `persistence`     | 0 to 1 | `0.5`     | 0 forgets and forgives; 1 chases unresolved things until they are closed.                                         |
+| `time_sense`      | bool   | `true`    | Time away shifts its warmth: warmer after a good parting, cooler after a bad one.                                 |
+| `recall_window`   | 1 to 5 | `2`       | How many of the user's recent messages are used to search memory.                                                 |
+| `drift`           | 0 to 1 | `0.3`     | How much memories blur while it sleeps. 0 is a tape recorder.                                                     |
+| `tired_at`        | 0 to 1 | `0.7`     | Share of the per-turn budget the conversation may fill before the companion gets tired. Must be below `sleep_at`. |
+| `sleep_at`        | 0 to 1 | `0.9`     | Share at which the companion asks to sleep.                                                                       |
+| `pushback_window` | turns  | `20`      | How many turns its pushback budget is counted over.                                                               |
+| `doctor_token`    | string | generated | Sent as a whole message, it freezes memory. Never shown to the model.                                             |
+
+Editing a trait is not a persona change. It applies the next time the
+companion opens, so restart anything that has the companion open.
+
+## The doctor token
+
+`clanka init` generates a `doctor_token` for each soul. Sending it as a whole
+message in a chat freezes the companion's memory at once, the same as
+[`clanka doctor freeze`](/cli/doctor/#freeze). It is the emergency stop for a
+conversation that is going wrong. See [Repairing memory](/guides/repairing-memory/).
+
+The token must never reach the model, which is why
+[`clanka soul persona`](/cli/soul/#persona) prints the body without the
+frontmatter.
+
+## Changing the persona
+
+Editing the body changes who the companion is. Chat, MCP and Hermes then
+refuse the companion until you choose what its memories do:
+
+| Command                                       | What happens to the memories                                                          | Cost                         |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------- |
+| [`clanka soul continue`](/cli/soul/#continue) | Kept as they were felt under the old persona. New ones are written under the new one. | Instant, no model call.      |
+| [`clanka soul update`](/cli/soul/#update)     | The companion re-reads them under the new persona. Seared memories never change.      | One model call per batch.    |
+| [`clanka soul fork`](/cli/soul/#fork)         | The old database is archived read-only and a new companion starts with no memories.   | Instant. Nothing is deleted. |
+
+After settling the change, restart anything that has the companion open. On
+Hermes, run [`clanka hermes profile`](/cli/hermes/#profile) again to refresh
+the profile's `SOUL.md`.
+
+```sh
+clanka soul lint ~/.config/clanka/souls/<id>.md
+clanka soul continue ~/.config/clanka/souls/<id>.md
+```

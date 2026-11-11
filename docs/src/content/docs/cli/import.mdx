@@ -1,0 +1,28 @@
+---
+title: import
+description: Set up the companion a clanka export directory holds.
+---
+
+```sh
+clanka import <dir>
+```
+
+Stores the companion's key (in the Secret Service, or in a key file with
+[`[keys] store = "file"`](/configuration/#keys)), then copies its database
+and `soul.md` into place and opens it once to check the key fits.
+
+It never overwrites: it refuses if a companion with that ID is already here.
+
+If the companion's vectors came from another embedding model than this
+machine's config names, it says to run
+[`clanka doctor reembed`](/cli/doctor/#reembed).
+
+## Arguments
+
+### `<dir>`
+
+A directory [`clanka export`](/cli/export/) wrote.
+
+```sh
+clanka import ~/nova-export
+```

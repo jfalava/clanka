@@ -1,0 +1,288 @@
+---
+import DocsLayout from "../layouts/DocsLayout.astro";
+import Icon from "@cloudflare/nimbus-docs/components/Icon.astro";
+import { Code } from "../components/ui/code";
+import { LinkButton } from "../components/ui/link-button";
+import { Tabs, TabItem } from "../components/ui/tabs";
+import { config } from "virtual:nimbus/config";
+import { withBase } from "../lib/urls";
+import bodyFont from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url";
+import headingFont from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2?url";
+
+const terminalCommand = `clanka init Nova
+$EDITOR ~/.config/clanka/souls/<id>.md
+clanka soul lint ~/.config/clanka/souls/<id>.md
+clanka chat ~/.config/clanka/souls/<id>.md`;
+const hermesCommand = `hermes/install.sh
+clanka hermes profile nova ~/.config/clanka/souls/<id>.md
+hermes -p nova chat`;
+const mcpCommand = `clanka mcp ~/.config/clanka/souls/<id>.md`;
+
+const parts = [
+  {
+    name: "soul.md",
+    body: "The persona and its traits, in one Markdown file you write and edit.",
+  },
+  {
+    name: "An encrypted database",
+    body: "The transcript, the memories, the mood and a log of every write. Its key stays in your keychain.",
+  },
+  {
+    name: "Your model",
+    body: "Any OpenAI-compatible endpoint. The model that talks is the model that remembers.",
+  },
+];
+
+const features = [
+  {
+    icon: "ph:brain",
+    title: "Remembers in character",
+    body: "After each exchange the companion decides what to keep: a fact, a promise, an open thread. Facts must have been said word for word.",
+  },
+  {
+    icon: "ph:moon",
+    title: "Sleeps and dreams",
+    body: "Sleep turns a conversation into the night's episode and lets memories drift. After it, you can send the companion into a dream.",
+  },
+  {
+    icon: "ph:magnifying-glass",
+    title: "Recall you can measure",
+    body: "See the relevance and score behind every recalled memory, tune the ranking, and check the change against a cases file.",
+  },
+  {
+    icon: "ph:first-aid-kit",
+    title: "A doctor for bad memories",
+    body: "Freeze writes, read the write log, roll the memory back to a point in time, or delete a memory for good.",
+  },
+];
+
+const references = [
+  {
+    title: "Getting started",
+    body: "Build clanka, create a companion and have the first conversation.",
+    href: "/getting-started/",
+  },
+  {
+    title: "Writing a soul",
+    body: "What a good persona looks like, and how to brief a model that writes one.",
+    href: "/guides/writing-a-soul/",
+  },
+  {
+    title: "Memory",
+    body: "Levels, open threads, mood and how recall ranks what comes back.",
+    href: "/concepts/memory/",
+  },
+  {
+    title: "Hermes",
+    body: "Run a companion as a Hermes profile, and let Nightshade write its soul.",
+    href: "/guides/hermes/",
+  },
+  {
+    title: "Configuration",
+    body: "Every setting config.toml takes, with its default.",
+    href: "/configuration/",
+  },
+  {
+    title: "CLI reference",
+    body: "Every command, argument and flag.",
+    href: "/cli/",
+  },
+];
+---
+
+<DocsLayout
+  title={config.title}
+  description={config.description}
+  sidebar={false}
+  headings={false}
+  breadcrumbs={[]}
+  prevNext={{}}
+  mode="custom"
+  collection="docs"
+  head={[bodyFont, headingFont].map((href) => ({
+    tag: "link",
+    attrs: {
+      rel: "preload",
+      href,
+      as: "font",
+      type: "font/woff2",
+      crossorigin: "anonymous",
+    },
+  }))}
+>
+  <div data-pagefind-body>
+    <section class="border-b border-border">
+      <div class="mx-auto max-w-5xl px-6 pb-16 pt-16 sm:pt-24">
+        <h1 class="hero-title max-w-3xl text-balance text-foreground">
+          Companions that remember.
+        </h1>
+        <p class="mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
+          Clanka is long-term memory for chat companions. After each exchange
+          the companion's own model decides, in character, what to keep. When
+          the conversation ends it sleeps on it, and the next one recalls what
+          it wrote down.
+        </p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <LinkButton
+            href={withBase("/getting-started/")}
+            variant="primary"
+            size="lg"
+            icon
+          >
+            Get started
+          </LinkButton>
+          <LinkButton href={withBase("/cli/")} variant="secondary" size="lg">
+            CLI reference
+          </LinkButton>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="companion-title" class="border-b border-border">
+      <div class="mx-auto grid max-w-5xl gap-10 px-6 py-16 lg:grid-cols-2">
+        <div>
+          <h2 id="companion-title" class="section-title text-foreground">
+            A soul and a memory
+          </h2>
+          <p class="mt-4 text-pretty leading-relaxed text-muted-foreground">
+            A companion is a <code>soul.md</code> plus an encrypted database of
+            what it remembers. The soul says who the companion is, how it talks,
+            what it cares about and which values it does not give up. The same
+            text decides what it keeps from a conversation.
+          </p>
+          <p class="mt-4 text-pretty leading-relaxed text-muted-foreground">
+            Everything stays on your machine. Only the conversation goes to the
+            model you choose.
+          </p>
+        </div>
+        <div>
+          <h2 class="section-title text-foreground">What it is made of</h2>
+          <ul class="mt-4 grid list-none gap-4 p-0">
+            {parts.map((part) => (
+              <li class="m-0 rounded-lg bg-card p-4 shadow-sm ring ring-border">
+                <h3 class="m-0 text-base font-semibold leading-snug text-foreground">
+                  {part.name}
+                </h3>
+                <p class="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  {part.body}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-5xl px-6 py-16">
+      <h2 class="section-title text-foreground">Try it</h2>
+      <p class="mt-4 max-w-2xl text-pretty leading-relaxed text-muted-foreground">
+        Create a companion, write its persona, and talk to it where you already
+        talk.
+      </p>
+      <Tabs syncKey="host" class="host-tabs mt-6 max-w-2xl">
+        <TabItem label="Terminal">
+          <Code code={terminalCommand} lang="sh" />
+          <p class="mt-4 text-sm leading-relaxed text-muted-foreground">
+            <code>clanka chat</code> needs a{" "}
+            <a
+              href={withBase("/configuration/#model")}
+              class="text-primary underline underline-offset-2 hover:decoration-2"
+            >
+              <code>[model]</code> in config.toml
+            </a>
+            . Send <code>/sleep</code> to end the conversation and turn it into
+            memories.
+          </p>
+        </TabItem>
+        <TabItem label="Hermes" hidden>
+          <Code code={hermesCommand} lang="sh" />
+          <p class="mt-4 text-sm leading-relaxed text-muted-foreground">
+            The profile is that companion and nothing else. See the{" "}
+            <a
+              href={withBase("/guides/hermes/")}
+              class="text-primary underline underline-offset-2 hover:decoration-2"
+            >
+              Hermes guide
+            </a>
+            .
+          </p>
+        </TabItem>
+        <TabItem label="MCP" hidden>
+          <Code code={mcpCommand} lang="sh" />
+          <p class="mt-4 text-sm leading-relaxed text-muted-foreground">
+            Register it as a stdio server in any MCP host. See the{" "}
+            <a
+              href={withBase("/guides/mcp/")}
+              class="text-primary underline underline-offset-2 hover:decoration-2"
+            >
+              MCP guide
+            </a>
+            .
+          </p>
+        </TabItem>
+      </Tabs>
+    </section>
+
+    <section class="mx-auto max-w-5xl px-6 pb-16">
+      <h2 class="section-title text-foreground">What it does</h2>
+      <div class="mt-6 grid gap-4 sm:grid-cols-2">
+        {features.map((feature) => (
+          <article class="rounded-lg bg-card p-5 shadow-sm ring ring-border">
+            <Icon
+              name={feature.icon}
+              class="mb-2.5 block h-6 w-6 text-primary"
+            />
+            <h3 class="m-0 text-base font-semibold leading-snug text-foreground">
+              {feature.title}
+            </h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+              {feature.body}
+            </p>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-5xl px-6 pb-24">
+      <h2 class="section-title text-foreground">Explore the docs</h2>
+      <ul class="mt-6 grid list-none gap-x-8 gap-y-4 p-0 sm:grid-cols-2">
+        {references.map((reference) => (
+          <li class="m-0 border-t border-border pt-3">
+            <a
+              href={withBase(reference.href)}
+              class="font-semibold text-foreground no-underline hover:text-primary"
+            >
+              {reference.title}
+            </a>
+            <p class="mt-1 text-sm leading-relaxed text-muted-foreground">
+              {reference.body}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  </div>
+</DocsLayout>
+
+<style>
+  /* Reserve the trigger row before Tabs synthesizes its buttons. */
+  :global(.host-tabs [role="tablist"]) {
+    min-height: 2.5625rem;
+  }
+
+  .hero-title {
+    font-size: clamp(2.25rem, 6vw, 4rem);
+    font-weight: var(--nb-h1-weight);
+    letter-spacing: var(--nb-h1-tracking);
+    line-height: 1.05;
+    text-transform: var(--nb-h1-transform);
+  }
+
+  .section-title {
+    font-size: var(--nb-h2-size);
+    font-weight: var(--nb-h2-weight);
+    letter-spacing: var(--nb-h2-tracking);
+    line-height: 1.1;
+    text-transform: var(--nb-h2-transform);
+  }
+</style>

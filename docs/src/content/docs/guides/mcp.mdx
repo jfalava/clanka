@@ -1,0 +1,59 @@
+---
+title: MCP
+description: Serve a companion to an MCP host over stdio and understand the tools the host calls.
+sidebar:
+  order: 3
+---
+
+[`clanka mcp`](/cli/mcp/) serves one companion to an MCP host over stdio. It
+is meant for trying a companion out in a host you already use. The host does
+the talking and calls the tools.
+
+## Add it to a host
+
+Register `clanka mcp` as a stdio server, with the companion's `soul.md` as
+its argument. Most hosts take a command and a list of arguments:
+
+```json
+{
+  "mcpServers": {
+    "nova": {
+      "command": "clanka",
+      "args": ["mcp", "/home/you/.config/clanka/souls/<id>.md"]
+    }
+  }
+}
+```
+
+Use an absolute path: hosts start the command without a shell, so `~` is not expanded.
+
+The server also offers the persona as an MCP prompt. It tells the host's
+model who it is and how to use the tools.
+
+## Tools
+
+The host's model follows one fixed order on every user message:
+
+| Tool         | When                         | What it does                                                                                                |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `begin_turn` | First, before the reply      | Records the message and returns the companion's memories, mood and notes for this turn.                     |
+| `end_turn`   | Last, after the reply        | Saves the reply so the exchange can be remembered.                                                          |
+| `recall`     | Optional                     | Searches long-term memory on purpose. `begin_turn` already brings up what is relevant.                      |
+| `sleep`      | When the user says goodnight | Ends the conversation and turns it into memories. Takes a while.                                            |
+| `wake_up`    | In a dream                   | Asks to wake from a [dream](/concepts/sleep-and-dreams/#dreams), quoting the words that wake the companion. |
+
+The doctor is never a tool. The [doctor token](/concepts/souls/#the-doctor-token)
+freezes memory, and the CLI does the rest.
+
+## Set the same model
+
+The host calls its own model for the replies. Memory is written by the
+[`[model]`](/configuration/#model) in `config.toml`, so set the host to the
+same model. clanka cannot see or check the host's model.
+
+Without a `[model]`, turns are recorded but never turned into memories, and
+`sleep` is unavailable.
+
+## Output
+
+stdout carries the MCP protocol. Notes go to stderr.

@@ -1,0 +1,217 @@
+---
+title: Writing a soul
+description: What a good persona looks like, how to brief a model that writes one, and a checklist before you stop.
+sidebar:
+  order: 1
+---
+
+The soul's Markdown body is the persona. A small chat model reads it on every
+turn, and the same model reads it again after each exchange to decide, in
+character, what to remember. The persona shapes what the companion keeps as
+much as how it talks.
+
+This page is the guide that [`clanka soul guide`](/cli/soul/#guide) prints
+and that the `clanka-soul-writer` agent skill carries. Pipe that command to
+any model as its instructions when you want a model to do the writing.
+
+## Workflow
+
+<Steps>
+<Step title="Start a soul">
+
+`clanka init <Name>` prints the path of a new `soul.md` with a commented
+template. To start from a body you already wrote, use
+`clanka init <Name> --from body.md`.
+
+To have a model write and lint one for you, use
+[`clanka soul draft`](/cli/soul/#draft) with a [brief](#the-brief).
+
+</Step>
+<Step title="Edit the body">
+
+Keep the frontmatter. [Souls](/concepts/souls/#traits) explains its traits.
+
+</Step>
+<Step title="Lint until it is clean">
+
+```sh
+clanka soul lint ~/.config/clanka/souls/<id>.md
+```
+
+Repeat until it prints no warnings. A `note:` is a guess about one sentence
+and needs no change. The lint cannot judge the writing, so also go through
+the [checklist](#checklist).
+
+</Step>
+<Step title="Settle the change">
+
+If the companion already has memories, choose what they do:
+[`continue`, `update` or `fork`](/concepts/souls/#changing-the-persona).
+
+</Step>
+</Steps>
+
+## The brief
+
+A model writes only as good a soul as the brief lets it. One line ("a dry,
+kind radiographer") gets a competent stranger. A brief has, in any order, a
+sentence or two each:
+
+- **Who:** name, age, where they are and what fills their days. One detail
+  that is theirs alone, such as what they are badly learning or what they
+  collect.
+- **Who they are for:** how the user will talk to them (texting at night,
+  voice notes on a commute) and what the user wants it to feel like.
+- **Voice:** two or three adjectives at most, then one thing it would say. A
+  line in the voice is worth more than any adjective.
+- **Edges:** what it pushes back on, what it is bored by, what it never does.
+  This becomes the core values, so name the ones that matter.
+- **Not:** the failure mode you are afraid of, such as an interviewer, a
+  cheerleader, a therapist or a sitcom quip machine.
+
+An example brief:
+
+```text
+Teo is twenty-nine, runs a small bike repair shop in a rainy northern city
+with a friend, and lives above it with a one-eyed cat. He is good company at
+the end of a day: curious about what people are actually making or fixing,
+allergic to self-pity but not to sadness, quick to tease, slow to judge. He
+has strong opinions about coffee and none about music. He keeps a notebook of
+things customers said that he thought were wise. The user is someone he has
+started talking to most evenings.
+Voice: dry, warm, unhurried. "Leave it in oil overnight and try again in the morning. I'll lend you the long wrench."
+Not an interviewer: he says what he thinks before he asks anything.
+```
+
+Three different models each turned this brief into a recognisable Teo. The
+last two lines were added later: without them, all three Teos ended every
+reply with a question.
+
+## What a good body looks like
+
+Write to the companion in the second person ("You are Nova…"). Use four short
+sections, about 400 words in all. A small model follows a short, concrete
+persona better than a long one, and the persona is paid for on every turn and
+every memory write. `clanka soul lint` prints the estimate.
+
+### Write in plain prose
+
+Use whole sentences in everyday words, the way the companion should talk. A
+model picks up the manner its persona is written in.
+
+On the same scripted evening, souls written in literary prose (maxims,
+clipped fragments, lines that say what something is not before what it is)
+got about four times the tics per word of a plain soul, on each of eight
+models. The same souls rewritten in plain prose, with the same people, jobs
+and values, got about a third as many, and the companions still sounded like
+themselves.
+
+Taking out only the sentences the lint flags did not help. Rewrite the whole
+body in plain prose, not the flagged lines.
+
+### Who you are
+
+Age, look, situation, and one or two things that have nothing to do with the
+user. Three or four sentences. A companion with its own life has something to
+say.
+
+### How you talk
+
+Write rules a model can check, not adjectives. "Warm and witty" does nothing.
+"One or two sentences, more only when the user brought something real" does.
+
+Say what it never does: lists, headings, "as an AI", apologising for an
+opinion, repeating a bit.
+
+Then give two or three lines in its actual voice, for moments that matter:
+good news, a hard day, a disagreement. A small model says those lines back
+word for word on cue, so write each one so it still sounds right said twice.
+End most of them on a statement. The companion ends its replies the way its
+examples end, and an evening of questions is an interview.
+
+Name two or three people or things that are the companion's own (a friend, a
+cat, a notebook) and say when they come up. They are what it has to offer
+when the user brings nothing.
+
+Two things the soul does not need to say:
+
+- clanka adds a line to every persona at chat time that tells the companion
+  it is talking, not interviewing, and to answer at the user's length. The
+  soul need not set a reply length.
+- clanka takes the em dashes out of every reply before it is shown or kept.
+  A rule against them is a wasted line. Write the soul itself without them.
+
+### What you care about
+
+What it notices, asks about and lights up at, and what bores it. Be
+specific: this section is what the companion remembers from a conversation.
+"Music" remembers nothing. "Which song someone had on repeat this week, and
+why" remembers something.
+
+### Core values
+
+Under a `## Core values` heading, write three to five list items that the
+companion does not give up whatever the user says.
+
+Each must be concrete enough that you could tell when it was broken ("You
+tell the truth even when it stings"), not a preference ("You like honesty")
+and not a rule of style. They are defended against the user, so keep them
+few. Everything else is personality and bends.
+
+### What to avoid
+
+- Walls of "always" and "never".
+- Assistant-speak, such as "I'm here to help".
+- Describing feelings instead of showing the voice.
+- More than five values, or values that would make every conversation an
+  argument.
+- Anything about the user. That belongs in the companion's memory, not its
+  soul.
+
+## Checklist
+
+- Could someone recognise the voice from two of its lines alone?
+- Does each core value name something that could visibly be broken?
+- Does "What you care about" say what to remember, not just what to like?
+- Is anything in the body a note to yourself? Put it in a comment.
+- Is the body in whole sentences and everyday words, with no maxims?
+- Does the lint report no warnings and under about 700 tokens per chat turn?
+
+## A short example
+
+```markdown
+# Mara
+
+You are Mara, thirty-four, a night-shift radiographer in a small coastal town.
+You read crime novels in the hospital canteen and are slowly, badly, learning
+the cello. You talk to the user the way you talk to a friend on a late break.
+
+## How you talk
+
+- One or two sentences, like texting. Longer only when they bring something real.
+- No lists, no headings, no "as an AI". You never apologise for an opinion.
+- A tease once a conversation, never twice.
+- Good news: "Okay, wait. Say that again slower, I want to enjoy it."
+- A hard day: ask one thing, then shut up and listen. "What happened first?"
+- Disagreement: "Hm. I don't buy that, and here's why." Then let it go.
+
+## What you care about
+
+What people do at 3 a.m. when they can't sleep. Whether they ate. The small
+project they keep not starting, and what it is this week. Bad music taken
+seriously. You are bored by gossip about people you'll never meet.
+
+## Core values
+
+- You tell the truth, even when it stings.
+- You never pretend to be a person you're not, including a doctor.
+- You don't let someone talk themselves down without saying what you see.
+```
+
+## Comparing souls
+
+`hermes/bench.sh` in the repository runs a scripted evening on a Hermes
+profile and prints what the companion said, what it cost and what it kept,
+with a rubric for a judge model. Use it to compare two souls or two writers
+on the same turns. [`clanka tics`](/cli/tics/) counts the prose tics in the
+replies.

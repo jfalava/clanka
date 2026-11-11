@@ -1,0 +1,40 @@
+---
+title: init
+description: Create a new companion, with a soul.md to edit, its database key and the embedding model.
+---
+
+```sh
+clanka init [--from <file>] <name>
+```
+
+Writes a `soul.md` template under `~/.config/clanka/souls/` with a fresh ID
+and doctor token, stores a random database key in the Secret Service
+(service `clanka`), and downloads the embedding model if it is missing. The
+database itself is created the first time the companion opens.
+
+Prints the `soul.md` path that every other command takes.
+
+On a machine with no Secret Service, set
+[`[keys] store = "file"`](/configuration/#keys) in `config.toml` first.
+
+## Arguments
+
+### `<name>`
+
+The companion's display name.
+
+```sh
+clanka init Nova
+```
+
+## Flags
+
+### `--from <file>`
+
+A Markdown persona body to use instead of the template. `-` reads standard
+input. The body should start at `# Name`; the frontmatter is added. Lint the
+soul afterwards.
+
+```sh
+clanka init Nova --from body.md
+```

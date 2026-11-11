@@ -1,0 +1,200 @@
+---
+title: soul
+description: Check or print a soul.md, have a model draft one, or settle a change to its persona.
+---
+
+```sh
+clanka soul <subcommand>
+```
+
+The persona is the `soul.md`'s Markdown body. Editing it makes chat, MCP and
+Hermes refuse the companion until you choose what its memories do:
+[`continue`](#continue), [`update`](#update) or [`fork`](#fork). Editing the
+frontmatter is not a persona change. See [Souls](/concepts/souls/).
+
+After editing the persona:
+
+```sh
+clanka soul lint ~/.config/clanka/souls/<id>.md
+clanka soul continue ~/.config/clanka/souls/<id>.md
+clanka hermes profile nova ~/.config/clanka/souls/<id>.md
+```
+
+## lint
+
+```sh
+clanka soul lint [--json] [--strict] <soul>
+```
+
+Checks a `soul.md` for errors and says what the persona costs. Changes
+nothing.
+
+It fails if the frontmatter or the persona does not parse. It warns, without
+failing, when:
+
+- a `TODO` from the template is still there,
+- there are no core values, or a core value is too vague to defend,
+- the persona repeats a prose tic the companion would copy, or asks for one,
+- the persona is long enough to crowd every turn.
+
+A tic seen once is a note, which needs no change. It also prints the
+estimated tokens the persona adds to each chat turn and each memory write.
+
+### `--json`
+
+Print the report as one JSON object instead of text.
+
+```sh
+clanka soul lint --json ~/.config/clanka/souls/<id>.md
+```
+
+### `--strict`
+
+Exit non-zero while there are warnings, not only on errors. Use it in a
+script or an agent loop.
+
+- Default: `false`
+
+```sh
+clanka soul lint --json --strict body.md
+```
+
+## guide
+
+```sh
+clanka soul guide
+```
+
+Prints the guide to writing a soul: what a good body looks like, what each
+trait does, a checklist and a short example. Pipe it to any model as its
+instructions, then `clanka init <Name> --from` what it wrote.
+
+The same guide is on [Writing a soul](/guides/writing-a-soul/).
+
+```sh
+clanka soul guide | less
+```
+
+## draft
+
+```sh
+clanka soul draft --brief <brief> [--rounds <n>] [--writer <command>] <name>
+```
+
+Has a model write a soul from a short brief, lints it and creates the
+companion.
+
+It sends the guide and your brief to the [`[model]`](/configuration/#model),
+or to the `--writer` command, takes the body it writes, runs the lint, and
+sends the warnings back for another try. Then it creates the companion as
+`clanka init --from` would and prints the lint report.
+
+The persona is a draft. Read it before anyone talks to it.
+
+### `<name>`
+
+The companion's display name.
+
+### `--brief <brief>`
+
+Required. Who the companion is, in a sentence or a paragraph.
+[The brief](/guides/writing-a-soul/#the-brief) says what to put in.
+
+```sh
+clanka soul draft Mara --brief "a night-shift radiographer in a coastal town, dry, kind"
+```
+
+### `--rounds <n>`
+
+The most times the warnings go back to the model for a rewrite.
+
+- Default: `2`
+
+```sh
+clanka soul draft Mara --brief "$(cat brief.md)" --rounds 4
+```
+
+### `--writer <command>`
+
+A shell command that writes the body instead of the `[model]`. It reads the
+whole prompt on standard input and prints the body. Any model with a command
+line will do.
+
+```sh
+clanka soul draft Mara --brief "$(cat brief.md)" \
+  --writer 'hermes chat -Q -m claude-opus-5-5 --query-file -'
+```
+
+## persona
+
+```sh
+clanka soul persona <soul>
+```
+
+Prints the persona without its frontmatter, for a host's own persona file
+such as Hermes's `SOUL.md`. The frontmatter is left out because it holds the
+doctor token, which must never reach the model. Changes nothing.
+
+```sh
+clanka soul persona ~/.config/clanka/souls/<id>.md > SOUL.md
+```
+
+## continue
+
+```sh
+clanka soul continue <soul>
+```
+
+Accepts an edited persona and keeps every memory as it was felt. Old
+memories stay as they were written under the old persona; new ones are
+written under the new one.
+
+Instant, and calls no model. Does nothing if the persona did not change.
+
+```sh
+clanka soul continue ~/.config/clanka/souls/<id>.md
+```
+
+## update
+
+```sh
+clanka soul update <soul>
+```
+
+Accepts an edited persona and has the companion re-read its memories under
+it. Needs the [`[model]`](/configuration/#model), and takes a model call per
+batch.
+
+It freezes writes, accepts the persona, then asks the model to re-interpret
+every active memory that cites what was said, from the transcript. Seared
+memories never change. It unfreezes when it is done, unless the companion
+was frozen before.
+
+If it fails, the persona is already accepted and the companion stays frozen.
+Run it again to retry, or run
+[`clanka doctor unfreeze`](/cli/doctor/#unfreeze) to keep the memories as
+they are.
+
+```sh
+clanka soul update ~/.config/clanka/souls/<id>.md
+```
+
+## fork
+
+```sh
+clanka soul fork <soul>
+```
+
+Starts a new companion from this `soul.md` and archives the old one.
+
+It archives the companion's database, which keeps everything but becomes
+read-only for good, then gives the `soul.md` a new ID and a new database
+key. The next open starts the new companion with no memories, under the
+`soul.md` as it is now.
+
+Nothing is deleted. It works whether or not the persona changed. If it stops
+halfway, run it again.
+
+```sh
+clanka soul fork ~/.config/clanka/souls/<id>.md
+```
