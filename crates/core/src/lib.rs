@@ -18,6 +18,7 @@ pub mod recall;
 pub mod sleep;
 pub mod soul;
 pub mod state;
+pub mod tics;
 pub mod writer;
 
 pub use companion::{Companion, PersonaStatus};

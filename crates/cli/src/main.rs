@@ -105,6 +105,23 @@ enum Command {
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,
     },
+    /// Find the prose tics in replies: the shapes a model repeats.
+    ///
+    /// Reads each file as one reply (standard input without files) and prints the tics in
+    /// it: a reveal after a denial, calling something the real or only one, a run of clipped
+    /// fragments. They are guesses from a few words that miss four in ten of the reveals and
+    /// half of the labels a reader would mark, and nearly every run of fragments, so one hit
+    /// means little and the count over an evening is what to compare;
+    /// `hermes/bench.sh` prints it.
+    #[command(after_long_help = "Example:\n  clanka tics bench/nova/t*.txt\n  \
+        pbpaste | clanka tics --json")]
+    Tics {
+        /// Files holding one reply each.
+        replies: Vec<PathBuf>,
+        /// Print the tics as one JSON array, an object per reply.
+        #[arg(long)]
+        json: bool,
+    },
     /// Talk with a companion in the terminal, on its [model].
     ///
     /// Needs a [model] section in ~/.config/clanka/config.toml (base_url, model and
@@ -316,9 +333,11 @@ enum SoulCommand {
     ///
     /// Fails if the frontmatter or the persona does not parse. Warns, without failing, when
     /// a TODO from the template is still there, when there are no core values, when a core
-    /// value is too vague to defend, when the persona is written in prose tics the companion
-    /// would copy (a reveal after a denial, a maxim to end a voice line, clipped fragments),
-    /// or when the persona is long enough to crowd every turn.
+    /// value is too vague to defend, when the persona repeats a prose tic the companion would
+    /// copy (a reveal after a denial, a maxim to end a voice line, clipped fragments) or asks
+    /// for one ("you speak in images"), or when the persona is long enough to crowd every
+    /// turn. A tic seen once is a note, which needs no change: the shapes are guessed from a
+    /// few words, and one such sentence is how people talk.
     /// Prints the estimated tokens the persona adds to each chat turn and each memory write.
     /// Changes nothing.
     #[command(
@@ -508,6 +527,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Memories { soul } => memories(&paths, &soul),
+        Command::Tics { replies, json } => tics(&replies, json),
         Command::Hermes {
             command: HermesCommand::Profile { profile, soul },
         } => hermes::profile(&profile, &soul),
@@ -568,6 +588,45 @@ fn open_pair(
         None => None,
     };
     Ok((chat, writer))
+}
+
+fn tics(replies: &[PathBuf], json: bool) -> Result<()> {
+    let mut texts = Vec::new();
+    if replies.is_empty() {
+        texts.push(("-".to_owned(), std::io::read_to_string(std::io::stdin())?));
+    }
+    for path in replies {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        texts.push((path.display().to_string(), text));
+    }
+    let found: Vec<_> = texts
+        .iter()
+        .map(|(name, text)| (name, clanka_core::tics::in_prose(text)))
+        .collect();
+    if json {
+        let all: Vec<_> = found
+            .iter()
+            .map(|(name, tics)| {
+                let tics: Vec<_> = tics
+                    .iter()
+                    .map(|t| serde_json::json!({"kind": t.kind.name(), "quote": t.quote}))
+                    .collect();
+                serde_json::json!({"reply": name, "tics": tics})
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&all)?);
+        return Ok(());
+    }
+    for (name, tics) in &found {
+        for t in tics {
+            println!("{name}: {}: \"{}\"", t.kind.name(), t.quote);
+        }
+    }
+    let total: usize = found.iter().map(|(_, t)| t.len()).sum();
+    let with = found.iter().filter(|(_, t)| !t.is_empty()).count();
+    println!("{total} tics in {with} of {} replies", found.len());
+    Ok(())
 }
 
 fn memories(paths: &Paths, soul: &Path) -> Result<()> {

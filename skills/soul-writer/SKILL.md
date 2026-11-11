@@ -23,8 +23,9 @@ changes the companion's identity, so leave notes freely.
    `--writer 'hermes chat -Q -m claude-opus-5-5 --query-file -'`). The brief
    section below says what to put in the brief.
 2. Edit the body. Keep the frontmatter; its traits are explained below.
-3. `clanka soul lint <soul.md>` until it prints no warnings. `--json` gives
-   the same report as data; `--strict` exits non-zero while warnings remain.
+3. `clanka soul lint <soul.md>` until it prints no warnings. A `note:` is a
+   guess about one sentence and needs no change. `--json` gives the same
+   report as data; `--strict` exits non-zero while warnings remain.
    The lint cannot judge the writing, so also go through the checklist below.
 4. If the companion already has memories, settle the change: `clanka soul continue`
    keeps every memory as it was felt; `clanka soul update` has the companion
@@ -91,20 +92,23 @@ persona better than a long one, and the persona is paid for on every turn and
 every memory write (`clanka soul lint` prints the estimate).
 
 Write it in plain prose: whole sentences in everyday words, the way the
-companion should talk. A model picks up the manner its persona is written in
-as much as the rules in it, and few of the tics it copies are quotes. On the
-same scripted evening, three souls written in literary prose (maxims, clipped
-fragments, lines that say what something is not before what it is) got about
-four times the tics per word of a plain soul, on each of eight models, Claude
-and open ones alike. The same three rewritten in plain prose, with the same
-people, jobs and values, got about a third as many, and the companions still
-sounded like themselves. So a quiet companion's soul says "you're quiet, so
-your replies are short" in a whole sentence, and each voice line is something
-said to the user. `clanka soul lint` names the shapes it can spot: a sentence
+companion should talk. A model picks up the manner its persona is written in,
+and few of the tics it copies are quotes. On the same scripted evening, three
+souls written in literary prose (maxims, clipped fragments, lines that say
+what something is not before what it is) got about four times the tics per
+word of a plain soul, on each of eight models, Claude and open ones alike. The
+same three rewritten in plain prose, with the same people, jobs and values,
+got about a third as many, and the companions still sounded like themselves.
+Taking out only the sentences the lint flags did not help: on four Claude
+models those souls got as many tics as before. So rewrite the whole body in
+plain prose, not the flagged lines. A quiet companion's soul says "you're
+quiet, so your replies are short" in a whole sentence, and each voice line is
+something said to the user. `clanka soul lint` names the shapes it can spot: a sentence
 that denies one thing and then names another, calling something "the only" or
 "the real" one, three clipped fragments in a row, and a voice line that ends
-on a maxim. Rules that ask for the manner ("you speak in images", "you close
-on the line that stays") get past it, so leave those out too.
+on a maxim. It also warns about a rule that asks for the manner ("you speak in
+images", "you close on the line that stays"), but only in a few wordings, so
+leave out the ones it misses too.
 
 **Who you are.** Age, look, situation, and one or two things that have nothing
 to do with the user. Three or four sentences. A companion with its own life

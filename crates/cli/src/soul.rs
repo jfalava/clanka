@@ -370,280 +370,121 @@ fn todos(body: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The span of a line that quotes the companion's voice, in straight or
+/// curly quote marks.
+fn quote(line: &str) -> Option<&str> {
+    let start = line.find(['"', '\u{201c}'])?;
+    let open = line[start..].chars().next()?.len_utf8();
+    let end = line.rfind(['"', '\u{201d}'])?;
+    (end >= start + open).then(|| &line[start + open..end])
+}
+
 /// Lines of the body that quote the companion's voice (a quoted span of four
 /// words or more), and how many of those quotes end on a question. A small
 /// model says its examples back word for word, so they decide how it ends.
 fn voice_lines(body: &str) -> (usize, usize) {
-    let mut quoted = 0;
-    let mut questions = 0;
-    for line in body.lines() {
-        let Some(start) = line.find('"') else {
-            continue;
-        };
-        let Some(len) = line[start + 1..].rfind('"') else {
-            continue;
-        };
-        let quote = &line[start + 1..start + 1 + len];
-        if quote.split_whitespace().count() < 4 {
-            continue;
-        }
+    let quotes = body
+        .lines()
+        .filter_map(quote)
+        .filter(|q| q.split_whitespace().count() >= 4);
+    let (mut quoted, mut questions) = (0, 0);
+    for q in quotes {
         quoted += 1;
-        if quote.trim_end().ends_with('?') {
-            questions += 1;
-        }
+        questions += usize::from(q.trim_end().ends_with('?'));
     }
     (quoted, questions)
 }
 
-/// The prose tics in a body that its companion would pick up: a model talks
-/// the way its persona is written, so these come back in its replies. Each is
-/// a warning naming the tic and quoting where it is. Only shapes a few words
-/// can pin down are looked for; maxims are caught only at the end of a voice
-/// line, where a model repeats them most.
-fn tics(body: &str) -> Vec<String> {
-    // A sentence as quoted back: without a "Good news:" label or the quote
-    // marks of the voice line it is in.
-    let shown = |s: &str| {
-        s.rsplit_once(": \"")
-            .map_or(s, |(_, quote)| quote)
-            .trim_matches(['"', '\u{201c}', '\u{201d}'])
-            .to_owned()
-    };
-    let mut found = Vec::new();
-    for block in blocks(body) {
-        let words: Vec<_> = block.iter().map(|s| words(s)).collect();
-        for (i, (sentence, w)) in block.iter().zip(&words).enumerate() {
-            if let Some(next) = words.get(i + 1)
-                && denies(w)
-                && reveals(next)
-            {
-                found.push(format!(
-                    "negation-first reveal: \"{} {}\". Say what it is without first saying what \
-                     it is not",
-                    shown(sentence),
-                    shown(&block[i + 1])
-                ));
-            } else if denies_then_reveals(w) {
-                found.push(format!(
-                    "negation-first reveal: \"{}\". Say what it is without first saying what it \
-                     is not",
-                    shown(sentence)
-                ));
-            }
-            if designates(w) {
-                found.push(format!(
-                    "significance label: \"{}\". Say the thing without calling it the real or \
-                     only one",
-                    shown(sentence)
-                ));
-            }
-        }
-        // Clipped fragments: three or more sentences in a row of three words or fewer.
-        let mut run = 0;
-        for (i, w) in words.iter().enumerate() {
-            run = if w.len() <= 3 { run + 1 } else { 0 };
-            let ends = words.get(i + 1).is_none_or(|n| n.len() > 3);
-            if run >= 3 && ends {
-                let run: Vec<_> = block[i + 1 - run..=i].iter().map(|s| shown(s)).collect();
-                found.push(format!(
-                    "clipped fragments: \"{}\". Write whole sentences",
-                    run.join(" ")
-                ));
-            }
+/// The prose tics in a body, as warnings and notes: a model talks the way its
+/// persona is written, so a shape the persona repeats comes back in replies.
+/// The shapes are guessed from a few words (see [`clanka_core::tics`]), so
+/// one sentence of a shape is a note and only a shape that comes back is a
+/// warning. Maxims are looked for at the end of a voice line, which a model
+/// recites.
+fn tics(body: &str) -> (Vec<String>, Vec<String>) {
+    use clanka_core::tics::{Kind, closing_maxim, in_prose};
+    let mut found = in_prose(body);
+    found.extend(body.lines().filter_map(quote).filter_map(closing_maxim));
+    let (mut warnings, mut notes) = (Vec::new(), Vec::new());
+    for kind in Kind::ALL {
+        let quotes: Vec<_> = found
+            .iter()
+            .filter(|t| t.kind == kind)
+            .map(|t| format!("\"{}\"", t.quote))
+            .collect();
+        match quotes.as_slice() {
+            [] => {}
+            [one] => notes.push(format!(
+                "{}, once: {one}. Fine once; a shape the persona repeats is one its companion \
+                 copies",
+                kind.name()
+            )),
+            many => warnings.push(format!(
+                "{}, {} times: {}. {}",
+                kind.name(),
+                many.len(),
+                many.join(", "),
+                kind.instead()
+            )),
         }
     }
-    for line in body.lines() {
-        let (Some(start), Some(end)) = (line.find('"'), line.rfind('"')) else {
-            continue;
-        };
-        let quote = &line[(start + 1).min(end)..end];
-        let Some(last) = sentences(quote).pop() else {
-            continue;
-        };
-        if quote.split_whitespace().count() >= 4 && is_maxim(&last) {
-            found.push(format!(
-                "voice line ends on a maxim: \"{last}\". End it on what is said to the user"
-            ));
-        }
-    }
-    found
+    (warnings, notes)
 }
 
-/// The body as runs of prose: a paragraph or a list item each, split into
-/// sentences. Headings are left out.
-fn blocks(body: &str) -> Vec<Vec<String>> {
-    let mut blocks: Vec<String> = Vec::new();
-    let mut open = false;
-    for line in body.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with('#') {
-            open = false;
-            continue;
-        }
-        match line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
-            Some(item) => blocks.push(item.to_owned()),
-            None if open => {
-                let last = blocks.last_mut().expect("an open block was pushed");
-                last.push(' ');
-                last.push_str(line);
-            }
-            None => blocks.push(line.to_owned()),
-        }
-        open = true;
-    }
-    blocks.iter().map(|b| sentences(b)).collect()
-}
-
-/// A run of prose split after each `.`, `!` or `?`, with any quote or
-/// bracket that closes it, that a space or the end follows.
-fn sentences(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut chars = text.char_indices().peekable();
-    while let Some((_, c)) = chars.next() {
-        if !matches!(c, '.' | '!' | '?') {
-            continue;
-        }
-        while chars
-            .next_if(|&(_, c)| matches!(c, '"' | '\u{201d}' | ')' | '*'))
-            .is_some()
-        {}
-        let end = match chars.peek() {
-            None => text.len(),
-            Some(&(at, c)) if c.is_whitespace() => at,
-            Some(_) => continue,
-        };
-        let sentence = text[start..end].trim();
-        if !sentence.is_empty() {
-            out.push(sentence.to_owned());
-        }
-        start = end;
-    }
-    let rest = text[start..].trim();
-    if !rest.is_empty() {
-        out.push(rest.to_owned());
-    }
-    out
-}
-
-/// A sentence's words in lower case with straight apostrophes and no
-/// punctuation around them, each with whether a comma, colon, semicolon or
-/// dash closes the clause after it.
-fn words(sentence: &str) -> Vec<(String, bool)> {
-    let mut out: Vec<(String, bool)> = Vec::new();
-    for raw in sentence.split_whitespace() {
-        let raw = raw.replace('\u{2019}', "'");
-        let breaks = raw.ends_with([',', ';', ':', '\u{2014}', '\u{2013}']) || raw == "-";
-        let word = raw
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .to_lowercase();
-        match out.last_mut() {
-            Some(last) if word.is_empty() => last.1 |= breaks,
-            _ if word.is_empty() => {}
-            _ => out.push((word, breaks)),
-        }
-    }
-    out
-}
-
-/// "It's", "that's", "I'm": a subject and its "be" in one word.
-const BE_JOINED: [&str; 8] = [
-    "it's", "that's", "they're", "he's", "she's", "i'm", "you're", "we're",
-];
-
-/// Whether a sentence says what something is not: "is not", "isn't", "that's
-/// not", or "Not" to open it. "Don't" and "never" alone deny an act, which
-/// is no tic.
-fn denies(w: &[(String, bool)]) -> bool {
-    let be = |s: &str| matches!(s, "is" | "are" | "was" | "were" | "am") || BE_JOINED.contains(&s);
-    w.first().is_some_and(|(s, _)| s == "not")
-        || w.iter()
-            .any(|(s, _)| matches!(s.as_str(), "isn't" | "aren't" | "wasn't" | "weren't"))
-        || w.windows(2)
-            .any(|p| be(&p[0].0) && matches!(p[1].0.as_str(), "not" | "never"))
-}
-
-/// Whether a sentence opens by saying what something is: "It is", "That's",
-/// "I'm", with no denial of its own.
-fn reveals(w: &[(String, bool)]) -> bool {
-    let opens = match w {
-        [(a, _), ..] if BE_JOINED.contains(&a.as_str()) => true,
-        [(a, _), (b, _), ..] => {
-            matches!(
-                a.as_str(),
-                "it" | "that" | "this" | "they" | "he" | "she" | "i" | "you" | "we"
-            ) && matches!(b.as_str(), "is" | "are" | "was" | "were" | "am")
-        }
-        _ => false,
-    };
-    opens && !denies(&w[..w.len().min(3)])
-}
-
-/// "It's not X, it's Y", "not X, but Y" and "X, not Y" in one sentence.
-fn denies_then_reveals(w: &[(String, bool)]) -> bool {
-    let Some(not) = w.iter().position(|(s, _)| s == "not" || s.ends_with("n't")) else {
-        return false;
-    };
-    // That's X, not Y: a clause that opens by saying what something is (after
-    // a "A hard day:" label, say) closes on a short denial after a comma.
-    // "Once a conversation, not in every reply" is a rule, not a reframe.
-    if w[not].0 == "not"
-        && not > 0
-        && w[not - 1].1
-        && (0..not).any(|j| (j == 0 || w[j - 1].1) && reveals(&w[j..not]))
-        && w.len() - not <= 6
-        && !w[not..].iter().any(|(_, b)| *b)
-    {
-        return true;
-    }
-    // Not X, but Y: a clause break soon after, then "but" or a reveal.
-    denies(w)
-        && w.iter()
-            .enumerate()
-            .skip(not)
-            .take(8)
-            .any(|(i, (_, breaks))| {
-                *breaks && (w.get(i + 1).is_some_and(|(s, _)| s == "but") || reveals(&w[i + 1..]))
+/// Rules of the body that ask for a tic outright: "You speak in images",
+/// "You close on the one sentence that will stay". A rule about manner is
+/// followed in every reply, which is what makes a turn of phrase a tic.
+fn asked_tics(body: &str) -> Vec<String> {
+    const IN: &str = "images metaphor metaphors riddles proverbs aphorisms maxims fragments \
+        parables";
+    const SPEAK: &str = "speak speaks talk talks write writes answer answers reply replies \
+        think thinks";
+    const CLOSE: &str = "close closes end ends finish finishes";
+    const ON: &str = "sentence line image truth thought";
+    let asks = |sentence: &str| {
+        let w: Vec<String> = sentence
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase()
             })
-}
-
-/// "Is the only honest thing", "that's the whole trade": calling something
-/// the real, first or only one.
-fn designates(w: &[(String, bool)]) -> bool {
-    const LABELS: [&str; 8] = [
-        "whole", "only", "real", "actual", "first", "one", "key", "true",
-    ];
-    const THINGS: &str =
-        "thing things part point question answer trade trick difference lesson problem";
-    w.windows(3).enumerate().any(|(i, p)| {
-        let (be, the, label) = (&p[0].0, &p[1].0, &p[2].0);
-        let is = matches!(be.as_str(), "is" | "are" | "was") || BE_JOINED.contains(&be.as_str());
-        is && the == "the"
-            && (LABELS.contains(&label.as_str())
-                && w[i + 3..]
-                    .iter()
-                    .take(2)
-                    .any(|(s, _)| THINGS.split(' ').any(|t| t == s))
-                || be == "that's" && THINGS.split(' ').any(|t| t == label))
-    })
-}
-
-/// Whether a voice line's last sentence is a general truth: a statement whose
-/// subject is "the", "most", "bad" or the like, with nobody in it to talk
-/// to. "That sounds hard" and "Go on" are said to someone, so they are not.
-fn is_maxim(sentence: &str) -> bool {
-    const PERSONS: [&str; 22] = [
-        "i", "i'm", "i'd", "i'll", "i've", "me", "my", "mine", "myself", "you", "you're", "you'd",
-        "you'll", "you've", "your", "yours", "yourself", "we", "we're", "us", "our", "let's",
-    ];
-    const GENERIC: &str =
-        "the a an every most some nobody nothing everyone everything people all bad good old";
-    let w = words(sentence);
-    w.len() >= 3
-        && !sentence
-            .trim_end_matches(['"', '\u{201d}', '*'])
-            .ends_with('?')
-        && GENERIC.split(' ').any(|g| g == w[0].0)
-        && !w.iter().any(|(s, _)| PERSONS.contains(&s.as_str()))
+            .collect();
+        let any = |list: &str, word: &str| list.split_whitespace().any(|l| l == word);
+        // "You never speak in riddles" forbids it; "you speak in images,
+        // never in explanations" asks.
+        let forbidden = |at: usize| {
+            w[..at]
+                .iter()
+                .any(|word| any("never not no without", word) || word.ends_with("n't"))
+        };
+        w.iter().enumerate().any(|(i, word)| {
+            // "You speak only in images"; "you trained in images" is a fact.
+            let speaks_in = word == "in"
+                && w.get(i + 1).is_some_and(|next| any(IN, next))
+                && w[i.saturating_sub(3)..i].iter().any(|v| any(SPEAK, v));
+            // "You close on the one sentence that will stay"; "whatever line
+            // comes" is no rule about the line.
+            let closes_on = any(CLOSE, word)
+                && w.get(i + 1)
+                    .is_some_and(|next| next == "on" || next == "with")
+                && w[i + 2..]
+                    .windows(2)
+                    .take(3)
+                    .any(|p| any("a an the one", &p[0]) && any(ON, &p[1]));
+            (speaks_in || closes_on) && !forbidden(i)
+        })
+    };
+    body.lines()
+        .filter(|line| quote(line).is_none() && !line.starts_with('#'))
+        .flat_map(|line| clanka_core::tics::sentences(line.trim().trim_start_matches("- ")))
+        .filter(|s| asks(s))
+        .map(|s| {
+            format!(
+                "asks for a tic: \"{s}\". A rule about manner is followed in every reply; say \
+                 who the person is and let the manner follow"
+            )
+        })
+        .collect()
 }
 
 /// Above this the persona, sent every turn and again for every memory write,
@@ -664,6 +505,8 @@ pub struct LintReport {
     /// instructions and actions.
     memory_tokens: usize,
     pub warnings: Vec<String>,
+    /// Guesses that need no action: a turn of phrase seen once.
+    notes: Vec<String>,
 }
 
 impl LintReport {
@@ -688,7 +531,9 @@ impl LintReport {
                  on a statement"
             ));
         }
-        warnings.extend(tics(&soul.body));
+        let (repeated, notes) = tics(&soul.body);
+        warnings.extend(repeated);
+        warnings.extend(asked_tics(&soul.body));
         let chat_tokens = clanka_core::context::estimate_tokens(&soul.persona());
         let memory_tokens = clanka_core::context::estimate_tokens(
             &clanka_core::writer::reflection_system_prompt(soul),
@@ -705,6 +550,7 @@ impl LintReport {
             chat_tokens,
             memory_tokens,
             warnings,
+            notes,
         }
     }
 
@@ -715,6 +561,7 @@ impl LintReport {
             chat_tokens: 0,
             memory_tokens: 0,
             warnings: vec![format!("not a valid soul.md: {error}")],
+            notes: Vec::new(),
         }
     }
 
@@ -722,6 +569,9 @@ impl LintReport {
         let mut out = String::new();
         for w in &self.warnings {
             out += &format!("warning: {w}\n");
+        }
+        for n in &self.notes {
+            out += &format!("note: {n}\n");
         }
         out += &format!(
             "{}: {} ({} core values, {} warnings)\n",
@@ -788,40 +638,70 @@ mod tests {
     }
 
     #[test]
-    fn lint_quotes_the_prose_tics_a_companion_would_copy_and_passes_plain_prose() {
+    fn lint_warns_of_a_tic_the_persona_repeats_and_only_notes_one_seen_once() {
         // Each tic here came back in bench replies of souls written this way.
         let ticced = "You are Harrow.\n\nThat is not superstition. That is a promise. Weather \
                       is the only honest thing in town.\n\n## How you talk\n\n- Few words. Hard \
-                      ones. No speeches.\n- Good news: \"Good. Hold onto that. The river takes \
-                      the rest.\"\n- A hard day: \"That's a stuck bolt, not a verdict.\"\n- \
-                      \"It's not stupid to be happy, it's the bit that held everything up.\"\n";
-        let found = super::tics(ticced);
+                      ones. No speeches.\n- Good news: \u{201c}Good. Hold onto that. The river \
+                      takes the rest.\u{201d}\n- A hard day: \"That's a stuck bolt, not a \
+                      verdict.\"\n- \"It's not stupid to be happy, it's a good morning's work.\"\n\
+                      - You speak in images, never in explanations.\n- You close on the one \
+                      sentence that will stay with them.\n";
+        let (warnings, notes) = super::tics(ticced);
+        assert_eq!(
+            warnings,
+            [
+                "negation-first reveal, 3 times: \"That is not superstition. That is a promise.\", \
+              \"That's a stuck bolt, not a verdict.\", \"It's not stupid to be happy, it's a \
+              good morning's work.\". Say what it is without first saying what it is not"
+            ]
+        );
         let expected = [
-            "negation-first reveal: \"That is not superstition. That is a promise.\"",
-            "significance label: \"Weather is the only honest thing in town.\"",
-            "clipped fragments: \"Few words. Hard ones. No speeches.\"",
-            "negation-first reveal: \"That's a stuck bolt, not a verdict.\"",
-            "negation-first reveal: \"It's not stupid to be happy, it's the bit that held \
-             everything up.\"",
-            "voice line ends on a maxim: \"The river takes the rest.\"",
+            "significance label, once: \"Weather is the only honest thing in town.\"",
+            "clipped fragments, once: \"Few words. Hard ones. No speeches.\"",
+            "closing maxim, once: \"The river takes the rest.\"",
         ];
-        for tic in expected {
-            assert!(
-                found.iter().any(|w| w.starts_with(tic)),
-                "{tic}\nin {found:#?}"
-            );
+        assert_eq!(notes.len(), expected.len(), "{notes:#?}");
+        for (note, expected) in notes.iter().zip(expected) {
+            assert!(note.starts_with(expected), "{note}");
         }
-        assert_eq!(found.len(), expected.len(), "{found:#?}");
+        let asked = super::asked_tics(ticced);
+        assert_eq!(asked.len(), 2, "{asked:#?}");
+        assert!(asked[0].starts_with("asks for a tic: \"You speak in images"));
+        assert!(asked[1].starts_with("asks for a tic: \"You close on the one sentence"));
 
         // The same person in plain prose, with the near misses: a denied act,
-        // a "not" with no reveal after it, a line that ends on a remark.
+        // a "not" with no reveal after it, a line that ends on a remark, what
+        // the two people talking are and are not, a rule that forbids the
+        // manner or only has its words, a voice line of one sentence.
         let plain = "You are Harrow. You don't talk about the war much, but you think about \
-                     it.\n\n- Good news: \"Good, I'm glad. That sounds like it took some work.\"\n\
-                     - Disagreement: \"I don't think that's right, to be honest. I think you're \
-                     being hard on yourself.\"\n- If a crossing isn't safe, you say so.\n- You \
-                     never pretend to be a person you're not, including a doctor.\n- \"You don't \
-                     need to apologise. I'd be upset too.\"\n";
-        assert_eq!(super::tics(plain), Vec::<String>::new());
+                     it. You were not born here. You were raised in Porto.\n\n- Good news: \
+                     \"Good, I'm glad. That sounds like it took some work.\"\n- Disagreement: \
+                     \"I don't think that's right, to be honest. I think you're being hard on \
+                     yourself.\"\n- If a crossing isn't safe, you say so.\n- You never pretend \
+                     to be a person you're not, including a doctor.\n- \"You don't need to \
+                     apologise. I'd be upset too.\"\n- \"I'm not sure, I'm still thinking about \
+                     it.\"\n- You end most replies on a statement, and you keep them short.\n- You \
+                     never speak in riddles.\n- You trained in images: ten years retouching \
+                     photographs.\n- You finish with whatever line comes, no flourish.\n- \
+                     \"The kettle is on.\"\n";
+        assert_eq!(super::tics(plain), (Vec::new(), Vec::new()));
+        assert_eq!(super::asked_tics(plain), Vec::<String>::new());
+
+        // A note is not a warning: `--strict` and `soul draft` let it be.
+        let once = super::lint_draft(
+            "Harrow",
+            "# Harrow\n\nYou are Harrow, a ferryman.\n\n- You never lie about the river.\n- You never leave a passenger behind.\n- You say so when a crossing isn't safe.\n\nThat is not superstition. That is a promise.\n",
+        );
+        assert!(once.valid && once.notes.len() == 1, "{once:?}");
+        assert!(
+            !once.warnings.iter().any(|w| w.contains("negation")),
+            "{once:?}"
+        );
+        assert!(
+            once.text(std::path::Path::new("x.md"))
+                .contains("note: negation-first")
+        );
     }
 
     #[test]
@@ -859,7 +739,7 @@ mod tests {
         );
         assert_eq!(
             super::tics(&soul.body),
-            Vec::<String>::new(),
+            (Vec::new(), Vec::new()),
             "every new companion starts from the template, so its lines are tic-free"
         );
     }

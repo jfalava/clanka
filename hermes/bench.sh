@@ -106,6 +106,8 @@ done
 
 {
     echo "turns: $n, replies ending in a question: $questions"
+    # Guesses from a few words (`clanka tics --help`): compare runs, not replies.
+    echo "prose tics: $("$clanka" tics "$out"/t[0-9]*.txt | tail -1)"
     if [ -n "$sid" ]; then
         echo "chat session $sid (Hermes's own count and estimate):"
         sqlite3 -readonly "$db" "SELECT '  messages ' || message_count || ', input ' || input_tokens ||

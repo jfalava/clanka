@@ -98,10 +98,10 @@ line, then ask for the go-ahead before writing anything.
 3. Save the body to a file, then `@CLANKA@ init <Name> --from <file>`; it
    prints the soul's path. Set the traits the interview settled in the
    frontmatter with the file tool.
-4. `@CLANKA@ soul lint <path>` until it prints no warnings. Then show them
-   the whole soul, body and frontmatter except the `doctor_token` line, which
-   is a secret and stays in the file, and ask what to change. Iterate until
-   they say it is right. Lint again after every edit.
+4. `@CLANKA@ soul lint <path>` until it prints no warnings (a `note:` needs
+   no change). Then show them the whole soul, body and frontmatter except the
+   `doctor_token` line, which is a secret and stays in the file, and ask what
+   to change. Iterate until they say it is right. Lint again after every edit.
 5. `@CLANKA@ hermes profile <profile> <path>` makes the Hermes profile: the
    companion, clanka's two tools and nothing else. It takes a minute; it sets
    the profile's config one key at a time. Run it again after any later edit
