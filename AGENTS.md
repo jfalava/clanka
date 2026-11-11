@@ -103,5 +103,6 @@ A schema change is a new file in `crates/core/src/migrations/`, added to `MIGRAT
 - Install: `bun install` (repo root)
 - Check: `bun run docs:check`, then `bun run docs:build`; only the build validates the sidebar and produces `docs/dist/pagefind/`
 - Plan: `bun run plan` (read-only); deploy: `bun run deploy`. Deploy only when asked.
+- CI is Cloudflare Workers Builds on the `clanka-docs` Worker, not GitHub Actions: a push to `main` that touches `docs/`, `package.json`, `bun.lock` or `bunfig.toml` runs `bun run ci:build` and then `bun run ci:deploy`. The trigger sets `ALCHEMY_STAGE=live_jfalava`, the stage the Worker was first deployed from, so builds and local runs share one state; without it a build has no `USER` and would use `live_unknown`.
 
 The CLI pages under `docs/src/content/docs/cli/` mirror `clanka help <command>`, and `configuration.mdx` mirrors the defaults in `crates/core`. Update them with the command or setting they describe.

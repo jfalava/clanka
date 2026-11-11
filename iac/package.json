@@ -4,6 +4,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "ci:deploy": "alchemy deploy --yes",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "plan": "alchemy plan",

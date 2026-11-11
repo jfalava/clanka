@@ -5,6 +5,8 @@
   "type": "module",
   "workspaces": ["docs", "iac"],
   "scripts": {
+    "ci:build": "bun run docs:check",
+    "ci:deploy": "bun run --filter @clanka/iac ci:deploy",
     "deploy": "bun run --cwd iac deploy",
     "destroy": "bun run --cwd iac destroy",
     "docs:build": "bun run --cwd docs build",

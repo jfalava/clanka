@@ -111,6 +111,10 @@ bun run plan          # what a deploy would change
 bun run deploy        # build and publish to clanka.jfa.dev
 ```
 
+Cloudflare Workers Builds deploys the site: a push to `main` that touches
+`docs/`, `package.json`, `bun.lock` or `bunfig.toml` runs `bun run ci:build`
+and then `bun run ci:deploy`.
+
 ## License
 
 MIT; see [LICENSE](LICENSE).
