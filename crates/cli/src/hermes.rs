@@ -1,6 +1,7 @@
-//! `clanka hermes`: a companion as a Hermes profile, and Nightshade, the agent
-//! that interviews you and makes one. Both drive the `hermes` CLI, so they
-//! work the same from a shell and from an agent's terminal tool.
+//! `clanka hermes`: a companion as a Hermes profile, Nightshade, the agent
+//! that interviews you and makes one, and the refresh that brings both up to a
+//! new build. All drive the `hermes` CLI, so they work the same from a shell
+//! and from an agent's terminal tool.
 
 use anyhow::{Context, Result, bail};
 use clanka_core::soul::Soul;
@@ -9,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const EXTENSION: &str = "_clanka.abi3.so";
+/// Where a companion's profile keeps the path of its soul.md.
+const SOUL_SETTING: &str = "plugins.entries.clanka.settings.soul";
+const NIGHTSHADE: &str = include_str!("../../../hermes/nightshade/SOUL.md");
 const CLI_HINT: &str = "Plain terminal: markdown does not render, so write plain text.";
 const TELEGRAM_HINT: &str =
     "You are on Telegram: short messages, *bold* and _italic_ render, nothing fancier.";
@@ -389,12 +393,7 @@ fn set_up_companion(
     let soul_str = soul_path
         .to_str()
         .context("the soul path is not valid UTF-8")?;
-    h(&[
-        "config",
-        "set",
-        "plugins.entries.clanka.settings.soul",
-        soul_str,
-    ])?;
+    h(&["config", "set", SOUL_SETTING, soul_str])?;
     let toolsets = config_get(home, Some(profile), "platform_toolsets")?;
     for platform in without_clanka(toolsets.as_ref()) {
         h(&[
@@ -452,7 +451,6 @@ fn set_up_nightshade(
     model: Option<&str>,
     clanka: &str,
 ) -> Result<()> {
-    const SOUL: &str = include_str!("../../../hermes/nightshade/SOUL.md");
     share_providers(home, profile, dir)?;
     let h = |args: &[&str]| hermes(home, Some(profile), args);
     if let Some(model) = model {
@@ -478,7 +476,112 @@ fn set_up_nightshade(
     ] {
         h(&["config", "set", key, value])?;
     }
-    std::fs::write(dir.join("SOUL.md"), SOUL.replace("@CLANKA@", clanka))?;
+    std::fs::write(dir.join("SOUL.md"), NIGHTSHADE.replace("@CLANKA@", clanka))?;
+    Ok(())
+}
+
+/// Brings every profile clanka set up to the plugin in the root's
+/// `plugins/clanka`, the only copy `hermes/install.sh` replaces: a profile
+/// runs its own. A profile with a soul in its clanka settings is a companion's
+/// and gets what `profile` does; one whose SOUL.md opens as Nightshade's does
+/// gets what `nightshade` does, on the model it has. Any other is left alone.
+/// A profile that fails is named and the rest are still done. With `restart`,
+/// whatever has the plugin loaded is then restarted, since it runs the build
+/// it loaded until it is.
+pub fn refresh(restart: bool) -> Result<()> {
+    let home = home()?;
+    let profiles = home.join("profiles");
+    let mut names: Vec<String> = std::fs::read_dir(&profiles)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| profiles.join(name).join("config.yaml").exists())
+        .collect();
+    names.sort();
+    let mut refreshed = 0;
+    let mut failed = Vec::new();
+    for name in &names {
+        let result = config_get(&home, Some(name), SOUL_SETTING).and_then(|soul| {
+            match soul.as_ref().and_then(|soul| soul.as_str()) {
+                Some(soul) => profile(name, Path::new(soul)).map(|()| true),
+                None if is_nightshade(&profiles.join(name)) => {
+                    nightshade(name, None).map(|()| true)
+                }
+                None => Ok(false),
+            }
+        });
+        match result {
+            Ok(true) => refreshed += 1,
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("error: profile {name}: {error:#}");
+                failed.push(name.as_str());
+            }
+        }
+    }
+    if refreshed == 0 && failed.is_empty() {
+        println!(
+            "No profile under {} was set up by clanka; \
+             `clanka hermes profile <profile> <soul.md>` makes one.",
+            profiles.display()
+        );
+    } else if refreshed > 0 && restart {
+        restart_gateway(&home)?;
+    } else if refreshed > 0 {
+        println!("A gateway that already loaded clanka runs the old build until it restarts.");
+    }
+    if !failed.is_empty() {
+        bail!("could not refresh {}", failed.join(", "));
+    }
+    Ok(())
+}
+
+/// Whether the profile's SOUL.md opens with the line Nightshade's does. A
+/// companion of that name has a soul in its settings and is found by that.
+fn is_nightshade(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("SOUL.md"))
+        .is_ok_and(|soul| soul.lines().next() == NIGHTSHADE.lines().next())
+}
+
+/// Restarts what has the plugin loaded. Under systemd that is every running
+/// `hermes-gateway*` and `hermes-serve*` user unit (the backend loads the
+/// plugin too), restarted by systemctl itself: `hermes gateway restart` there
+/// also rewrites the unit file, which a unit Hermes did not install, such as
+/// Home Manager's, must be spared. Anywhere else, launchd included, `hermes
+/// gateway restart` does it, and asks first while a session is live.
+fn restart_gateway(home: &Path) -> Result<()> {
+    let units: Vec<String> = Command::new("systemctl")
+        .args(["--user", "list-units", "--type=service", "--state=active"])
+        .args(["--plain", "--no-legend", "hermes-gateway*", "hermes-serve*"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.split_whitespace().next().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut command = if units.is_empty() {
+        println!("Restarting the gateway: hermes gateway restart");
+        let mut command = Command::new("hermes");
+        command
+            .args(["gateway", "restart"])
+            .env("HERMES_HOME", home);
+        command
+    } else {
+        println!("Restarting {}", units.join(" and "));
+        let mut command = Command::new("systemctl");
+        command.args(["--user", "restart"]).args(&units);
+        command
+    };
+    let status = command.status().context("restarting the gateway")?;
+    if !status.success() {
+        bail!("the gateway was not restarted ({status}); it still runs the old build");
+    }
     Ok(())
 }
 
@@ -570,8 +673,7 @@ mod tests {
 
     #[test]
     fn nightshade_soul_has_only_the_clanka_placeholder() {
-        let soul = include_str!("../../../hermes/nightshade/SOUL.md");
-        assert!(soul.contains("@CLANKA@"));
-        assert!(!soul.contains("@ROOT@"));
+        assert!(NIGHTSHADE.contains("@CLANKA@"));
+        assert!(!NIGHTSHADE.contains("@ROOT@"));
     }
 }

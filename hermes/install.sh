@@ -4,7 +4,9 @@
 # that `clanka hermes profile` uses to set up a companion's profile, and the
 # soul-writer skill into ~/.agents/skills so any agent on this machine
 # (Hermes, Amp, Claude Code…) can write a soul the same way `clanka soul
-# guide` describes.
+# guide` describes. Then `clanka hermes refresh` gives every profile clanka
+# made the new plugin and restarts the gateway; arguments go to it, so
+# `hermes/install.sh --no-restart` leaves the gateway running.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 home=${HERMES_HOME:-$HOME/.hermes}
@@ -28,5 +30,4 @@ mkdir -p "$skills"
 cp "$root/skills/soul-writer/SKILL.md" "$skills/SKILL.md"
 echo "Installed to $dest; the soul-writer skill to $skills"
 echo "Set up a companion's profile: $root/target/release/clanka hermes profile <profile> <soul.md>"
-echo "A gateway that already loaded clanka keeps running the old build until it restarts:"
-echo "  hermes gateway restart    (or systemctl --user restart hermes-gateway.service)"
+HERMES_HOME=$home "$root/target/release/clanka" hermes refresh "$@"

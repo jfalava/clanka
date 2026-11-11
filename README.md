@@ -77,6 +77,11 @@ it, until an echo reveals it.
 makes a Hermes profile that is that companion, and `clanka hermes nightshade`
 makes an agent that interviews you and writes a soul.
 
+To update, pull and run `hermes/install.sh` again. It ends with `clanka hermes
+refresh`, which gives every profile clanka made the new plugin and restarts
+the gateway; `hermes/install.sh --no-restart` leaves the gateway running the
+old build.
+
 ## Development
 
 ```sh

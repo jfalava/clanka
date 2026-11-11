@@ -262,14 +262,15 @@ enum Command {
     /// interviews you and makes one.
     ///
     /// Needs the clanka plugin that hermes/install.sh builds and installs under
-    /// ~/.hermes/plugins/clanka, and `hermes` on PATH. Both commands drive the Hermes CLI
+    /// ~/.hermes/plugins/clanka, and `hermes` on PATH. The commands drive the Hermes CLI
     /// and are safe to run again: they set the same values and rewrite the profile's
     /// SOUL.md. They work the same from a shell and from an agent's terminal inside Hermes.
     #[command(after_long_help = "Example:\n  \
         clanka hermes profile nova ~/.config/clanka/souls/<id>.md\n  \
         hermes -p nova chat\n  \
         clanka hermes nightshade --model claude-opus-5-5\n  \
-        hermes -p nightshade chat")]
+        hermes -p nightshade chat\n  \
+        clanka hermes refresh")]
     Hermes {
         #[command(subcommand)]
         command: HermesCommand,
@@ -324,6 +325,26 @@ enum HermesCommand {
         /// The model it runs on, as Hermes names it; the Hermes default when unset.
         #[arg(long)]
         model: Option<String>,
+    },
+    /// Bring every profile clanka made up to the installed plugin, then restart the
+    /// gateway.
+    ///
+    /// hermes/install.sh replaces the plugin under ~/.hermes/plugins/clanka and runs this,
+    /// because each profile runs a copy of its own and a running gateway keeps the build
+    /// it loaded. A profile with a soul in its clanka settings gets what `clanka hermes
+    /// profile` does with that soul; one whose SOUL.md is Nightshade's gets what `clanka
+    /// hermes nightshade` does, on the model it has; any other profile is left alone. A
+    /// profile that fails is named, the rest are still done, and the command fails. The
+    /// restart is `systemctl --user restart` of the running hermes-gateway and hermes-serve
+    /// units where systemd runs them, which interrupts live sessions without asking, and
+    /// `hermes gateway restart` otherwise, which asks first.
+    #[command(after_long_help = "Example:\n  \
+        clanka hermes refresh\n  \
+        clanka hermes refresh --no-restart")]
+    Refresh {
+        /// Leave the gateway running the build it loaded.
+        #[arg(long)]
+        no_restart: bool,
     },
 }
 
@@ -534,6 +555,9 @@ fn main() -> Result<()> {
         Command::Hermes {
             command: HermesCommand::Nightshade { profile, model },
         } => hermes::nightshade(&profile, model.as_deref()),
+        Command::Hermes {
+            command: HermesCommand::Refresh { no_restart },
+        } => hermes::refresh(!no_restart),
         Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
