@@ -114,11 +114,14 @@ pub fn stretch(message: &str) -> (Option<u32>, &str) {
 
 /// The line that lifts [`clanka_core::soul::TALK_HINT`]'s length rule for one
 /// reply. It goes last, after the persona: models follow the latest instruction.
+/// A host that keeps its own history shows the model the marker, so the line
+/// says what it is.
 pub fn stretch_hint(paragraphs: u32) -> String {
     let s = if paragraphs == 1 { "" } else { "s" };
     format!(
         "This reply only: set aside the length rule. Write it out in full, about {paragraphs} \
-         paragraph{s}."
+         paragraph{s}. A `>>` mark at the start of their message asked for this: it is not \
+         something they said, so never mention it."
     )
 }
 
