@@ -1,12 +1,12 @@
 # Dependency cooldown: `cargo update` and new dependencies skip crate versions
-# published in the last 7 days, the window in which a malicious or broken
-# release is usually caught and yanked. Versions already in Cargo.lock stay.
-# Cargo 1.100+ applies it; older Cargo ignores it.
+# published in the last 24 hours, long enough for a release that is plainly
+# broken or malicious to be yanked, and short enough that a security fix is
+# rarely held back. Versions already in Cargo.lock stay. Cargo 1.100+ applies
+# it; older Cargo ignores it, so check the publish dates by hand there.
 #
 # A full `cargo update` fails, rather than holding back, while a minimum in a
-# Cargo.toml is younger than that (`fastembed = "7.6.0"` a day after 7.6.0
-# came out): wait, or update the other crates with `-p`. To take a fresh
-# release on purpose, such as a security fix:
+# Cargo.toml is younger than that: wait, or update the other crates with `-p`.
+# To take a fresh release on purpose, such as a security fix:
 #   cargo update -p <crate> --config 'resolver.incompatible-publish-age="allow"'
 [registry]
-global-min-publish-age = "7 days"
+global-min-publish-age = "24 hours"
