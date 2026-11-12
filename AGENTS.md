@@ -78,7 +78,7 @@ Rust workspace: `crates/core` (the memory engine), `crates/cli` (the `clanka` bi
 - Test: `cargo test --workspace` (no model provider, keyring, Hermes or network needed)
 - Build the CLI: `cargo build -p clanka` (`target/debug/clanka`)
 
-CI (`.github/workflows/ci.yml`) runs the format check, lint and tests on every push to `main` and every pull request.
+CI (`.github/workflows/ci.yml`) runs on every push to `main` and every pull request: first the advisory check (`.github/workflows/advisories.yml`, `cargo deny check advisories` against `Cargo.lock`), then the format check, lint and tests, which are skipped when the advisory check fails. An advisory with no fix yet needs an `ignore` entry in `deny.toml` before anything else is checked.
 
 To run the CLI without touching real companions or the keyring, point it at a throwaway directory whose `config.toml` holds `[keys]` and `store = "file"`.
 

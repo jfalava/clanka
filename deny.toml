@@ -1,4 +1,5 @@
-# `cargo deny check advisories`, run weekly by .github/workflows/advisories.yml.
+# `cargo deny check advisories`, run by .github/workflows/advisories.yml: before
+# CI lints and tests a push or pull request, and weekly.
 # Vulnerabilities and unsound code fail it wherever they are in the tree.
 [advisories]
 # An unmaintained crate fails it only when a workspace crate depends on it

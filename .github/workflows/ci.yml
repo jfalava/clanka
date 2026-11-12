@@ -16,7 +16,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A known vulnerability in a locked dependency fails here, and `check` is
+  # skipped until the dependency moves or deny.toml ignores the advisory.
+  advisories:
+    uses: ./.github/workflows/advisories.yml
   check:
+    needs: advisories
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
