@@ -522,10 +522,12 @@ mod tests {
     #[test]
     fn retries_stop_when_the_next_wait_would_pass_the_time_limit() {
         // Two responses: a third try would fail to connect, not with a 500.
+        // The limit leaves the first try 900ms before its wait would pass it:
+        // a test process's first request takes about 250ms on macOS.
         let busy = http("500 Internal Server Error", "", "down");
         let model = OpenAiModel {
-            backoff: Duration::from_millis(200),
-            timeout: Duration::from_millis(300),
+            backoff: Duration::from_millis(500),
+            timeout: Duration::from_millis(1400),
             ..model(provider(vec![busy; 2]))
         };
         let error = model.complete(&hello()).unwrap_err().to_string();
