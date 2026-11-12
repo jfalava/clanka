@@ -13,6 +13,9 @@
     "/cli/chat",
     "/cli/chat/index.md",
     "/cli/chat/index.mdx",
+    "/cli/debug",
+    "/cli/debug/index.md",
+    "/cli/debug/index.mdx",
     "/cli/doctor",
     "/cli/doctor/index.md",
     "/cli/doctor/index.mdx",
@@ -97,6 +100,7 @@
     "/og.png",
     "/og/cli.png",
     "/og/cli/chat.png",
+    "/og/cli/debug.png",
     "/og/cli/doctor.png",
     "/og/cli/embedding.png",
     "/og/cli/eval.png",
@@ -130,5 +134,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-11T21:12:27.802Z"
+  "builtAt": "2026-11-12T19:17:56.068Z"
 }

@@ -40,6 +40,8 @@ clanka memories ~/.config/clanka/souls/<id>.md
 - **Move:** [list](/cli/list/) shows the companions on this machine.
   [export](/cli/export/) and [import](/cli/import/) move one to another
   machine.
+- **Test:** [debug](/cli/debug/) sends sample program status to the
+  terminal.
 
 ## Help
 
@@ -75,6 +77,9 @@ shows why.
 Nothing is reported when stderr is not a terminal, when `TERM` is `dumb`, or
 with [`CLANKA_PROGRAM_STATUS=0`](/configuration/#clanka_program_status).
 `clanka mcp` never reports.
+
+[`clanka debug status`](/cli/debug/) sends samples of these reports, to see
+how a terminal shows them without a companion or a model.
 
 ## Global flags
 

@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod debug;
 mod doctor;
 mod hermes;
 mod probe;
@@ -279,6 +280,42 @@ enum Command {
     Hermes {
         #[command(subcommand)]
         command: HermesCommand,
+    },
+    /// Send sample program status, to see how a terminal shows it.
+    ///
+    /// Plays what real commands report to the terminal (OSC 7501 and the window title) on
+    /// made-up work: nothing is read, written or asked of a model. Each report is also
+    /// printed, so what the terminal shows can be told from what it was sent. Ctrl-C during
+    /// a sample ends it as it ends a real command, on `idle`.
+    #[command(after_long_help = "Example:\n  \
+        clanka debug status progress\n  \
+        clanka debug status chat --delay-ms 3000\n  \
+        clanka debug status calls --end error")]
+    Debug {
+        #[command(subcommand)]
+        command: DebugCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DebugCommand {
+    /// Play one sample of program status reports.
+    ///
+    /// Refuses to run where reports are off: when stderr is not a terminal, when TERM is
+    /// `dumb`, or with CLANKA_PROGRAM_STATUS=0.
+    #[command(after_long_help = "Example:\n  \
+        clanka debug status progress\n  \
+        clanka debug status chat --delay-ms 3000 --end idle")]
+    Status {
+        /// The reports to play.
+        sample: debug::Sample,
+        /// How the run ends.
+        #[arg(long, default_value = "done")]
+        end: debug::End,
+        /// How long each report stays up, in milliseconds (at most 60000).
+        #[arg(long, value_name = "MS", default_value_t = 1000,
+            value_parser = clap::value_parser!(u64).range(0..=60000))]
+        delay_ms: u64,
     },
 }
 
@@ -642,6 +679,24 @@ fn run(command: Command) -> Result<bool> {
             }
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
             clanka::mcp::serve(chat, writer, budget)
+        }
+        Command::Debug {
+            command:
+                DebugCommand::Status {
+                    sample,
+                    end,
+                    delay_ms,
+                },
+        } => {
+            let session = status::session();
+            if !session.enabled() {
+                bail!(
+                    "program status is off here: it needs stderr on a terminal, a TERM other \
+                     than `dumb`, and CLANKA_PROGRAM_STATUS other than 0"
+                );
+            }
+            let delay = std::time::Duration::from_millis(delay_ms);
+            debug::status(&session, sample, end, delay, std::io::stdout().lock())
         }
     }?;
     Ok(true)

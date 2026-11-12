@@ -5,6 +5,7 @@
   ],
   "mdxFiles": [
     "src/content/docs/cli/chat.mdx",
+    "src/content/docs/cli/debug.mdx",
     "src/content/docs/cli/doctor.mdx",
     "src/content/docs/cli/embedding.mdx",
     "src/content/docs/cli/eval.mdx",

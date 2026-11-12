@@ -1,0 +1,57 @@
+---
+title: debug
+description: Send sample program status, to see how a terminal shows it.
+---
+
+```sh
+clanka debug status [--end <end>] [--delay-ms <ms>] <sample>
+```
+
+Plays what real commands report to the terminal
+([program status](/cli/#program-status) and the window title) on made-up
+work. Nothing is read, written or asked of a model, so it needs no companion
+and no `[model]`.
+
+Each report is also printed, so you can tell what the terminal shows from
+what it was sent. Ctrl-C during a sample ends it as it ends a real command,
+on `idle`.
+
+```sh
+clanka debug status progress
+```
+
+It refuses to run where reports are off: when stderr is not a terminal, when
+`TERM` is `dumb`, or with
+[`CLANKA_PROGRAM_STATUS=0`](/configuration/#clanka_program_status).
+
+## Samples
+
+| Sample     | What it plays                                                                                         |
+| ---------- | ----------------------------------------------------------------------------------------------------- |
+| `progress` | A step with a percentage, as `embedding` and `doctor reembed` report.                                 |
+| `calls`    | Model calls counted under a percentage, one of them waiting on a retry, as `soul update` reports.     |
+| `chat`     | A chat: at rest, replying, replied, a reply that fails, and the reflections beside them, one failing. |
+
+## Flags
+
+### `--end <end>`
+
+How the run ends: `done` with a line of what was done, `error` with the
+reason and exit status 1, or `idle`, as a chat that was left.
+
+- Default: `done`
+
+```sh
+clanka debug status calls --end error
+```
+
+### `--delay-ms <ms>`
+
+How long each report stays up, in milliseconds, at most 60000. Raise it to
+have time to switch tabs.
+
+- Default: `1000`
+
+```sh
+clanka debug status chat --delay-ms 3000 --end idle
+```
