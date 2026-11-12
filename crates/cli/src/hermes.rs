@@ -16,6 +16,10 @@ const NIGHTSHADE: &str = include_str!("../../../hermes/nightshade/SOUL.md");
 const CLI_HINT: &str = "Plain terminal: markdown does not render, so write plain text.";
 const TELEGRAM_HINT: &str =
     "You are on Telegram: short messages, *bold* and _italic_ render, nothing fancier.";
+/// Hermes's own hint for an app that talks to its API server forbids asterisks
+/// and code fences, and Haiku then drops the marks a soul asks for.
+const API_HINT: &str =
+    "A chat app: write as your persona says, with the marks it asks for and no other formatting.";
 /// Every platform Hermes has a toolset key for; a companion offers clanka's
 /// tools on all of them.
 const PLATFORMS: [&str; 20] = [
@@ -414,6 +418,7 @@ fn set_up_companion(
         ("agent.bot_mode_protocol", "false"),
         ("platform_hints.cli.replace", CLI_HINT),
         ("platform_hints.telegram.replace", TELEGRAM_HINT),
+        ("platform_hints.api_server.replace", API_HINT),
     ] {
         h(&["config", "set", key, value])?;
     }
