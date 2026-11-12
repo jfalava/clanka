@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Config, Keys, Paths, SharedEmbedder};
+use clanka::status;
 use clanka_core::PersonaStatus;
 use clanka_core::soul::Soul;
 use std::path::{Path, PathBuf};
@@ -50,7 +51,9 @@ pub fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
         );
         return Ok(());
     }
-    let reflections = companion.update_persona()?;
+    status::phase("Re-reading memories");
+    status::session().count_model_calls();
+    let reflections = companion.update_persona(&mut status::progress)?;
     let reinterpreted = reflections
         .iter()
         .flat_map(|r| &r.calls)
@@ -62,6 +65,9 @@ pub fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
          calls. Restart anything that has it open.",
         soul.display()
     );
+    status::summary(&format!(
+        "{reinterpreted} memories re-read under the new persona"
+    ));
     if companion.is_frozen()? {
         println!(
             "It is still frozen, as it was before; run `clanka doctor unfreeze {}` when ready.",
@@ -138,6 +144,7 @@ pub fn create(paths: &Paths, name: &str, body: &str) -> Result<PathBuf> {
     std::fs::write(&soul, text).with_context(|| format!("writing {}", soul.display()))?;
     crate::download_model(paths, config.embedding.model)?;
     println!("Created {name} ({id}).");
+    status::summary(&format!("Created {name}"));
     Ok(soul)
 }
 
@@ -194,7 +201,9 @@ pub fn draft(
     };
     let mut body = String::new();
     let mut report = None;
+    status::phase(&format!("Drafting {name}"));
     for round in 0..=rounds {
+        status::detail(&format!("round {} of at most {}", round + 1, rounds + 1));
         body = unfenced(&write(&request)?);
         let r = lint_draft(name, &body);
         eprintln!(

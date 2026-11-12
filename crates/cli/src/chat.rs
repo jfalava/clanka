@@ -7,6 +7,7 @@
 //! `wake_up`, so they arrive whole instead of as they are written; when the
 //! companion wakes, the chat goes on awake. Leaving mid-dream drops it.
 
+use crate::status::{Outcome, Session, State};
 use crate::turn::{self, Opened};
 use anyhow::{Result, bail};
 use clanka_core::deps::{Llm, LlmMessage, LlmRequest, LlmResponse, Role};
@@ -31,11 +32,13 @@ pub fn run(chat: Companion, writer: Companion, budget: usize) -> Result<()> {
         std::io::stdin().lock(),
         std::io::stdout().lock(),
         std::io::stderr(),
+        crate::status::session(),
     )
 }
 
-/// [`run`] on any streams: lines come from `input`, replies go to `out`, and
-/// the prompt and clanka's own notes go to `notes`.
+/// [`run`] on any streams: lines come from `input`, replies go to `out`, the
+/// prompt and clanka's own notes go to `notes`, and `status` hears what the
+/// chat is doing: at rest, replying, a reply ready, and how it ended.
 pub fn converse(
     mut chat: Companion,
     writer: Companion,
@@ -43,6 +46,7 @@ pub fn converse(
     input: impl BufRead,
     mut out: impl Write,
     notes: impl Write + Send + 'static,
+    status: Session,
 ) -> Result<()> {
     if chat.is_frozen()? {
         bail!("memory is frozen by the doctor; unfreeze it before chatting");
@@ -51,6 +55,13 @@ pub fn converse(
     let writer = Arc::new(Mutex::new(writer));
     let mut reflections: Vec<JoinHandle<()>> = Vec::new();
     let name = chat.soul().traits.name.clone();
+    let reflecting = Reflecting {
+        status: status.clone(),
+        running: Arc::default(),
+    };
+    status.report(State::Idle, &format!("Chatting with {name}"), None);
+    // Leaving is not a result to come back to; falling asleep is.
+    let mut outcome = Outcome::Idle;
     let mut lines = input.lines();
     loop {
         // The terminal or pipe is gone: the conversation is over.
@@ -68,16 +79,26 @@ pub fn converse(
             chat.drop_lost_dream()?;
             // In a dream, sleep is waking up.
             if let Some(dream) = chat.dreaming()? {
-                wake(&writer, dream, &notes, &name);
+                outcome = match wake(&writer, dream, &notes, &name, &status) {
+                    Ok(woke) => {
+                        status.summary(&woke);
+                        Outcome::Done
+                    }
+                    Err(why) => Outcome::Error(why),
+                };
                 break;
             }
+            status.phase(&format!("{name} is falling asleep"));
             let session = chat.open_session()?;
             let report = lock(&writer).sleep(session)?;
-            notes.say(&format!(
+            let asleep = format!(
                 "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
                 report.drifted.len(),
                 report.escalated.len()
-            ));
+            );
+            notes.say(&asleep);
+            status.summary(&asleep);
+            outcome = Outcome::Done;
             break;
         }
 
@@ -96,6 +117,7 @@ pub fn converse(
             }
             Opened::Open(open) => *open,
         };
+        status.phase(&format!("{name} is replying"));
         let mut system = open.context.render();
         for hint in open.hints() {
             system = format!("{system}\n\n{hint}");
@@ -181,32 +203,47 @@ pub fn converse(
             // and the reflection on that exchange reads both.
             Ok(_) => {
                 notes.say(&format!("clanka: the model sent an empty reply. {KEPT}"));
+                let why = "the model sent an empty reply";
+                status.report(State::Error, &format!("No reply from {name}"), Some(why));
                 continue;
             }
             Err(e) => {
                 notes.say(&format!("clanka: no reply: {e}\nclanka: {KEPT}"));
+                let why = e.to_string();
+                status.report(State::Error, &format!("No reply from {name}"), Some(&why));
                 continue;
             }
         };
         let (dreaming, session, wakes) =
             (open.pending.dream, open.pending.session, open.pending.wake);
         let (user_turn, companion_turn) = turn::end(&mut chat, open.pending, &reply)?;
+        status.report(State::Done, &format!("{name} replied"), None);
         // Nothing of a dream is kept as it happens: it is decided on waking.
         if dreaming {
             if wakes {
                 finish(&mut reflections);
-                wake(&writer, session, &notes, &name);
+                match wake(&writer, session, &notes, &name, &status) {
+                    Ok(woke) => status.report(State::Done, &format!("{name} woke"), Some(&woke)),
+                    Err(why) => {
+                        status.report(State::Error, &format!("{name} couldn't wake"), Some(&why));
+                    }
+                }
             }
             continue;
         }
         // Same model, separate call, off the hot path.
-        let (writer, notes) = (writer.clone(), notes.clone());
+        let (writer, notes, reflecting) = (writer.clone(), notes.clone(), reflecting.clone());
+        let turns = format!("turns {user_turn}–{companion_turn}");
+        reflecting.begin(&format!("{name} is reflecting on {turns}"));
         reflections.push(std::thread::spawn(move || {
-            if let Err(e) = lock(&writer).reflect(user_turn, companion_turn) {
-                notes.say(&format!(
-                    "clanka: reflection on turns {user_turn}–{companion_turn} failed: {e}"
-                ));
+            let reflected = lock(&writer).reflect(user_turn, companion_turn);
+            let failed = reflected
+                .err()
+                .map(|e| format!("reflection on {turns} failed: {e}"));
+            if let Some(failed) = &failed {
+                notes.say(&format!("clanka: {failed}"));
             }
+            reflecting.end(failed);
         }));
         reflections.retain(|r| !r.is_finished());
     }
@@ -217,6 +254,7 @@ pub fn converse(
             "clanka: the dream ended before {name} woke; nothing of it was kept."
         ));
     }
+    status.close(outcome);
     Ok(())
 }
 
@@ -254,14 +292,27 @@ fn speak(
     reply
 }
 
-/// Wakes the companion from `dream` and says what stayed. A wake that fails
-/// leaves the dream open: /sleep tries again, and leaving drops it.
-fn wake(writer: &Mutex<Companion>, dream: i64, notes: &Notes, name: &str) {
+/// Wakes the companion from `dream`, says what stayed and returns it. A wake
+/// that fails leaves the dream open: /sleep tries again, and leaving drops it.
+fn wake(
+    writer: &Mutex<Companion>,
+    dream: i64,
+    notes: &Notes,
+    name: &str,
+    status: &Session,
+) -> std::result::Result<String, String> {
+    status.phase(&format!("{name} is waking"));
     match lock(writer).wake(dream) {
-        Ok(report) => notes.say(&woke(name, &report)),
-        Err(e) => notes.say(&format!(
-            "clanka: {name} couldn't wake: {e}. Send /sleep to try again."
-        )),
+        Ok(report) => {
+            let woke = woke(name, &report);
+            notes.say(&woke);
+            Ok(woke)
+        }
+        Err(e) => {
+            let why = format!("{name} couldn't wake: {e}. Send /sleep to try again.");
+            notes.say(&format!("clanka: {why}"));
+            Err(why)
+        }
     }
 }
 
@@ -298,6 +349,48 @@ impl Notes {
 
     fn say(&self, text: &str) {
         self.tell(text, true);
+    }
+}
+
+/// The reflections' own status record: they run while the chat itself is at
+/// rest or replying, so the root record can't speak for them.
+#[derive(Clone)]
+struct Reflecting {
+    status: Session,
+    /// How many are running or waiting their turn, and why the last one to
+    /// fail did.
+    running: Arc<Mutex<(usize, Option<String>)>>,
+}
+
+impl Reflecting {
+    const ID: &'static str = "reflect";
+    const TITLE: &'static str = "Reflection";
+
+    fn begin(&self, what: &str) {
+        let mut running = lock(&self.running);
+        if running.0 == 0 {
+            running.1 = None;
+        }
+        running.0 += 1;
+        self.status
+            .child(Self::ID, State::Working, Self::TITLE, what);
+    }
+
+    /// The record goes when the last one ends, unless one failed: that stays
+    /// until the next begins.
+    fn end(&self, failed: Option<String>) {
+        let mut running = lock(&self.running);
+        running.0 -= 1;
+        if failed.is_some() {
+            running.1 = failed;
+        }
+        if running.0 > 0 {
+            return;
+        }
+        match &running.1 {
+            Some(why) => self.status.child(Self::ID, State::Error, Self::TITLE, why),
+            None => self.status.clear(Self::ID),
+        }
     }
 }
 

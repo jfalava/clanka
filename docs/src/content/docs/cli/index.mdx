@@ -51,6 +51,31 @@ clanka doctor rollback help
 clanka doctor rollback --help
 ```
 
+## Program status
+
+On a terminal, the commands that take a while say what they are doing over
+the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status)
+(OSC 7501), and set the window title to match. Rex shows it on the tab and
+in the session picker. A terminal that doesn't know the sequence ignores it.
+
+| Command                                         | What it reports                                                       |
+| ----------------------------------------------- | --------------------------------------------------------------------- |
+| `chat`                                          | Replying, replied or no reply, and the reflections in the background. |
+| `soul update`                                   | The share of memories re-read and the model calls made.               |
+| `doctor reinterpret`                            | The model calls made.                                                 |
+| `doctor reembed`                                | The share of memories embedded.                                       |
+| `soul draft`                                    | The round.                                                            |
+| `init`, `embedding`                             | The share of each model file downloaded.                              |
+| `hermes profile`, `nightshade` and `refresh`    | The `hermes` call under way. `refresh` adds the share of profiles.    |
+
+A run ends as `done` with one line of what it did, as `error` with the
+reason, or as `idle` after Ctrl-C. A model request that waits to be retried
+shows why.
+
+Nothing is reported when stderr is not a terminal, when `TERM` is `dumb`, or
+with [`CLANKA_PROGRAM_STATUS=0`](/configuration/#clanka_program_status).
+`clanka mcp` never reports.
+
 ## Global flags
 
 ### `--help`, `-h`

@@ -143,8 +143,9 @@ fn tally(case: &Case, found: &[String], tally: &mut Tally, lines: &mut Vec<Strin
 }
 
 /// Runs every query in a cases file and says how much of what should come up
-/// did. Exits non-zero on a miss or on noise, so a script can gate on it.
-pub fn eval(paths: &Paths, soul: &Path, cases: &Path) -> Result<()> {
+/// did: `false` on a miss or on noise, which the exit status passes on, so a
+/// script can gate on it.
+pub fn eval(paths: &Paths, soul: &Path, cases: &Path) -> Result<bool> {
     let text =
         std::fs::read_to_string(cases).with_context(|| format!("reading {}", cases.display()))?;
     let parsed: Cases =
@@ -171,10 +172,7 @@ pub fn eval(paths: &Paths, soul: &Path, cases: &Path) -> Result<()> {
         "\n{} of {} expected memories came up (mean reciprocal rank {mean:.2}); {} unwanted.",
         total.found, total.expected, total.unwanted
     );
-    if total.found < total.expected || total.unwanted > 0 {
-        std::process::exit(1);
-    }
-    Ok(())
+    Ok(total.found == total.expected && total.unwanted == 0)
 }
 
 #[cfg(test)]

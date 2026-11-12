@@ -357,7 +357,12 @@ impl Companion {
     /// every memory that can be, in batches. Freezes writes while it works and
     /// unfreezes when it succeeds; on failure it stays frozen for you to look.
     /// A freeze that was on before, the doctor's or a failed update's, stays on.
-    pub fn update_persona(&mut self) -> Result<Vec<Reflection>> {
+    /// `progress` hears how many memories are done, of how many, before the
+    /// first batch and after each.
+    pub fn update_persona(
+        &mut self,
+        progress: &mut dyn FnMut(usize, usize),
+    ) -> Result<Vec<Reflection>> {
         let was_frozen = self.is_frozen()?;
         self.set_frozen(true)?;
         self.continue_with_persona()?;
@@ -370,8 +375,12 @@ impl Companion {
             .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let mut reflections = Vec::new();
+        let mut done = 0;
+        progress(done, ids.len());
         for batch in ids.chunks(REINTERPRET_BATCH) {
             reflections.push(self.reinterpret(batch)?);
+            done += batch.len();
+            progress(done, ids.len());
         }
         if !was_frozen {
             self.set_frozen(false)?;

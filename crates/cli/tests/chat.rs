@@ -1,6 +1,7 @@
 mod common;
 
 use clanka::chat::converse;
+use clanka::status::Session;
 use clanka_core::Error;
 use clanka_core::deps::{LlmRequest, LlmResponse, Role, ToolCall};
 use common::{Scripted, TOKEN, open, open_with};
@@ -70,7 +71,7 @@ fn a_message_whose_reply_failed_goes_out_with_the_next() {
     ]);
     let chat = open_with(dir.path(), model);
     let writer = open(dir.path());
-    let (mut out, notes) = (Vec::new(), Notes::default());
+    let (mut out, notes, status) = (Vec::new(), Notes::default(), Notes::default());
     converse(
         chat,
         writer,
@@ -78,6 +79,7 @@ fn a_message_whose_reply_failed_goes_out_with_the_next() {
         "my dad died\n\nare you there?\nthanks\n".as_bytes(),
         &mut out,
         notes.clone(),
+        Session::to(status.clone()),
     )
     .unwrap();
 
@@ -103,6 +105,51 @@ fn a_message_whose_reply_failed_goes_out_with_the_next() {
     let notes = notes.text();
     assert!(notes.contains("no reply: "), "{notes}");
     assert!(notes.contains("Your message was kept"), "{notes}");
+
+    // The terminal hears each step: at rest, replying, the reply that failed,
+    // each one that came, and that the chat was left. The base64 was made with
+    // `printf '%s' … | base64`.
+    let status = status.text();
+    let records: Vec<&str> = status
+        .split("\x1b\\")
+        .filter_map(|sequence| sequence.strip_prefix("\x1b]7501;"))
+        .collect();
+    let (reflection, chat): (Vec<&str>, Vec<&str>) =
+        records.iter().partition(|r| r.contains(":id=reflect"));
+    let states: Vec<&str> = chat.iter().map(|r| r.split(':').next().unwrap()).collect();
+    assert_eq!(
+        states,
+        [
+            "state=idle",
+            "state=working",
+            "state=error",
+            "state=working",
+            "state=done",
+            "state=working",
+            "state=done",
+            "state=idle"
+        ],
+        "{chat:?}"
+    );
+    assert_eq!(
+        chat[0],
+        "state=idle:app=clanka:title=Y2xhbmthOiBDaGF0dGluZyB3aXRoIE5vdmE=:\
+         msg=Q2hhdHRpbmcgd2l0aCBOb3Zh"
+    );
+    assert_eq!(
+        chat[1],
+        "state=working:app=clanka:title=Y2xhbmthOiBOb3ZhIGlzIHJlcGx5aW5n:\
+         msg=Tm92YSBpcyByZXBseWluZw=="
+    );
+    assert_eq!(
+        chat[4],
+        "state=done:app=clanka:title=Y2xhbmthOiBOb3ZhIHJlcGxpZWQ=:msg=Tm92YSByZXBsaWVk"
+    );
+    // Reflections have their own record, gone once the last one ends, which
+    // is before the chat's own last report.
+    assert!(reflection[0].starts_with("state=working:id=reflect:app=clanka:"));
+    assert_eq!(*reflection.last().unwrap(), "state=clear:id=reflect");
+    assert_eq!(*records.last().unwrap(), chat[7]);
 }
 
 /// The doctor token ends the chat without reaching the model, and a frozen
@@ -120,6 +167,7 @@ fn the_doctor_token_ends_the_chat_and_frozen_memory_refuses_one() {
         format!("hi\n{TOKEN}\nstill there?\n").as_bytes(),
         Vec::new(),
         notes.clone(),
+        Session::off(),
     )
     .unwrap();
     assert_eq!(asked.lock().unwrap().len(), 1, "only \"hi\" was answered");
@@ -134,6 +182,7 @@ fn the_doctor_token_ends_the_chat_and_frozen_memory_refuses_one() {
         "hi\n".as_bytes(),
         Vec::new(),
         Notes::default(),
+        Session::off(),
     )
     .unwrap_err();
     assert!(refused.to_string().contains("frozen"), "{refused}");
@@ -153,6 +202,7 @@ fn a_closed_terminal_ends_the_chat_without_a_model_call() {
         "hi\n".as_bytes(),
         Vec::new(),
         Closed,
+        Session::off(),
     )
     .unwrap();
     assert!(asked.lock().unwrap().is_empty());
@@ -239,6 +289,7 @@ fn a_dream_wakes_by_the_companions_choice_and_the_chat_goes_on_awake() {
             .as_bytes(),
         &mut out,
         notes.clone(),
+        Session::off(),
     )
     .unwrap();
 
@@ -290,6 +341,7 @@ fn leaving_mid_dream_keeps_nothing_of_it() {
         "~~ You're on a pier.\n".as_bytes(),
         Vec::new(),
         notes.clone(),
+        Session::off(),
     )
     .unwrap();
     assert!(

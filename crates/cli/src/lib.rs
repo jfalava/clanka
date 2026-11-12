@@ -6,4 +6,5 @@ pub mod chat;
 pub mod llm;
 pub mod mcp;
 pub mod setup;
+pub mod status;
 pub mod turn;

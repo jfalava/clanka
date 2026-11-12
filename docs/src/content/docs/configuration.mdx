@@ -184,3 +184,17 @@ with no Secret Service.
   With `file`, whoever can read your files can read the database too: the key no
   longer waits on your login.
 </Aside>
+
+## Environment
+
+### `CLANKA_PROGRAM_STATUS`
+
+Set to `0` to stop clanka from reporting
+[program status](/cli/#program-status) to the terminal and setting the window
+title.
+
+- Default: unset, which reports when stderr is a terminal
+
+```sh
+CLANKA_PROGRAM_STATUS=0 clanka chat ~/.config/clanka/souls/<id>.md
+```

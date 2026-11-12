@@ -48,9 +48,15 @@ impl Companion {
     /// The doctor's re-embed: opens the companion even though its vectors came
     /// from another embedding model, and rebuilds every vector with this one in
     /// a single transaction, so a failure leaves the old vectors in place.
-    pub fn reembed(data_dir: &Path, soul_path: &Path, deps: Deps) -> Result<Self> {
+    /// `progress` hears how many memories are embedded, of how many.
+    pub fn reembed(
+        data_dir: &Path,
+        soul_path: &Path,
+        deps: Deps,
+        progress: &mut dyn FnMut(usize, usize),
+    ) -> Result<Self> {
         let mut companion = Self::open_inner(data_dir, soul_path, deps, true)?;
-        companion.rebuild_vectors()?;
+        companion.rebuild_vectors(progress)?;
         Ok(companion)
     }
 
@@ -233,11 +239,11 @@ impl Companion {
 }
 
 impl Companion {
-    fn rebuild_vectors(&mut self) -> Result<()> {
+    fn rebuild_vectors(&mut self, progress: &mut dyn FnMut(usize, usize)) -> Result<()> {
         // Embedding is slow, so it happens before the write lock is taken.
         let memories = interpretations(&self.conn)?;
         let embedder = &self.deps.embedder;
-        let vectors = embed_all(embedder.as_ref(), &memories)?;
+        let vectors = embed_all(embedder.as_ref(), &memories, progress)?;
         let mut ready: HashMap<i64, (String, Vec<u8>)> = memories
             .into_iter()
             .zip(vectors)
@@ -256,10 +262,10 @@ impl Companion {
             .filter(|(id, text)| ready.get(id).is_none_or(|(embedded, _)| embedded != text))
             .cloned()
             .collect();
-        for ((id, text), vector) in late
-            .iter()
-            .cloned()
-            .zip(embed_all(embedder.as_ref(), &late)?)
+        for ((id, text), vector) in
+            late.iter()
+                .cloned()
+                .zip(embed_all(embedder.as_ref(), &late, &mut |_, _| {})?)
         {
             ready.insert(id, (text, vector));
         }
@@ -287,7 +293,11 @@ fn interpretations(conn: &Connection) -> Result<Vec<(i64, String)>> {
 }
 
 /// One sqlite-vec blob per memory, in order.
-fn embed_all(embedder: &dyn Embedder, memories: &[(i64, String)]) -> Result<Vec<Vec<u8>>> {
+fn embed_all(
+    embedder: &dyn Embedder,
+    memories: &[(i64, String)],
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<Vec<Vec<u8>>> {
     let mut vectors = Vec::with_capacity(memories.len());
     for chunk in memories.chunks(64) {
         let texts: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
@@ -302,6 +312,7 @@ fn embed_all(embedder: &dyn Embedder, memories: &[(i64, String)]) -> Result<Vec<
         for vector in &embedded {
             vectors.push(blob(vector, embedder.dimensions())?);
         }
+        progress(vectors.len(), memories.len());
     }
     Ok(vectors)
 }

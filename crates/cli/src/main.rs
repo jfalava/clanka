@@ -2,11 +2,14 @@
 
 use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Config, Embedding, Paths, SharedEmbedder};
+use clanka::status::{self, Outcome};
 use clanka_core::PersonaStatus;
 use clanka_core::soul::Soul;
 use clap::{Parser, Subcommand};
 use std::ffi::OsString;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 mod doctor;
 mod hermes;
@@ -33,6 +36,8 @@ use soul::{
         ~/.config/clanka/config.toml     the [model] chat and memory writing run on, and\n\
         \x20                                  optional [recall], [embedding] and [keys] settings\n  \
         ~/.local/share/clanka/           the databases and the embedding model\n\n\
+        Environment:\n  \
+        CLANKA_PROGRAM_STATUS=0          don't report progress to the terminal (OSC 7501)\n\n\
         Every command explains itself: `clanka help <command>`, `clanka <command> help` or \
         `clanka <command> --help`."
 )]
@@ -472,9 +477,54 @@ fn args(mut args: Vec<OsString>) -> Vec<OsString> {
     args
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
+    let cli = Cli::parse_from(args(std::env::args_os().collect()));
+    let session = status::start();
+    if session.enabled() {
+        stop_on_interrupt(session.clone());
+    }
+    match run(cli.command) {
+        Ok(true) => {
+            session.close(Outcome::Done);
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            session.close(Outcome::Error(String::new()));
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            let why = format!("{error:#}");
+            session.close(Outcome::Error(
+                why.lines().next().unwrap_or_default().into(),
+            ));
+            // As `main` returning the error prints it.
+            eprintln!("Error: {error:?}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Ctrl-C reports `idle` on the way out: otherwise a terminal that doesn't see
+/// the shell's next prompt would show clanka at work for good.
+fn stop_on_interrupt(session: status::Session) {
+    use signal_hook::consts::SIGINT;
+    let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGINT]) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        if signals.forever().next().is_some() {
+            session.close(Outcome::Idle);
+            // What a shell reports for a command Ctrl-C ended.
+            std::process::exit(128 + SIGINT);
+        }
+    });
+}
+
+/// Runs the command. `false` is one that worked and found something wrong: its
+/// report is already printed and the exit status says the rest.
+fn run(command: Command) -> Result<bool> {
     let paths = Paths::get()?;
-    match Cli::parse_from(args(std::env::args_os().collect())).command {
+    match command {
         Command::Init { name, from } => {
             let body = match from {
                 None => template_body(&name),
@@ -497,7 +547,7 @@ fn main() -> Result<()> {
                 print!("{}", report.text(&soul));
             }
             if strict && !report.warnings.is_empty() {
-                std::process::exit(1);
+                return Ok(false);
             }
             Ok(())
         }
@@ -536,7 +586,7 @@ fn main() -> Result<()> {
         Command::Export { soul, dir } => transfer::export(&paths, &soul, &dir),
         Command::Import { dir } => transfer::import(&paths, &dir),
         Command::Recall { soul, query } => probe::recall(&paths, &soul, &query),
-        Command::Eval { soul, cases } => probe::eval(&paths, &soul, &cases),
+        Command::Eval { soul, cases } => return probe::eval(&paths, &soul, &cases),
         Command::Embedding => {
             let embedding = Config::load(&paths)?.embedding.model;
             download_model(&paths, embedding)?;
@@ -551,10 +601,16 @@ fn main() -> Result<()> {
         Command::Tics { replies, json } => tics(&replies, json),
         Command::Hermes {
             command: HermesCommand::Profile { profile, soul },
-        } => hermes::profile(&profile, &soul),
+        } => {
+            status::phase(&format!("Setting up the {profile} profile"));
+            hermes::profile(&profile, &soul)
+        }
         Command::Hermes {
             command: HermesCommand::Nightshade { profile, model },
-        } => hermes::nightshade(&profile, model.as_deref()),
+        } => {
+            status::phase(&format!("Setting up the {profile} profile"));
+            hermes::nightshade(&profile, model.as_deref())
+        }
         Command::Hermes {
             command: HermesCommand::Refresh { no_restart },
         } => hermes::refresh(!no_restart),
@@ -587,7 +643,8 @@ fn main() -> Result<()> {
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
             clanka::mcp::serve(chat, writer, budget)
         }
-    }
+    }?;
+    Ok(true)
 }
 
 /// Two handles to one companion on the same model: one for the hot path and
@@ -730,7 +787,15 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
         }
         let url = format!("{}/{remote}", embedding.repo());
         eprintln!("Downloading {url}");
+        status::phase(&format!("Downloading {local}"));
         let mut response = ureq::get(&url).call().with_context(|| url.clone())?;
+        // 0 when the server doesn't say: then there is no percentage.
+        let size = response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         let mut body = response
             .body_mut()
             .with_config()
@@ -740,7 +805,16 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
         // interrupted or answered with something else never looks complete.
         let partial = path.with_extension("part");
         let mut file = std::fs::File::create(&partial)?;
-        std::io::copy(&mut body, &mut file).with_context(|| url.clone())?;
+        let (mut chunk, mut read) = (vec![0; 64 * 1024], 0);
+        loop {
+            status::progress(read, size);
+            let n = body.read(&mut chunk).with_context(|| url.clone())?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&chunk[..n])?;
+            read += n;
+        }
         drop(file);
         let found = setup::sha256_file(&partial)?;
         if found != sha256 {

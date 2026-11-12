@@ -513,10 +513,16 @@ pub fn open_with(
 }
 
 /// The doctor's re-embed: opens a companion whose vectors came from another
-/// embedding model and rebuilds every one with `embedder`.
-pub fn reembed(paths: &Paths, soul: &Path, embedder: SharedEmbedder) -> Result<Companion> {
+/// embedding model and rebuilds every one with `embedder`. `progress` hears how
+/// many memories are embedded, of how many.
+pub fn reembed(
+    paths: &Paths,
+    soul: &Path,
+    embedder: SharedEmbedder,
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<Companion> {
     let deps = deps(paths, &Config::load(paths)?, embedder, Box::new(NoModel))?;
-    Ok(Companion::reembed(&paths.data, soul, deps)?)
+    Ok(Companion::reembed(&paths.data, soul, deps, progress)?)
 }
 
 fn deps(

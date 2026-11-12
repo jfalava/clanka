@@ -4,6 +4,7 @@
 //! and from an agent's terminal tool.
 
 use anyhow::{Context, Result, bail};
+use clanka::status;
 use clanka_core::soul::Soul;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -75,6 +76,7 @@ fn root(home: PathBuf) -> PathBuf {
 /// Runs `hermes [-p profile] args…` against `home`, quietly; its output is shown
 /// only when it fails.
 fn hermes(home: &Path, profile: Option<&str>, args: &[&str]) -> Result<()> {
+    status::detail(&step(profile, args));
     let mut command = Command::new("hermes");
     if let Some(profile) = profile {
         command.args(["-p", profile]);
@@ -94,6 +96,19 @@ fn hermes(home: &Path, profile: Option<&str>, args: &[&str]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A `hermes` call in a few words, for the status line. A `config set` is named
+/// by its key alone: the value can be a provider's settings.
+fn step(profile: Option<&str>, args: &[&str]) -> String {
+    let call = match args {
+        ["config", "set", .., key, _] => format!("config set {key}"),
+        _ => args.join(" "),
+    };
+    match profile {
+        Some(profile) => format!("{profile}: hermes {call}"),
+        None => format!("hermes {call}"),
+    }
 }
 
 /// `hermes [-p profile] config get key --json --raw`: None when the key is not
@@ -367,6 +382,7 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         "Profile {profile} is {}: hermes -p {profile} chat",
         soul.traits.name
     );
+    status::summary(&format!("Profile {profile} is {}", soul.traits.name));
     Ok(())
 }
 
@@ -445,6 +461,7 @@ pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
         set_up_nightshade(&home, profile, &dir, model, clanka),
     )?;
     println!("Profile {profile} is Nightshade: hermes -p {profile} chat");
+    status::summary(&format!("Profile {profile} is Nightshade"));
     Ok(())
 }
 
@@ -505,7 +522,9 @@ pub fn refresh(restart: bool) -> Result<()> {
     names.sort();
     let mut refreshed = 0;
     let mut failed = Vec::new();
-    for name in &names {
+    status::phase("Refreshing the Hermes profiles");
+    for (done, name) in names.iter().enumerate() {
+        status::progress(done, names.len());
         let result = config_get(&home, Some(name), SOUL_SETTING).and_then(|soul| {
             match soul.as_ref().and_then(|soul| soul.as_str()) {
                 Some(soul) => profile(name, Path::new(soul)).map(|()| true),
@@ -538,6 +557,12 @@ pub fn refresh(restart: bool) -> Result<()> {
     if !failed.is_empty() {
         bail!("could not refresh {}", failed.join(", "));
     }
+    let profiles = if refreshed == 1 {
+        "profile"
+    } else {
+        "profiles"
+    };
+    status::summary(&format!("{refreshed} {profiles} refreshed"));
     Ok(())
 }
 
@@ -570,6 +595,7 @@ fn restart_gateway(home: &Path) -> Result<()> {
                 .collect()
         })
         .unwrap_or_default();
+    status::phase("Restarting the gateway");
     let mut command = if units.is_empty() {
         println!("Restarting the gateway: hermes gateway restart");
         let mut command = Command::new("hermes");

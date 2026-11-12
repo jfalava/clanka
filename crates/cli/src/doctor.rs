@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Config, Paths, SharedEmbedder};
+use clanka::status;
 use clanka_core::context::date;
 use clap::Subcommand;
 use std::path::{Path, PathBuf};
@@ -217,6 +218,8 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
             };
             let mut companion =
                 setup::open(paths, &soul, SharedEmbedder::load(paths)?, Some(model))?;
+            status::phase("Re-reading memories");
+            status::session().count_model_calls();
             let reflection = companion.reinterpret(&ids)?;
             let mut failed = 0;
             for call in &reflection.calls {
@@ -235,6 +238,7 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
                 ids.len(),
                 reflection.rounds
             );
+            status::summary(&format!("Re-read {done} of {} memories", ids.len()));
             if done < ids.len() {
                 bail!(
                     "{} memories were not rewritten ({failed} refused calls); run it again \
@@ -261,7 +265,9 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
         }
         DoctorCommand::Reembed { soul } => {
             let embedder = SharedEmbedder::load(paths)?;
-            let companion = setup::reembed(paths, &soul, embedder)?;
+            status::phase("Rebuilding the vectors");
+            let companion = setup::reembed(paths, &soul, embedder, &mut status::progress)?;
+            status::summary("Rebuilt the vectors");
             println!(
                 "Rebuilt the vectors of {} with {}. Restart anything that has it open: until \
                  then its turns fail instead of mixing the two models.",

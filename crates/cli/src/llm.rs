@@ -67,6 +67,8 @@ impl OpenAiModel {
         let body = body.to_string();
         let started = Instant::now();
         let mut attempt = 1;
+        let status = crate::status::session();
+        status.model_call();
         loop {
             // Each try gets what is left of the one limit, not a full one of
             // its own: four slow failures in a row took four times as long.
@@ -114,11 +116,11 @@ impl OpenAiModel {
             if started.elapsed() + wait >= self.timeout {
                 return Err(error);
             }
-            eprintln!(
-                "clanka: {error}; trying again in {:.1}s",
-                wait.as_secs_f32()
-            );
+            let again = format!("{error}; trying again in {:.1}s", wait.as_secs_f32());
+            eprintln!("clanka: {again}");
+            status.retrying(Some(&again));
             std::thread::sleep(wait);
+            status.retrying(None);
             attempt += 1;
         }
     }

@@ -388,7 +388,10 @@ fn update_persona_reinterprets_under_the_new_soul_and_unfreezes() {
     );
     let mut c = open_full(&f, model, clock());
     assert!(matches!(c.persona_status(), PersonaStatus::Changed { .. }));
-    c.update_persona().unwrap();
+    let mut progress = Vec::new();
+    c.update_persona(&mut |done, total| progress.push((done, total)))
+        .unwrap();
+    assert_eq!(progress, [(0, 2), (2, 2)], "the seared one isn't counted");
 
     assert!(
         !prompts.lock().unwrap()[0].contains(&format!("#{} [", ids[2])),
@@ -425,7 +428,7 @@ fn update_persona_leaves_an_earlier_freeze_on() {
     open(&f, "k").unwrap().set_frozen(true).unwrap();
     std::fs::write(&f.soul, soul_text(f.id, 0.7, &["Kindness over comfort"])).unwrap();
     let mut c = open(&f, "k").unwrap();
-    c.update_persona().unwrap();
+    c.update_persona(&mut |_, _| {}).unwrap();
     assert!(
         c.is_frozen().unwrap(),
         "the doctor's freeze is not the update's to lift"
@@ -552,7 +555,16 @@ fn a_memory_written_during_a_reembed_gets_its_vector() {
         .unwrap();
     let mut d = deps("k", "unused");
     d.embedder = Box::new(WrittenDuring(Mutex::new(Some(c))));
-    let c = Companion::reembed(f.dir.path(), &f.soul, d).unwrap();
+    let mut progress = Vec::new();
+    let c = Companion::reembed(f.dir.path(), &f.soul, d, &mut |done, total| {
+        progress.push((done, total));
+    })
+    .unwrap();
+    assert_eq!(
+        progress,
+        [(1, 1)],
+        "the late one is embedded under the lock"
+    );
     assert_eq!(ids(&c, "Laura"), [laura]);
     assert_eq!(ids(&c, "concert"), [laura + 1]);
 }
@@ -614,7 +626,7 @@ fn reembed_rebuilds_every_vector_or_none() {
 
     let mut broken = deps("k", "model-b");
     broken.embedder = Box::new(Broken);
-    assert!(Companion::reembed(f.dir.path(), &f.soul, broken).is_err());
+    assert!(Companion::reembed(f.dir.path(), &f.soul, broken, &mut |_, _| {}).is_err());
     assert_eq!(
         ids(&open(&f, "k").unwrap(), "Laura"),
         [laura],
@@ -628,7 +640,7 @@ fn reembed_rebuilds_every_vector_or_none() {
     };
     // A handle opened before the re-embed still holds the old model.
     let mut stale = open(&f, "k").unwrap();
-    let c = Companion::reembed(f.dir.path(), &f.soul, wider()).unwrap();
+    let c = Companion::reembed(f.dir.path(), &f.soul, wider(), &mut |_, _| {}).unwrap();
     assert_eq!(ids(&c, "Laura"), [laura]);
     assert!(matches!(
         stale.recall("Laura", &Ranking::default()),

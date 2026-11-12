@@ -30,6 +30,8 @@ sha2.workspace = true
 tokio = { version = "1", features = ["macros", "rt", "io-std", "sync"] }
 ureq = "3.5"
 uuid.workspace = true
+base64 = "0.23.1"
+signal-hook = { version = "0.4.6", default-features = false, features = ["iterator"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
