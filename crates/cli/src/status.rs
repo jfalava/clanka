@@ -1,13 +1,17 @@
 //! Program status over OSC 7501: what clanka is doing, for a terminal that
 //! shows it (Rex puts it on the tab and in the session picker). One session per
 //! run reports to stderr; a terminal that doesn't know the sequence ignores it.
+//! The same session draws the live row a person sees ([`crate::ui`]) while a
+//! step is `working`.
 //!
 //! Nothing is written until a command names its first step, so the commands
 //! that answer at once stay silent. The feature query is never sent: `clanka
 //! chat` reads stdin by the line, and a late answer would arrive as a message.
 
+use crate::ui::Row;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use indicatif::ProgressDrawTarget;
 use std::io::{IsTerminal, Write};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
@@ -48,6 +52,22 @@ pub enum Outcome {
     Error(String),
 }
 
+/// How far a step is: `done` of `total`, things or bytes. A `total` of 0 means
+/// there is no telling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Amount {
+    pub done: usize,
+    pub total: usize,
+    pub bytes: bool,
+}
+
+impl Amount {
+    /// Floored, so 100 is said only of the whole.
+    pub(crate) fn percent(self) -> Option<u8> {
+        (self.total > 0).then(|| (self.done.min(self.total) * 100 / self.total) as u8)
+    }
+}
+
 /// One run's reports. Clones share it, so threads report to the same records.
 #[derive(Clone)]
 pub struct Session(Arc<Mutex<Inner>>);
@@ -55,11 +75,15 @@ pub struct Session(Arc<Mutex<Inner>>);
 struct Inner {
     /// Where reports go; `None` when they are off or a write has failed.
     sink: Option<Box<dyn Write + Send>>,
+    /// The live row, when a person is there to see one.
+    row: Option<Row>,
+    /// The step has printed, or is about to: its row stays away.
+    quiet: bool,
     begun: bool,
     closed: bool,
     state: State,
     label: String,
-    percent: Option<u8>,
+    amount: Option<Amount>,
     detail: Option<String>,
     /// Shown instead of the detail while a model request waits to be retried.
     retry: Option<String>,
@@ -72,37 +96,41 @@ struct Inner {
 impl Session {
     /// A session that reports nothing.
     pub fn off() -> Self {
-        Self::new(None)
+        Self::new(None, None)
     }
 
     /// A session that reports to `sink`.
     pub fn to(sink: impl Write + Send + 'static) -> Self {
-        Self::new(Some(Box::new(sink)))
+        Self::new(Some(Box::new(sink)), None)
     }
 
-    /// A session on stderr when a terminal is there to read it.
+    /// A session on stderr when a terminal is there: the live row, and the
+    /// reports unless `CLANKA_PROGRAM_STATUS` turns them off.
     fn terminal() -> Self {
         let stderr = std::io::stderr();
         let var = |name| std::env::var(name).ok();
-        if wanted(
-            stderr.is_terminal(),
-            var("TERM").as_deref(),
+        let (terminal, term) = (stderr.is_terminal(), var("TERM"));
+        let reports = wanted(
+            terminal,
+            term.as_deref(),
             var("CLANKA_PROGRAM_STATUS").as_deref(),
-        ) {
-            Self::to(stderr)
-        } else {
-            Self::off()
-        }
+        );
+        Self::new(
+            reports.then(|| Box::new(stderr) as Box<dyn Write + Send>),
+            wanted(terminal, term.as_deref(), None).then(|| Row::new(ProgressDrawTarget::stderr)),
+        )
     }
 
-    fn new(sink: Option<Box<dyn Write + Send>>) -> Self {
+    fn new(sink: Option<Box<dyn Write + Send>>, row: Option<Row>) -> Self {
         Self(Arc::new(Mutex::new(Inner {
             sink,
+            row,
+            quiet: false,
             begun: false,
             closed: false,
             state: State::Idle,
             label: String::new(),
-            percent: None,
+            amount: None,
             detail: None,
             retry: None,
             calls: None,
@@ -122,6 +150,12 @@ impl Session {
         self.lock().sink.is_some()
     }
 
+    /// Whether a terminal is there, for reports or for the live row.
+    pub fn on_terminal(&self) -> bool {
+        let s = self.lock();
+        s.sink.is_some() || s.row.is_some()
+    }
+
     /// Starts a step: `working` under `label`, with no percentage or detail yet.
     pub fn phase(&self, label: &str) {
         self.report(State::Working, label, None);
@@ -139,11 +173,43 @@ impl Session {
 
     /// How far the step is. A `total` of 0 means there is no telling.
     pub fn progress(&self, done: usize, total: usize) {
+        let bytes = false;
+        self.amount(Amount { done, total, bytes });
+    }
+
+    /// [`Session::progress`] for a download: the row shows megabytes.
+    pub fn bytes(&self, done: usize, total: usize) {
+        let bytes = true;
+        self.amount(Amount { done, total, bytes });
+    }
+
+    fn amount(&self, amount: Amount) {
         let mut s = self.lock();
-        let percent = (total > 0).then(|| (done.min(total) * 100 / total) as u8);
-        if s.live() && s.state == State::Working && s.percent != percent {
-            s.percent = percent;
+        if s.live() && s.state == State::Working && s.amount != Some(amount) {
+            s.amount = Some(amount);
             s.root();
+        }
+    }
+
+    /// Takes the live row off the screen until the next step is named: the
+    /// step is over, or what it writes from here on is its own to show.
+    pub fn quiet(&self) {
+        let mut s = self.lock();
+        s.quiet = true;
+        s.draw();
+    }
+
+    /// Runs `write` with the live row out of the way, so a line it prints
+    /// lands above the row instead of in it. For a line or two: the row
+    /// stands still meanwhile, and `write` must not report to this session.
+    /// Something slower, or a child that has the terminal, goes after
+    /// [`Session::quiet`].
+    pub fn above<T>(&self, write: impl FnOnce() -> T) -> T {
+        // The bar is taken out first: the session isn't locked during `write`.
+        let bar = self.lock().row.as_ref().and_then(Row::bar);
+        match bar {
+            Some(bar) => bar.suspend(write),
+            None => write(),
         }
     }
 
@@ -239,9 +305,10 @@ impl Inner {
     fn set(&mut self, state: State, label: &str, msg: Option<&str>) {
         let label = text(label, TITLE_LIMIT);
         if state != self.state || label != self.label {
-            self.percent = None;
+            self.amount = None;
             self.calls = None;
         }
+        self.quiet = false;
         self.state = state;
         self.label = label;
         self.detail = msg.map(|m| text(m, MSG_LIMIT)).filter(|m| !m.is_empty());
@@ -251,7 +318,11 @@ impl Inner {
     /// Reports the root record. A report replaces its record, so each carries
     /// everything. The window title says the same: Rex labels the root from it.
     fn root(&mut self) {
-        let percent = self.percent.filter(|_| self.state == State::Working);
+        self.draw();
+        let percent = self
+            .amount
+            .filter(|_| self.state == State::Working)
+            .and_then(Amount::percent);
         let suffix = percent.map(|p| format!(" {p}%")).unwrap_or_default();
         let title = text(
             &format!("{APP}: {}", self.label),
@@ -264,6 +335,20 @@ impl Inner {
             .unwrap_or(&self.label);
         let record = record(self.state, None, &title, msg, percent);
         self.write(format!("\x1b]2;{title}\x1b\\{record}"));
+    }
+
+    /// The live row: up while a step is working, unless the step went quiet.
+    fn draw(&mut self) {
+        let up = self.live() && self.state == State::Working && !self.quiet;
+        let Some(row) = &mut self.row else {
+            return;
+        };
+        if up {
+            let detail = self.retry.as_deref().or(self.detail.as_deref());
+            row.show(&self.label, self.amount, detail);
+        } else {
+            row.clear();
+        }
     }
 
     /// Writes a report unless it repeats the last one. A write that fails
@@ -351,6 +436,16 @@ pub fn phase(label: &str) {
 /// [`Session::progress`] on this process's session.
 pub fn progress(done: usize, total: usize) {
     session().progress(done, total);
+}
+
+/// [`Session::bytes`] on this process's session.
+pub fn bytes(done: usize, total: usize) {
+    session().bytes(done, total);
+}
+
+/// [`Session::quiet`] on this process's session.
+pub fn quiet() {
+    session().quiet();
 }
 
 /// [`Session::detail`] on this process's session.
@@ -535,6 +630,63 @@ mod tests {
         s.phase("Re-reading memories");
         assert!(!s.enabled());
         s.close(Outcome::Done);
+    }
+
+    /// What the live row says: its header and its detail, or `None` when it
+    /// is off the screen.
+    fn row(s: &Session) -> Option<(String, String)> {
+        let bar = s.lock().row.as_ref().and_then(Row::bar)?;
+        Some((bar.prefix(), bar.message()))
+    }
+
+    #[test]
+    fn the_live_row_is_up_while_a_step_works_and_no_longer() {
+        // Reports off, as with CLANKA_PROGRAM_STATUS=0: the row needs none.
+        let s = Session::new(None, Some(Row::new(ProgressDrawTarget::hidden)));
+        assert!(s.on_terminal() && !s.enabled());
+        s.progress(1, 2);
+        assert_eq!(row(&s), None);
+        s.phase("Re-reading memories");
+        assert_eq!(row(&s), Some(("Re-reading memories".into(), String::new())));
+        s.progress(40, 120);
+        s.count_model_calls();
+        s.model_call();
+        let header = "Re-reading memories · 40/120 · 33%".to_owned();
+        assert_eq!(row(&s), Some((header.clone(), "model call 1".into())));
+        // A retry shows over the detail, as in the report.
+        s.retrying(Some("HTTP 529; trying again in 2.0s"));
+        let retry = "HTTP 529; trying again in 2.0s".to_owned();
+        assert_eq!(row(&s), Some((header.clone(), retry)));
+        s.retrying(None);
+        assert_eq!(row(&s), Some((header, "model call 1".into())));
+        // A line printed meanwhile leaves the row as it was.
+        assert_eq!(s.above(|| 7), 7);
+        assert!(row(&s).is_some());
+        // The step went quiet: more of it doesn't bring the row back, the
+        // next step does.
+        s.quiet();
+        assert_eq!(row(&s), None);
+        s.progress(80, 120);
+        s.detail("model call 2");
+        assert_eq!(row(&s), None);
+        s.phase("Downloading model.onnx");
+        s.bytes(9_240_000, 23_000_000);
+        assert_eq!(
+            row(&s).unwrap().0,
+            "Downloading model.onnx · 9.2/23.0 MB · 40%"
+        );
+        // Only work has a row: a result, an error and a chat at rest don't.
+        for state in [State::Done, State::Error, State::Idle] {
+            s.phase("Nova is replying");
+            assert!(row(&s).is_some());
+            s.report(state, "Nova", None);
+            assert_eq!(row(&s), None, "{state:?}");
+        }
+        s.phase("Nova is falling asleep");
+        s.close(Outcome::Done);
+        assert_eq!(row(&s), None);
+        s.phase("More");
+        assert_eq!(row(&s), None);
     }
 
     #[test]

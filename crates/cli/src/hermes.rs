@@ -218,10 +218,10 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
     let mut env = std::fs::read_to_string(&env_path).unwrap_or_default();
     let (lines, missing) = missing_env_lines(&root_env, &env, &key_envs);
     for name in missing {
-        eprintln!(
+        clanka::ui::log(&format!(
             "warning: {name} is not in {}; its provider will not work from the {profile} profile",
             home.join(".env").display()
-        );
+        ));
     }
     if lines.is_empty() {
         return Ok(());
@@ -378,10 +378,11 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         created,
         set_up_companion(&home, profile, &dir, &source, &soul, &soul_path),
     )?;
-    println!(
+    // Above the row: `refresh` has more profiles to do.
+    clanka::ui::print(&format!(
         "Profile {profile} is {}: hermes -p {profile} chat",
         soul.traits.name
-    );
+    ));
     status::summary(&format!("Profile {profile} is {}", soul.traits.name));
     Ok(())
 }
@@ -460,7 +461,9 @@ pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
         created,
         set_up_nightshade(&home, profile, &dir, model, clanka),
     )?;
-    println!("Profile {profile} is Nightshade: hermes -p {profile} chat");
+    clanka::ui::print(&format!(
+        "Profile {profile} is Nightshade: hermes -p {profile} chat"
+    ));
     status::summary(&format!("Profile {profile} is Nightshade"));
     Ok(())
 }
@@ -538,11 +541,12 @@ pub fn refresh(restart: bool) -> Result<()> {
             Ok(true) => refreshed += 1,
             Ok(false) => {}
             Err(error) => {
-                eprintln!("error: profile {name}: {error:#}");
+                clanka::ui::log(&format!("error: profile {name}: {error:#}"));
                 failed.push(name.as_str());
             }
         }
     }
+    status::quiet();
     if refreshed == 0 && failed.is_empty() {
         println!(
             "No profile under {} was set up by clanka; \
@@ -596,6 +600,8 @@ fn restart_gateway(home: &Path) -> Result<()> {
         })
         .unwrap_or_default();
     status::phase("Restarting the gateway");
+    // `hermes gateway restart` has the terminal, and may ask before it goes on.
+    status::quiet();
     let mut command = if units.is_empty() {
         println!("Restarting the gateway: hermes gateway restart");
         let mut command = Command::new("hermes");

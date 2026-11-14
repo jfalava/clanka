@@ -54,6 +54,7 @@ pub fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
     status::phase("Re-reading memories");
     status::session().count_model_calls();
     let reflections = companion.update_persona(&mut status::progress)?;
+    status::quiet();
     let reinterpreted = reflections
         .iter()
         .flat_map(|r| &r.calls)
@@ -202,16 +203,20 @@ pub fn draft(
     let mut body = String::new();
     let mut report = None;
     status::phase(&format!("Drafting {name}"));
+    if writer.is_some() {
+        // The writer command has the terminal: what it shows is its own.
+        status::quiet();
+    }
     for round in 0..=rounds {
         status::detail(&format!("round {} of at most {}", round + 1, rounds + 1));
         body = unfenced(&write(&request)?);
         let r = lint_draft(name, &body);
-        eprintln!(
+        clanka::ui::log(&format!(
             "round {}: {} words, {} warnings",
             round + 1,
             body.split_whitespace().count(),
             r.warnings.len()
-        );
+        ));
         if r.warnings.is_empty() || round == rounds {
             report = Some(r);
             break;
@@ -222,6 +227,7 @@ pub fn draft(
             r.warnings.join("\n- ")
         )));
     }
+    status::quiet();
     let soul = create(paths, name, &body)?;
     print!(
         "{}",

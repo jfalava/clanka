@@ -221,6 +221,7 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
             status::phase("Re-reading memories");
             status::session().count_model_calls();
             let reflection = companion.reinterpret(&ids)?;
+            status::quiet();
             let mut failed = 0;
             for call in &reflection.calls {
                 if !call.ok {
@@ -267,6 +268,7 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
             let embedder = SharedEmbedder::load(paths)?;
             status::phase("Rebuilding the vectors");
             let companion = setup::reembed(paths, &soul, embedder, &mut status::progress)?;
+            status::quiet();
             status::summary("Rebuilt the vectors");
             println!(
                 "Rebuilt the vectors of {} with {}. Restart anything that has it open: until \

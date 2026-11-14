@@ -41,7 +41,7 @@ clanka memories ~/.config/clanka/souls/<id>.md
   [export](/cli/export/) and [import](/cli/import/) move one to another
   machine.
 - **Test:** [debug](/cli/debug/) sends sample program status to the
-  terminal.
+  terminal and draws the progress row for it.
 
 ## Help
 
@@ -52,6 +52,26 @@ clanka help doctor rollback
 clanka doctor rollback help
 clanka doctor rollback --help
 ```
+
+## Progress
+
+On a terminal, a step that takes a while shows one live row on stderr. The
+row has a spinner, the step's name, how far the step is and how long it has
+taken. A second line carries detail when there is some, such as the model
+call under way or why a request waits to be retried.
+
+```text
+⠹ Re-reading memories · 40/120 · 33% · 0:42
+    model call 3
+```
+
+The row goes when the step ends. The lines clanka prints stay, above where
+the row was. In `chat` the row runs from your message to the first words of
+the reply.
+
+clanka draws the row only when stderr is a terminal and `TERM` is not `dumb`.
+Piped or redirected, it writes the same lines as before.
+`CLANKA_PROGRAM_STATUS=0` does not turn the row off.
 
 ## Program status
 
@@ -78,8 +98,9 @@ Nothing is reported when stderr is not a terminal, when `TERM` is `dumb`, or
 with [`CLANKA_PROGRAM_STATUS=0`](/configuration/#clanka_program_status).
 `clanka mcp` never reports.
 
-[`clanka debug status`](/cli/debug/) sends samples of these reports, to see
-how a terminal shows them without a companion or a model.
+[`clanka debug status`](/cli/debug/) sends samples of these reports and draws
+the progress row for them, to see how a terminal shows both without a
+companion or a model.
 
 ## Global flags
 

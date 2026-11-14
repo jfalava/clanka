@@ -8,3 +8,4 @@ pub mod mcp;
 pub mod setup;
 pub mod status;
 pub mod turn;
+pub mod ui;

@@ -38,7 +38,7 @@ use soul::{
         \x20                                  optional [recall], [embedding] and [keys] settings\n  \
         ~/.local/share/clanka/           the databases and the embedding model\n\n\
         Environment:\n  \
-        CLANKA_PROGRAM_STATUS=0          don't report progress to the terminal (OSC 7501)\n\n\
+        CLANKA_PROGRAM_STATUS=0          don't send program status to the terminal (OSC 7501)\n\n\
         Every command explains itself: `clanka help <command>`, `clanka <command> help` or \
         `clanka <command> --help`."
 )]
@@ -285,8 +285,9 @@ enum Command {
     ///
     /// Plays what real commands report to the terminal (OSC 7501 and the window title) on
     /// made-up work: nothing is read, written or asked of a model. Each report is also
-    /// printed, so what the terminal shows can be told from what it was sent. Ctrl-C during
-    /// a sample ends it as it ends a real command, on `idle`.
+    /// printed, so what the terminal shows can be told from what it was sent, and the live
+    /// progress row is drawn as a real command draws it. Ctrl-C during a sample ends it as
+    /// it ends a real command, on `idle`.
     #[command(after_long_help = "Example:\n  \
         clanka debug status progress\n  \
         clanka debug status chat --delay-ms 3000\n  \
@@ -517,7 +518,7 @@ fn args(mut args: Vec<OsString>) -> Vec<OsString> {
 fn main() -> ExitCode {
     let cli = Cli::parse_from(args(std::env::args_os().collect()));
     let session = status::start();
-    if session.enabled() {
+    if session.on_terminal() {
         stop_on_interrupt(session.clone());
     }
     match run(cli.command) {
@@ -542,7 +543,8 @@ fn main() -> ExitCode {
 }
 
 /// Ctrl-C reports `idle` on the way out: otherwise a terminal that doesn't see
-/// the shell's next prompt would show clanka at work for good.
+/// the shell's next prompt would show clanka at work for good. It also takes
+/// the live row off the screen, which would be left under the prompt.
 fn stop_on_interrupt(session: status::Session) {
     use signal_hook::consts::SIGINT;
     let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGINT]) else {
@@ -696,7 +698,9 @@ fn run(command: Command) -> Result<bool> {
                 );
             }
             let delay = std::time::Duration::from_millis(delay_ms);
-            debug::status(&session, sample, end, delay, std::io::stdout().lock())
+            // Each report is printed while its live row is up.
+            let out = clanka::ui::Above(std::io::stdout().lock());
+            debug::status(&session, sample, end, delay, out)
         }
     }?;
     Ok(true)
@@ -841,7 +845,7 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
             continue;
         }
         let url = format!("{}/{remote}", embedding.repo());
-        eprintln!("Downloading {url}");
+        clanka::ui::log(&format!("Downloading {url}"));
         status::phase(&format!("Downloading {local}"));
         let mut response = ureq::get(&url).call().with_context(|| url.clone())?;
         // 0 when the server doesn't say: then there is no percentage.
@@ -862,7 +866,7 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
         let mut file = std::fs::File::create(&partial)?;
         let (mut chunk, mut read) = (vec![0; 64 * 1024], 0);
         loop {
-            status::progress(read, size);
+            status::bytes(read, size);
             let n = body.read(&mut chunk).with_context(|| url.clone())?;
             if n == 0 {
                 break;
@@ -878,6 +882,8 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
         }
         std::fs::rename(&partial, &path)?;
     }
+    // What the caller prints next is not this step's.
+    status::quiet();
     Ok(())
 }
 

@@ -117,7 +117,7 @@ impl OpenAiModel {
                 return Err(error);
             }
             let again = format!("{error}; trying again in {:.1}s", wait.as_secs_f32());
-            eprintln!("clanka: {again}");
+            crate::ui::log(&format!("clanka: {again}"));
             status.retrying(Some(&again));
             std::thread::sleep(wait);
             status.retrying(None);
