@@ -1,6 +1,7 @@
 # Dependency cooldown: `cargo update` and new dependencies skip crate versions
-# published in the last 3 days, long enough for most releases that are broken
-# or malicious to be caught and yanked. Versions already in Cargo.lock stay.
+# published in the last day, long enough for a release that is plainly broken
+# or malicious to be yanked, and short enough that a security fix is rarely
+# held back. Versions already in Cargo.lock stay.
 # Cargo 1.100+ applies it; older Cargo ignores it, so check the publish dates
 # by hand there.
 #
@@ -9,4 +10,4 @@
 # To take a fresh release on purpose, such as a security fix:
 #   cargo update -p <crate> --config 'resolver.incompatible-publish-age="allow"'
 [registry]
-global-min-publish-age = "3 days"
+global-min-publish-age = "1 day"
