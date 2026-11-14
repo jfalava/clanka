@@ -5,6 +5,7 @@ use clanka::setup::{self, Config, Embedding, Paths, SharedEmbedder};
 use clanka::status::{self, Outcome};
 use clanka_core::PersonaStatus;
 use clanka_core::soul::Soul;
+use clap::builder::styling::Styles;
 use clap::{Parser, Subcommand};
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -23,10 +24,19 @@ use soul::{
     LintReport, create, draft, fork, guide, persona_continue, persona_update, template_body,
 };
 
+/// Help in the colors the rest of clanka's output uses. clap leaves them out
+/// when the help is piped or `NO_COLOR` is set.
+const HELP: Styles = Styles::styled()
+    .header(clanka::ui::BOLD)
+    .usage(clanka::ui::BOLD)
+    .literal(clanka::ui::CYAN)
+    .error(clanka::ui::RED);
+
 #[derive(Parser)]
 #[command(
     name = "clanka",
     version,
+    styles = HELP,
     about = "Long-term memory for chat companions",
     long_about = "Long-term memory for chat companions.\n\n\
         A companion is a soul.md (its persona and traits) plus an encrypted database of what \
@@ -35,10 +45,11 @@ use soul::{
     after_long_help = "Files (Linux):\n  \
         ~/.config/clanka/souls/<id>.md   each companion's soul.md\n  \
         ~/.config/clanka/config.toml     the [model] chat and memory writing run on, and\n\
-        \x20                                  optional [recall], [embedding] and [keys] settings\n  \
+        \x20                                  optional [recall], [embedding], [keys] and [ui] settings\n  \
         ~/.local/share/clanka/           the databases and the embedding model\n\n\
         Environment:\n  \
-        CLANKA_PROGRAM_STATUS=0          don't send program status to the terminal (OSC 7501)\n\n\
+        CLANKA_PROGRAM_STATUS=0          don't send program status to the terminal (OSC 7501)\n  \
+        NO_COLOR=1                       no colors\n\n\
         Every command explains itself: `clanka help <command>`, `clanka <command> help` or \
         `clanka <command> --help`."
 )]
@@ -517,6 +528,13 @@ fn args(mut args: Vec<OsString>) -> Vec<OsString> {
 
 fn main() -> ExitCode {
     let cli = Cli::parse_from(args(std::env::args_os().collect()));
+    // A config.toml that doesn't load is for the command that needs it to
+    // report; until then the symbols are picked as if it said nothing.
+    let glyphs = Paths::get()
+        .and_then(|paths| Config::load(&paths))
+        .map(|config| config.ui.glyphs)
+        .unwrap_or_default();
+    clanka::ui::start(glyphs);
     let session = status::start();
     if session.on_terminal() {
         stop_on_interrupt(session.clone());
@@ -535,8 +553,7 @@ fn main() -> ExitCode {
             session.close(Outcome::Error(
                 why.lines().next().unwrap_or_default().into(),
             ));
-            // As `main` returning the error prints it.
-            eprintln!("Error: {error:?}");
+            clanka::ui::failure(&error);
             ExitCode::FAILURE
         }
     }
@@ -583,7 +600,7 @@ fn run(command: Command) -> Result<bool> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                print!("{}", report.text(&soul));
+                print!("{}", report.text(&soul, clanka::ui::look().out));
             }
             if strict && !report.warnings.is_empty() {
                 return Ok(false);
@@ -845,7 +862,7 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
             continue;
         }
         let url = format!("{}/{remote}", embedding.repo());
-        clanka::ui::log(&format!("Downloading {url}"));
+        clanka::ui::note(&format!("Downloading {url}"));
         status::phase(&format!("Downloading {local}"));
         let mut response = ureq::get(&url).call().with_context(|| url.clone())?;
         // 0 when the server doesn't say: then there is no percentage.

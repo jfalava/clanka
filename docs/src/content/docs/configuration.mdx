@@ -185,7 +185,50 @@ with no Secret Service.
   longer waits on your login.
 </Aside>
 
+## `[ui]`
+
+How clanka's output looks on a terminal.
+
+```toml
+[ui]
+glyphs = "unicode"
+```
+
+### `glyphs`
+
+Which symbols mark the lines clanka prints and its
+[progress row](/cli/#progress).
+
+- `nerd` uses Nerd Font symbols. In a font without them they show as boxes.
+- `unicode` uses `✓`, `✗`, `!` and a braille spinner, which nearly every
+  monospace font has.
+- `auto` picks `nerd` when either of these holds, and `unicode` otherwise:
+  - The terminal draws Nerd Font symbols itself, whatever font it is set to.
+    clanka knows Ghostty, kitty, WezTerm and Rex by `TERM`, `TERM_PROGRAM`,
+    `KITTY_WINDOW_ID` and `REX_SESSION`.
+  - A font with `Nerd` in its file name is installed on this machine, in
+    `~/Library/Fonts`, `/Library/Fonts`, `~/.local/share/fonts` or
+    `/usr/share/fonts`. clanka skips this check over SSH, where the font that
+    draws is on the other machine.
+
+- Default: `auto`
+
+No terminal reports its font, so `auto` is a guess. If you see boxes, set
+`unicode`.
+
 ## Environment
+
+### `NO_COLOR`
+
+Set to anything but an empty value to turn colors off, as
+[no-color.org](https://no-color.org) describes. The marks and the
+[progress row](/cli/#progress) stay.
+
+- Default: unset, which colors a stream that is a terminal
+
+```sh
+NO_COLOR=1 clanka soul lint ~/.config/clanka/souls/<id>.md
+```
 
 ### `CLANKA_PROGRAM_STATUS`
 

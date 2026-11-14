@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Paths, SharedEmbedder};
+use clanka::ui::{self, Paint};
 use clanka_core::{Companion, Recalled};
 use serde::Deserialize;
 use std::path::Path;
@@ -122,22 +123,24 @@ struct Tally {
     unwanted: usize,
 }
 
-fn tally(case: &Case, found: &[String], tally: &mut Tally, lines: &mut Vec<String>) {
+fn tally(case: &Case, found: &[String], tally: &mut Tally, lines: &mut Vec<String>, paint: Paint) {
     for text in &case.expect {
         tally.expected += 1;
         match rank(found, text) {
             Some(rank) => {
                 tally.found += 1;
                 tally.reciprocal_ranks += 1.0 / rank as f64;
-                lines.push(format!("  ok    {text:?} at {rank}"));
+                let ok = paint.paint(ui::GREEN, "ok");
+                lines.push(format!("  {ok}    {text:?} at {rank}"));
             }
-            None => lines.push(format!("  MISS  {text:?}")),
+            None => lines.push(format!("  {}  {text:?}", paint.paint(ui::RED, "MISS"))),
         }
     }
     for text in &case.reject {
         if let Some(rank) = rank(found, text) {
             tally.unwanted += 1;
-            lines.push(format!("  NOISE {text:?} at {rank}"));
+            let noise = paint.paint(ui::YELLOW, "NOISE");
+            lines.push(format!("  {noise} {text:?} at {rank}"));
         }
     }
 }
@@ -157,7 +160,7 @@ pub fn eval(paths: &Paths, soul: &Path, cases: &Path) -> Result<bool> {
     for case in &cases.case {
         let found = companion.search(&case.query, companion.ranking())?;
         let mut lines = Vec::new();
-        tally(case, &texts(&found), &mut total, &mut lines);
+        tally(case, &texts(&found), &mut total, &mut lines, ui::look().out);
         println!("{:?}: {} recalled", case.query, found.len());
         for line in lines {
             println!("{line}");
@@ -202,7 +205,7 @@ mod tests {
             "laura sang at the concert".to_owned(),
         ];
         let (mut total, mut lines) = (Tally::default(), Vec::new());
-        tally(&cases.case[0], &found, &mut total, &mut lines);
+        tally(&cases.case[0], &found, &mut total, &mut lines, Paint::PLAIN);
         assert_eq!(
             total,
             Tally {

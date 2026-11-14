@@ -76,13 +76,13 @@ pub fn export(paths: &Paths, soul_path: &Path, dir: &Path) -> Result<()> {
             dir.display()
         )));
     }
-    println!(
+    clanka::ui::success(&format!(
         "Exported {} ({id}) to {}.\nIt holds the database key in plain text beside the \
          database: anyone who gets the directory can read every memory. Move it over a channel \
          you trust, `clanka import` it there, then delete it.",
         soul.traits.name,
         dir.display()
-    );
+    ));
     Ok(())
 }
 
@@ -186,11 +186,11 @@ pub fn import(paths: &Paths, dir: &Path) -> Result<()> {
             },
         },
     };
-    println!(
+    clanka::ui::success(&format!(
         "Imported {} ({id}): {}{note}\nDelete {} once it works: it holds the key in plain text.",
         soul.traits.name,
         soul_path.display(),
         dir.display()
-    );
+    ));
     Ok(())
 }

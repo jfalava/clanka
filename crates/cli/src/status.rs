@@ -117,7 +117,13 @@ impl Session {
         );
         Self::new(
             reports.then(|| Box::new(stderr) as Box<dyn Write + Send>),
-            wanted(terminal, term.as_deref(), None).then(|| Row::new(ProgressDrawTarget::stderr)),
+            wanted(terminal, term.as_deref(), None).then(|| {
+                Row::new(
+                    ProgressDrawTarget::stderr,
+                    crate::ui::look().err,
+                    crate::ui::glyphs,
+                )
+            }),
         )
     }
 
@@ -642,7 +648,10 @@ mod tests {
     #[test]
     fn the_live_row_is_up_while_a_step_works_and_no_longer() {
         // Reports off, as with CLANKA_PROGRAM_STATUS=0: the row needs none.
-        let s = Session::new(None, Some(Row::new(ProgressDrawTarget::hidden)));
+        let hidden = Row::new(ProgressDrawTarget::hidden, crate::ui::Paint::PLAIN, || {
+            crate::ui::Glyphs::Unicode
+        });
+        let s = Session::new(None, Some(hidden));
         assert!(s.on_terminal() && !s.enabled());
         s.progress(1, 2);
         assert_eq!(row(&s), None);

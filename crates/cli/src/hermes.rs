@@ -218,8 +218,8 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
     let mut env = std::fs::read_to_string(&env_path).unwrap_or_default();
     let (lines, missing) = missing_env_lines(&root_env, &env, &key_envs);
     for name in missing {
-        clanka::ui::log(&format!(
-            "warning: {name} is not in {}; its provider will not work from the {profile} profile",
+        clanka::ui::warning(&format!(
+            "{name} is not in {}; its provider will not work from the {profile} profile",
             home.join(".env").display()
         ));
     }
@@ -379,7 +379,7 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         set_up_companion(&home, profile, &dir, &source, &soul, &soul_path),
     )?;
     // Above the row: `refresh` has more profiles to do.
-    clanka::ui::print(&format!(
+    clanka::ui::success(&format!(
         "Profile {profile} is {}: hermes -p {profile} chat",
         soul.traits.name
     ));
@@ -461,7 +461,7 @@ pub fn nightshade(profile: &str, model: Option<&str>) -> Result<()> {
         created,
         set_up_nightshade(&home, profile, &dir, model, clanka),
     )?;
-    clanka::ui::print(&format!(
+    clanka::ui::success(&format!(
         "Profile {profile} is Nightshade: hermes -p {profile} chat"
     ));
     status::summary(&format!("Profile {profile} is Nightshade"));
@@ -541,7 +541,7 @@ pub fn refresh(restart: bool) -> Result<()> {
             Ok(true) => refreshed += 1,
             Ok(false) => {}
             Err(error) => {
-                clanka::ui::log(&format!("error: profile {name}: {error:#}"));
+                clanka::ui::error("error: ", &format!("profile {name}: {error:#}"));
                 failed.push(name.as_str());
             }
         }

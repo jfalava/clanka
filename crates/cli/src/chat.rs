@@ -9,6 +9,7 @@
 
 use crate::status::{Outcome, Session, State};
 use crate::turn::{self, Opened};
+use crate::ui::{self, Paint};
 use anyhow::{Result, bail};
 use clanka_core::deps::{Llm, LlmMessage, LlmRequest, LlmResponse, Role};
 use clanka_core::model::Speaker;
@@ -52,10 +53,15 @@ pub fn converse(
     if chat.is_frozen()? {
         bail!("memory is frozen by the doctor; unfreeze it before chatting");
     }
-    let notes = Notes(Arc::new(Mutex::new(Box::new(notes))));
+    // Plain unless the binary set a look for its own streams: a caller with
+    // other streams gets what it always got.
+    let look = ui::look();
+    let notes = Notes(Arc::new(Mutex::new(Box::new(notes))), look.err);
     let writer = Arc::new(Mutex::new(writer));
     let mut reflections: Vec<JoinHandle<()>> = Vec::new();
     let name = chat.soul().traits.name.clone();
+    let you = format!("{} ", look.err.paint(ui::BOLD, "you>"));
+    let speaker = format!("{} ", look.out.paint(ui::CYAN.bold(), &format!("{name}>")));
     let reflecting = Reflecting {
         status: status.clone(),
         running: Arc::default(),
@@ -66,7 +72,7 @@ pub fn converse(
     let mut lines = input.lines();
     loop {
         // The terminal or pipe is gone: the conversation is over.
-        if !notes.tell("you> ", false) {
+        if !notes.tell(&you, false) {
             break;
         }
         let Some(line) = lines.next() else { break };
@@ -164,7 +170,7 @@ pub fn converse(
             temperature: TEMPERATURE,
         };
         let llm = chat.deps().llm.as_ref();
-        let mut reply = speak(llm, &request, &name, &mut out, &status);
+        let mut reply = speak(llm, &request, &speaker, &mut out, &status);
         // wake_up is answered before the reply goes on: what the model wrote
         // before the call is still the dream, and what it writes after the
         // answer is the moment it wakes, or more of the dream.
@@ -191,7 +197,7 @@ pub fn converse(
             request.tools.clear();
             // The first reply's text took the row away; this one waits again.
             status.phase(&format!("{name} is replying"));
-            reply = speak(llm, &request, &name, &mut out, &status);
+            reply = speak(llm, &request, &speaker, &mut out, &status);
         }
         let reply = reply.map(|r| {
             [before.as_str(), r.text.trim()]
@@ -261,14 +267,14 @@ pub fn converse(
     Ok(())
 }
 
-/// Sends `request` and prints the reply as `name> …`, as the model writes it
+/// Sends `request` and prints the reply after `speaker`, as the model writes it
 /// when it can stream (a reply that may call a tool arrives whole), without
 /// its em dashes: what is shown is what [`turn::end`] records. The live row
 /// that says a reply is on its way goes when the reply's first words come.
 fn speak(
     llm: &dyn Llm,
     request: &LlmRequest,
-    name: &str,
+    speaker: &str,
     out: &mut impl Write,
     status: &Session,
 ) -> clanka_core::Result<LlmResponse> {
@@ -286,7 +292,7 @@ fn speak(
         }
         if !started {
             status.quiet();
-            let _ = write!(out, "{name}> ");
+            let _ = write!(out, "{speaker}");
             started = true;
         }
         let _ = write!(out, "{piece}");
@@ -339,7 +345,7 @@ fn woke(name: &str, report: &WakeReport) -> String {
 /// Where the prompt and clanka's notes go: stderr in a terminal. Shared with
 /// the reflections, which report their failures from their own threads.
 #[derive(Clone)]
-struct Notes(Arc<Mutex<Box<dyn Write + Send>>>);
+struct Notes(Arc<Mutex<Box<dyn Write + Send>>>, Paint);
 
 impl Notes {
     /// Writes the text, and says whether anyone is still there to read it.
@@ -353,8 +359,14 @@ impl Notes {
             .is_ok()
     }
 
+    /// A line of its own. clanka's asides are dimmed where there is color:
+    /// they are not the companion's and not a result.
     fn say(&self, text: &str) {
-        self.tell(text, true);
+        if text.starts_with("clanka:") {
+            self.tell(&self.1.paint(ui::DIM, text), true);
+        } else {
+            self.tell(text, true);
+        }
     }
 }
 

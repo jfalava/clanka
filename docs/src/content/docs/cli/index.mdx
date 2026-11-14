@@ -69,9 +69,36 @@ The row goes when the step ends. The lines clanka prints stay, above where
 the row was. In `chat` the row runs from your message to the first words of
 the reply.
 
+With Nerd Font symbols the row starts with a timer symbol in place of the
+spinner, and its detail line with a cog.
+[`[ui] glyphs`](/configuration/#glyphs) says which symbols clanka uses.
+
 clanka draws the row only when stderr is a terminal and `TERM` is not `dumb`.
 Piped or redirected, it writes the same lines as before.
 `CLANKA_PROGRAM_STATUS=0` does not turn the row off.
+
+## Marks and colors
+
+On a terminal, clanka marks three kinds of line. What a command did gets a
+green `✓`. A warning gets a yellow mark and a failure a red one, each in place
+of the `warning:`, `error:` or `Error:` the line starts with when piped.
+`clanka: …` asides are dimmed, and help is colored.
+
+```text
+✓ Created Nova (01a1d14c-bd0a-7061-801f-f00fff263135).
+✗ cannot read x.md: No such file or directory (os error 2)
+```
+
+`chat` sets `you>` in bold and the companion's name in cyan. `soul lint`
+colors `warning:`, `ok` and `invalid`, and `eval` colors `ok`, `MISS` and
+`NOISE`.
+
+Each stream is judged alone. Stdout piped into a file or another command
+gets plain lines even when stderr is a terminal, so scripts read what they
+read before. [`NO_COLOR`](/configuration/#no_color) turns the colors off and
+keeps the marks. The output of `--json`, `memories`, `recall`, `tics`,
+`soul persona`, `soul guide` and `doctor log` is data and is never marked or
+colored.
 
 ## Program status
 

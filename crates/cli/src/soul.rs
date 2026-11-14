@@ -4,6 +4,7 @@
 use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Config, Keys, Paths, SharedEmbedder};
 use clanka::status;
+use clanka::ui::{self, Paint};
 use clanka_core::PersonaStatus;
 use clanka_core::soul::Soul;
 use std::path::{Path, PathBuf};
@@ -21,11 +22,11 @@ pub fn persona_continue(paths: &Paths, soul: &Path) -> Result<()> {
         return Ok(());
     }
     companion.continue_with_persona()?;
-    println!(
+    clanka::ui::success(&format!(
         "Continued {} under its new persona; its memories stay as they were felt. Restart \
          anything that has it open.",
         soul.display()
-    );
+    ));
     Ok(())
 }
 
@@ -61,11 +62,11 @@ pub fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
         .filter(|c| c.name == "reinterpret" && c.ok)
         .count();
     let rounds: usize = reflections.iter().map(|r| r.rounds).sum();
-    println!(
+    clanka::ui::success(&format!(
         "Updated {}: {reinterpreted} memories re-read under the new persona in {rounds} model \
          calls. Restart anything that has it open.",
         soul.display()
-    );
+    ));
     status::summary(&format!(
         "{reinterpreted} memories re-read under the new persona"
     ));
@@ -105,11 +106,11 @@ pub fn fork(paths: &Paths, soul: &Path) -> Result<()> {
     let partial = soul.with_extension("md.part");
     std::fs::write(&partial, forked).with_context(|| format!("writing {}", partial.display()))?;
     std::fs::rename(&partial, soul).with_context(|| format!("replacing {}", soul.display()))?;
-    println!(
+    clanka::ui::success(&format!(
         "Forked {}: {old} is archived and read-only, and the soul.md now starts {new} with no \
          memories. Restart anything that has it open.",
         soul.display()
-    );
+    ));
     Ok(())
 }
 
@@ -144,7 +145,7 @@ pub fn create(paths: &Paths, name: &str, body: &str) -> Result<PathBuf> {
     Keys::new(paths, &config).store(id, &setup::random_hex(32))?;
     std::fs::write(&soul, text).with_context(|| format!("writing {}", soul.display()))?;
     crate::download_model(paths, config.embedding.model)?;
-    println!("Created {name} ({id}).");
+    clanka::ui::success(&format!("Created {name} ({id})."));
     status::summary(&format!("Created {name}"));
     Ok(soul)
 }
@@ -211,7 +212,7 @@ pub fn draft(
         status::detail(&format!("round {} of at most {}", round + 1, rounds + 1));
         body = unfenced(&write(&request)?);
         let r = lint_draft(name, &body);
-        clanka::ui::log(&format!(
+        clanka::ui::note(&format!(
             "round {}: {} words, {} warnings",
             round + 1,
             body.split_whitespace().count(),
@@ -231,7 +232,9 @@ pub fn draft(
     let soul = create(paths, name, &body)?;
     print!(
         "{}",
-        report.expect("the loop ran at least once").text(&soul)
+        report
+            .expect("the loop ran at least once")
+            .text(&soul, clanka::ui::look().out)
     );
     println!("Read it before anyone talks to it: {}", soul.display());
     Ok(())
@@ -612,18 +615,22 @@ impl LintReport {
         }
     }
 
-    pub fn text(&self, path: &Path) -> String {
+    pub fn text(&self, path: &Path, paint: Paint) -> String {
         let mut out = String::new();
         for w in &self.warnings {
-            out += &format!("warning: {w}\n");
+            out += &format!("{} {w}\n", paint.paint(ui::YELLOW, "warning:"));
         }
         for n in &self.notes {
-            out += &format!("note: {n}\n");
+            out += &format!("{} {n}\n", paint.paint(ui::DIM, "note:"));
         }
         out += &format!(
             "{}: {} ({} core values, {} warnings)\n",
             path.display(),
-            if self.valid { "ok" } else { "invalid" },
+            if self.valid {
+                paint.paint(ui::GREEN, "ok")
+            } else {
+                paint.paint(ui::RED, "invalid")
+            },
             self.core_values,
             self.warnings.len()
         );
@@ -746,7 +753,7 @@ mod tests {
             "{once:?}"
         );
         assert!(
-            once.text(std::path::Path::new("x.md"))
+            once.text(std::path::Path::new("x.md"), clanka::ui::Paint::PLAIN)
                 .contains("note: negation-first")
         );
 

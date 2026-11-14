@@ -145,14 +145,17 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
     match command {
         DoctorCommand::Freeze { soul } => {
             open(&soul)?.set_frozen(true)?;
-            println!(
+            clanka::ui::success(&format!(
                 "Frozen {}. Nothing writes to its memory until you unfreeze.",
                 soul.display()
-            );
+            ));
         }
         DoctorCommand::Unfreeze { soul } => {
             open(&soul)?.set_frozen(false)?;
-            println!("Unfrozen {}. Writes go through again.", soul.display());
+            clanka::ui::success(&format!(
+                "Unfrozen {}. Writes go through again.",
+                soul.display()
+            ));
         }
         DoctorCommand::Log { soul, since } => {
             let since = when(&since, now())?;
@@ -175,7 +178,7 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
         DoctorCommand::Rollback { soul, to } => {
             let to = when(&to, now())?;
             let report = open(&soul)?.rollback_to(to - 1)?;
-            println!(
+            clanka::ui::success(&format!(
                 "Rolled {} back to {} UTC: {} memories removed, {} restored to their earlier \
                  text, {} threads reopened, {} mood, note and section entries dropped.",
                 soul.display(),
@@ -184,7 +187,7 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
                 report.restored.len(),
                 report.reopened.len(),
                 report.state_rows
-            );
+            ));
             if !report.kept_seared.is_empty() {
                 println!(
                     "Seared memories are never rolled back; left as they are: {}.",
@@ -258,10 +261,10 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
                     Some(old) => format!("; #{old}, which it had replaced, is current again"),
                     None => String::new(),
                 };
-                println!(
+                clanka::ui::success(&format!(
                     "Deleted #{id} and {} turns only it cited{restored}.",
                     deleted.turns.len()
-                );
+                ));
             }
         }
         DoctorCommand::Reembed { soul } => {
@@ -270,12 +273,12 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
             let companion = setup::reembed(paths, &soul, embedder, &mut status::progress)?;
             status::quiet();
             status::summary("Rebuilt the vectors");
-            println!(
+            clanka::ui::success(&format!(
                 "Rebuilt the vectors of {} with {}. Restart anything that has it open: until \
                  then its turns fail instead of mixing the two models.",
                 soul.display(),
                 companion.deps().embedder.model_id()
-            );
+            ));
         }
         DoctorCommand::DeleteAll { soul } => delete_all(open(&soul)?, &soul)?,
     }
@@ -293,7 +296,7 @@ fn delete_all(mut companion: clanka_core::Companion, soul: &Path) -> Result<()> 
     }
     let report = companion.delete_all_memory()?;
     if report.failed.is_empty() {
-        println!(
+        clanka::ui::success(&format!(
             "Deleted {} memories and {} turns, then {} leftover turns and {} sessions, \
              from {}.",
             report.memories,
@@ -301,7 +304,7 @@ fn delete_all(mut companion: clanka_core::Companion, soul: &Path) -> Result<()> 
             report.leftover_turns,
             report.sessions,
             soul.display()
-        );
+        ));
         return Ok(());
     }
     println!(

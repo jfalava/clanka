@@ -181,6 +181,16 @@ pub struct Config {
     pub recall: Ranking,
     #[serde(default)]
     pub keys: KeysConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfig {
+    /// Which symbols mark the lines clanka prints and its progress row.
+    #[serde(default)]
+    pub glyphs: crate::ui::GlyphSetting,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -559,7 +569,8 @@ mod tests {
         let config: Config = toml::from_str(
             "[embedding]\nmodel = \"multilingual\"\nduplicate_similarity = 0.9\n\
              [recall]\nlimit = 3\n\
-             [keys]\nstore = \"file\"\n",
+             [keys]\nstore = \"file\"\n\
+             [ui]\nglyphs = \"unicode\"\n",
         )
         .unwrap();
         assert_eq!(config.embedding.model, Embedding::Multilingual);
@@ -568,10 +579,13 @@ mod tests {
         // A field the file leaves out keeps its default.
         assert_eq!(config.recall.seared_limit, Ranking::default().seared_limit);
         assert_eq!(config.keys.store, KeyStore::File);
+        assert_eq!(config.ui.glyphs, crate::ui::GlyphSetting::Unicode);
 
         let empty: Config = toml::from_str("").unwrap();
         assert_eq!(empty.embedding.model, Embedding::English);
         assert_eq!(empty.keys.store, KeyStore::SecretService);
+        assert_eq!(empty.ui.glyphs, crate::ui::GlyphSetting::Auto);
+        assert!(toml::from_str::<Config>("[ui]\nglyphs = \"emoji\"\n").is_err());
         // A misspelt setting is an error, not silently ignored.
         assert!(toml::from_str::<Config>("[recall]\nlimits = 3\n").is_err());
     }
