@@ -17,6 +17,11 @@ A general plugin on Hermes's public plugin API only:
   written by the same model it chats with.
 - Tools ``recall_memory``, ``go_to_sleep`` and, in a dream, ``wake_up``. Sleep
   and waking wait until the reply is recorded, then consolidate.
+- ``zz`` at the start of a message says goodnight for sure: the companion
+  answers with a short goodnight and sleeps after it, tool call or not (in a
+  dream, it wakes). ``/sleep [words]`` sends that message for the user, which
+  needs ``plugins.entries.clanka.allow_gateway_injection`` (``clanka hermes
+  profile`` sets it).
 - ``on_session_reset`` (``/new``, ``/reset``, a session-reset policy plugin):
   the companion sleeps on whatever was said since it last slept, so a
   conversation the user walked away from still becomes a memory. Nothing
@@ -41,6 +46,10 @@ logger = logging.getLogger(__name__)
 
 # Most one memory-writing reply may run to.
 MAX_TOKENS = 2048
+# Added after a ``zz`` goodnight's context, last, so the model calls the tool
+# the user asked for. Sleep comes after the reply whether it does or not.
+GO_TO_SLEEP = "Call go_to_sleep first, then write that goodnight."
+
 # Longest a turn waits for memory to open, in seconds. Hermes gives a hook
 # callback 30s, then drops it and lets the model answer with no memory, so the
 # turn has to be blocked before that.
@@ -181,6 +190,8 @@ class _Plugin:
             return _block(
                 "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
             )
+        if kind == "goodnight":
+            return {"context": f"{context}\n\n{GO_TO_SLEEP}"}
         if kind == "open" and context:
             return {"context": context}
         return None
@@ -275,6 +286,18 @@ class _Plugin:
         wakes, note = self.companion().wake_up(str(args.get("because", "")))
         return json.dumps({"ok": wakes, "note": note})
 
+    def sleep_command(self, raw_args="", session_key="", **_):
+        # A slash command never reaches the model, so the goodnight goes in as
+        # the user's next message, marked: the turn then runs like a typed `zz`.
+        # Without a key Hermes picks the session whose command this is.
+        message = f"zz {raw_args.strip()}".strip()
+        if self._ctx.inject_message(message, session_key=session_key or None):
+            return None
+        return (
+            "Couldn't say goodnight for you here. Send zz, with your goodnight after it if "
+            "you like, and the companion falls asleep after its reply."
+        )
+
     def go_to_sleep(self, args, **_):
         self._sleep_requested = True
         # Nothing a model could narrate back as its goodnight ("Sleeping now."):
@@ -313,12 +336,19 @@ def register(ctx):
         toolset="clanka",
         schema={
             "name": "go_to_sleep",
-            "description": "Call this before you reply whenever the user says goodnight, says "
-            "they are going to bed or done for the night, or asks you to sleep. You fall asleep "
-            "after this reply and the conversation becomes a memory.",
+            "description": "Call this before you reply whenever the user says goodnight in any "
+            "spelling or language (goodnight, good night, gn, night night, nighty night, sleep "
+            "well), says they are going to bed or done for the night, or asks you to sleep. You "
+            "fall asleep after this reply and the conversation becomes a memory.",
             "parameters": {"type": "object", "properties": {}},
         },
         handler=plugin.go_to_sleep,
+    )
+    ctx.register_command(
+        "sleep",
+        plugin.sleep_command,
+        description="Say goodnight: the companion answers, then falls asleep (in a dream, it wakes)",
+        args_hint="[your goodnight]",
     )
     # The core's own wake_up, so every front end tells the model the same.
     description, parameters = _clanka.wake_up_tool()

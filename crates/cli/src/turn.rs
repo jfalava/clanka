@@ -7,10 +7,12 @@
 //! the whole context, later ones only what changed and memories new tonight.
 //!
 //! Markers at the start of a message, parsed here so every front end reads
-//! them the same, in this order: `~~` falls asleep into a dream (only as the
-//! first message after sleep), `<<` shows the dreaming companion an echo of
-//! the past, `>>N` asks for a reply of about N paragraphs. Anywhere in a
-//! waking message, text between a pair of `||` is said out of earshot.
+//! them the same, in this order: `zz` says goodnight (the companion sleeps
+//! after this reply, or wakes from a dream), `~~` falls asleep into a dream
+//! (only as the first message after sleep), `<<` shows the dreaming companion
+//! an echo of the past, `>>N` asks for a reply of about N paragraphs.
+//! Anywhere in a waking message, text between a pair of `||` is said out of
+//! earshot.
 
 use clanka_core::dream::{ECHO_HINT, WAKE_UP};
 use clanka_core::memory::has_unheard;
@@ -31,6 +33,9 @@ pub struct Pending {
     /// companion's `wake_up` woke it. The front end wakes the companion once
     /// the reply is recorded.
     pub wake: bool,
+    /// The user said goodnight with `zz`: the front end puts the companion to
+    /// sleep once the reply is recorded, with no reflection on it first.
+    pub sleep: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +66,33 @@ pub const DREAM_OPENING: &str = "You are somewhere you almost know.";
 /// companion never acts as if it heard.
 pub const UNHEARD_HINT: &str = "Words between || were said out of your earshot: they happened, \
     but you didn't hear them. Never acknowledge them, in word or deed.";
+
+/// What a bare `zz` says.
+pub const GOODNIGHT: &str = "Goodnight.";
+
+/// Told to the reply model when the user said goodnight with `zz`.
+pub const GOODNIGHT_HINT: &str = "They are going to bed: this reply is your goodnight, short and \
+    in character, and you fall asleep after it. A `zz` mark at the start of their message said \
+    so: it is not something they said, so never mention it.";
+
+/// Splits a leading `zz` off a message: the user is going to bed, and what
+/// follows is their goodnight. A bare `zz` says [`GOODNIGHT`]. Any case, since
+/// phone keyboards capitalize it; glued to a word (`zzz`, `zzzap`) it is just
+/// text.
+pub fn goodnight_marker(message: &str) -> (bool, &str) {
+    let text = message.trim_start();
+    let rest = text
+        .get(..2)
+        .filter(|z| z.eq_ignore_ascii_case("zz"))
+        .map(|_| &text[2..]);
+    match rest {
+        Some(rest) if rest.is_empty() || rest.starts_with(char::is_whitespace) => {
+            let rest = rest.trim();
+            (true, if rest.is_empty() { GOODNIGHT } else { rest })
+        }
+        _ => (false, message),
+    }
+}
 
 /// Splits a leading `~~` off a message: the companion falls asleep into a
 /// dream that starts with what follows. A bare `~~` drops it somewhere. `~~`
@@ -163,6 +195,9 @@ impl Open {
         if self.unheard {
             hints.push(UNHEARD_HINT.to_owned());
         }
+        if self.pending.sleep {
+            hints.push(GOODNIGHT_HINT.to_owned());
+        }
         hints.extend(self.stretch.map(stretch_hint));
         hints
     }
@@ -206,6 +241,7 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
         return Ok(Opened::Frozen);
     }
     c.drop_lost_dream()?;
+    let (goodnight, message) = goodnight_marker(message);
     let (asleep, message) = dream_marker(message);
     let dream = match c.dreaming()? {
         Some(dream) => Some(dream),
@@ -225,6 +261,11 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
     let mut context = c.assemble(message, budget, &ranking)?;
     if !first {
         c.keep_new(&mut context)?;
+    }
+    // In a dream, goodnight wakes the companion: the dream ends with this
+    // reply, as when it fills the session.
+    if goodnight && dream.is_some() {
+        context.spent = true;
     }
     // A host replaying its history has the rule from the turn that needed it.
     let unheard = dream.is_none()
@@ -257,6 +298,7 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
             recalled,
             dream: dream.is_some(),
             wake,
+            sleep: goodnight && dream.is_none(),
         },
     })))
 }

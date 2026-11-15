@@ -153,16 +153,16 @@ impl Server {
     ) -> Result<String, String> {
         let (chat, pending, writer) =
             (self.chat.clone(), self.pending.clone(), self.writer.clone());
-        let (user_turn, companion_turn, dream) = blocking(move || {
+        let (user_turn, companion_turn, dream, sleep) = blocking(move || {
             let Some(p) = lock(&pending).take() else {
                 return Err(
                     "No turn is open: call begin_turn with the user's message first.".into(),
                 );
             };
-            let dream = p.dream.then_some((p.session, p.wake));
+            let (dream, sleep) = (p.dream.then_some((p.session, p.wake)), p.sleep);
             let (user, companion) =
                 turn::end(&mut lock(&chat), p, &reply).map_err(|e| e.to_string())?;
-            Ok((user, companion, dream))
+            Ok((user, companion, dream, sleep))
         })
         .await?;
         // Nothing of a dream is kept as it happens: it is decided on waking.
@@ -172,6 +172,12 @@ impl Server {
             }
             let (chat, writer) = (self.chat.clone(), self.writer.clone());
             return blocking(move || wake(&chat, writer.as_deref(), session)).await;
+        }
+        // The user said goodnight with `zz`: sleep reads the whole
+        // conversation, this exchange included, so it is not reflected on.
+        if sleep {
+            let chat = self.chat.clone();
+            return blocking(move || fall_asleep(&chat, writer.as_deref())).await;
         }
         let Some(writer) = writer else {
             return Ok(
@@ -250,26 +256,8 @@ impl Server {
             let chat = self.chat.clone();
             return blocking(move || wake(&chat, writer.as_deref(), dream)).await;
         }
-        let Some(writer) = self.writer.clone() else {
-            return Err(
-                "Can't sleep: no companion model is configured. Add a [model] section to \
-                ~/.config/clanka/config.toml naming the model you run on."
-                    .into(),
-            );
-        };
         let chat = self.chat.clone();
-        blocking(move || {
-            let session = lock(&chat).open_session().map_err(|e| e.to_string())?;
-            // Waits for any reflection still running on this handle.
-            let report = lock(&writer).sleep(session).map_err(|e| e.to_string())?;
-            Ok(format!(
-                "Asleep. The conversation is now a memory; {} memories shifted and {} unresolved \
-                 things weigh more. The next message starts a new conversation.",
-                report.drifted.len(),
-                report.escalated.len()
-            ))
-        })
-        .await
+        blocking(move || fall_asleep(&chat, writer.as_deref())).await
     }
 }
 
@@ -302,6 +290,29 @@ impl ServerHandler for Server {
         .with_server_info(Implementation::new("clanka", env!("CARGO_PKG_VERSION")))
         .with_instructions(INSTRUCTIONS)
     }
+}
+
+/// Ends the conversation and consolidates it with the writer.
+fn fall_asleep(
+    chat: &Mutex<Companion>,
+    writer: Option<&Mutex<Companion>>,
+) -> Result<String, String> {
+    let Some(writer) = writer else {
+        return Err(
+            "Can't sleep: no companion model is configured. Add a [model] section to \
+            ~/.config/clanka/config.toml naming the model you run on."
+                .into(),
+        );
+    };
+    let session = lock(chat).open_session().map_err(|e| e.to_string())?;
+    // Waits for any reflection still running on this handle.
+    let report = lock(writer).sleep(session).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "Asleep. The conversation is now a memory; {} memories shifted and {} unresolved \
+         things weigh more. The next message starts a new conversation.",
+        report.drifted.len(),
+        report.escalated.len()
+    ))
 }
 
 /// Wakes the companion from `dream` with the writer; without one (no companion

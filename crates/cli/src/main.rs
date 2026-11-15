@@ -148,11 +148,12 @@ enum Command {
     /// the memory and quit without recording anything. Refuses to start if the persona
     /// changed since its memories were written.
     ///
-    /// Markers at the start of a message: `>>N` asks for a reply of about N paragraphs.
+    /// Markers at the start of a message: `zz` says goodnight: the companion answers it
+    /// and falls asleep, as on /sleep. `>>N` asks for a reply of about N paragraphs.
     /// `~~`, as the first message after sleep, starts a dream: what you write is what
     /// happens to the companion, as "you", and it lives it without knowing it dreams. In a
     /// dream, `<<` shows it an echo of the past. It wakes when it chooses to, when the dream
-    /// fills the session, or on /sleep; only fragments and its mood stay, and at most one
+    /// fills the session, or on /sleep or `zz`; only fragments and its mood stay, and at most one
     /// thing an echo showed that you had also written while it was awake. Leaving mid-dream
     /// keeps nothing of it. Anywhere in a waking message, text between || and || is said out
     /// of the companion's earshot: it plays along without hearing it, and never keeps it.
@@ -340,7 +341,8 @@ enum HermesCommand {
     /// clanka's two tools are the only toolset on every platform, listed directly rather
     /// than behind Hermes's tool-search bridge; Hermes's own memory, user profile, coding
     /// brief, toolchain probe and agent-style guidance are off; the terminal and Telegram
-    /// notes are a line each; and SOUL.md is the persona. Each turn then carries the
+    /// notes are a line each; clanka may send messages, so /sleep can say goodnight for
+    /// the user; and SOUL.md is the persona. Each turn then carries the
     /// persona and the conversation instead of Hermes's whole toolbox: on Haiku the system
     /// prompt and tools went from about 19k tokens on a stock profile to about 1.2k. The
     /// root's own `providers:`, model aliases, reasoning overrides and `model_overrides`

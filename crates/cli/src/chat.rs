@@ -1,7 +1,7 @@
 //! `clanka chat`: talk with a companion in the terminal. One model does both
 //! jobs: it writes each reply, then reflects on the exchange in the background
 //! as the writer. Lines in, replies out as they are written; `/sleep` ends the
-//! conversation. Turns go through [`crate::turn`], like every other front end.
+//! conversation, and so does a `zz` goodnight, after the companion's reply. Turns go through [`crate::turn`], like every other front end.
 //!
 //! A message starting with `~~` after sleep is a dream. Its replies may call
 //! `wake_up`, so they arrive whole instead of as they are written; when the
@@ -95,16 +95,7 @@ pub fn converse(
                 };
                 break;
             }
-            status.phase(&format!("{name} is falling asleep"));
-            let session = chat.open_session()?;
-            let report = lock(&writer).sleep(session)?;
-            let asleep = format!(
-                "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
-                report.drifted.len(),
-                report.escalated.len()
-            );
-            notes.say(&asleep);
-            status.summary(&asleep);
+            fall_asleep(&mut chat, &writer, &notes, &name, &status)?;
             outcome = Outcome::Done;
             break;
         }
@@ -223,10 +214,22 @@ pub fn converse(
                 continue;
             }
         };
-        let (dreaming, session, wakes) =
-            (open.pending.dream, open.pending.session, open.pending.wake);
+        let (dreaming, session, wakes, sleep) = (
+            open.pending.dream,
+            open.pending.session,
+            open.pending.wake,
+            open.pending.sleep,
+        );
         let (user_turn, companion_turn) = turn::end(&mut chat, open.pending, &reply)?;
         status.report(State::Done, &format!("{name} replied"), None);
+        // A `zz` goodnight: sleep reads the whole conversation, this exchange
+        // included, so it is not reflected on.
+        if sleep {
+            finish(&mut reflections);
+            fall_asleep(&mut chat, &writer, &notes, &name, &status)?;
+            outcome = Outcome::Done;
+            break;
+        }
         // Nothing of a dream is kept as it happens: it is decided on waking.
         if dreaming {
             if wakes {
@@ -326,6 +329,27 @@ fn wake(
             Err(why)
         }
     }
+}
+
+/// Ends the conversation and consolidates it, and says what sleep did.
+fn fall_asleep(
+    chat: &mut Companion,
+    writer: &Mutex<Companion>,
+    notes: &Notes,
+    name: &str,
+    status: &Session,
+) -> Result<()> {
+    status.phase(&format!("{name} is falling asleep"));
+    let session = chat.open_session()?;
+    let report = lock(writer).sleep(session)?;
+    let asleep = format!(
+        "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
+        report.drifted.len(),
+        report.escalated.len()
+    );
+    notes.say(&asleep);
+    status.summary(&asleep);
+    Ok(())
 }
 
 /// What waking left, in a line.

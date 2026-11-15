@@ -157,6 +157,15 @@ async fn a_server_without_a_model_records_turns_and_cannot_sleep() {
     assert!(saved.starts_with("Saved. (No companion model"), "{saved}");
     let sleep = call(&client, "sleep", json!({})).await.unwrap_err();
     assert!(sleep.contains("no companion model"), "{sleep}");
+    // A `zz` goodnight sleeps from end_turn, with the same refusal.
+    let begun = call(&client, "begin_turn", json!({ "message": "zz" }))
+        .await
+        .unwrap();
+    assert!(begun.ends_with(clanka::turn::GOODNIGHT_HINT), "{begun}");
+    let sleep = call(&client, "end_turn", json!({ "reply": "Night." }))
+        .await
+        .unwrap_err();
+    assert!(sleep.contains("no companion model"), "{sleep}");
     assert!(open(dir.path()).session_in_progress().unwrap().is_some());
 
     let persona = client

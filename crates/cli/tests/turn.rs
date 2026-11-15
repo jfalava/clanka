@@ -228,3 +228,57 @@ fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
         ]
     );
 }
+
+/// `zz` at the start, in any case, says goodnight: awake, the companion sleeps
+/// after this reply and is told so last; in a dream, the dream ends with it.
+/// Memory keeps the goodnight without the mark, and a bare `zz` says
+/// "Goodnight.". `zzz` or `zz` mid-message is just text.
+#[test]
+fn a_leading_zz_says_goodnight_and_wakes_a_dream() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(dir.path());
+
+    for plain in ["zzz", "so zz", "zzap"] {
+        let (said, pending) = begin(&mut c, plain, false);
+        assert!(
+            !pending.sleep && !said.contains(turn::GOODNIGHT_HINT),
+            "{plain}: {said}"
+        );
+        turn::end(&mut c, pending, "Mm.").unwrap();
+    }
+    let (said, pending) = begin(&mut c, " Zz night, love", false);
+    assert!(pending.sleep && !pending.wake, "{pending:?}");
+    assert!(said.ends_with(turn::GOODNIGHT_HINT), "{said}");
+    turn::end(&mut c, pending, "Sleep well.").unwrap();
+    let (_, pending) = begin(&mut c, "zz", false);
+    assert!(pending.sleep);
+    turn::end(&mut c, pending, "Night.").unwrap();
+
+    let said: Vec<String> = c
+        .assemble("x", 4000, &clanka_core::Ranking::default())
+        .unwrap()
+        .turns
+        .into_iter()
+        .filter(|t| t.speaker == clanka_core::model::Speaker::User)
+        .map(|t| t.content)
+        .collect();
+    assert_eq!(
+        said,
+        ["zzz", "so zz", "zzap", "night, love", turn::GOODNIGHT]
+    );
+
+    // In a dream it wakes the companion instead of putting it to sleep.
+    let session = c.session_in_progress().unwrap().unwrap();
+    c.end_session(session, clanka_core::model::SessionEnd::Doctor)
+        .unwrap();
+    let (_, pending) = begin(&mut c, "~~ You're in a kitchen.", false);
+    assert!(pending.dream && !pending.wake);
+    turn::end(&mut c, pending, "It smells of bread.").unwrap();
+    let (said, pending) = begin(&mut c, "zz", false);
+    assert!(
+        pending.dream && pending.wake && !pending.sleep,
+        "{pending:?}"
+    );
+    assert!(said.contains(clanka_core::dream::WAKING_HINT), "{said}");
+    assert!(!said.contains(turn::GOODNIGHT_HINT), "{said}");
+}

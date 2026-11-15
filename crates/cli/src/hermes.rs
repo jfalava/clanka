@@ -436,6 +436,8 @@ fn set_up_companion(
         ("platform_hints.cli.replace", CLI_HINT),
         ("platform_hints.telegram.replace", TELEGRAM_HINT),
         ("platform_hints.api_server.replace", API_HINT),
+        // `/sleep` hands the goodnight to the companion as a `zz` message.
+        ("plugins.entries.clanka.allow_gateway_injection", "true"),
     ] {
         h(&["config", "set", key, value])?;
     }

@@ -49,6 +49,23 @@ To give a companion another toolset on one platform, add it next to clanka.
 hermes -p nova config set platform_toolsets.telegram '[clanka, image_gen]'
 ```
 
+## Saying goodnight
+
+The companion falls asleep when you say goodnight and its model calls
+`go_to_sleep`. To be sure it does, start the message with `zz` or send
+`/sleep`:
+
+```text
+/sleep night, see you tomorrow
+```
+
+`/sleep` sends `zz` and your words as your next message, and the companion
+answers with a short goodnight before it sleeps; in a dream, it wakes. Hermes
+lets a plugin send a message only with
+`plugins.entries.clanka.allow_gateway_injection`, which
+`clanka hermes profile` sets. On an older profile, run it again, or send `zz`
+yourself.
+
 ## Let Nightshade write the soul
 
 Nightshade is a Hermes agent that interviews you about the companion you

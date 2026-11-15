@@ -121,8 +121,10 @@ impl PyCompanion {
     /// the doctor token (memory is frozen, nothing recorded: don't send the
     /// message to the model), `("frozen", "")` while frozen, `("awake", why)`
     /// when the message asked for a dream (`~~`) mid-conversation (nothing
-    /// recorded; show `why` instead of a reply), or `("open", context)` with
-    /// the memory to give the model. On the host conversation's first turn
+    /// recorded; show `why` instead of a reply), `("open", context)` with
+    /// the memory to give the model, or `("goodnight", context)` for the same
+    /// when the user said goodnight with `zz` (the companion sleeps after this
+    /// reply: see `end_turn`). On the host conversation's first turn
     /// (`first`) that is everything; later it is only what the model hasn't
     /// seen, and empty when nothing is new.
     #[pyo3(signature = (message, first = true))]
@@ -143,8 +145,9 @@ impl PyCompanion {
                 Begin::Frozen => ("frozen", String::new()),
                 Begin::Awake => ("awake", turn::AWAKE.to_owned()),
                 Begin::Open { context, pending } => {
+                    let kind = if pending.sleep { "goodnight" } else { "open" };
                     *lock(&self.pending) = Some(pending);
-                    ("open", context)
+                    (kind, context)
                 }
             })
         })
@@ -152,19 +155,20 @@ impl PyCompanion {
 
     /// After the reply: records it and marks what was recalled. Fast. Returns
     /// the `(user, companion)` turn IDs to pass to `reflect` and whether the
-    /// dream ends with this reply (it filled the session, or `wake_up` woke
-    /// the companion: call `sleep`, which wakes it), or `None` when no turn
-    /// was open (the doctor token, a frozen memory, or a vetoed turn).
+    /// companion sleeps after this reply (the user said goodnight with `zz`,
+    /// or the dream ends: it filled the session, `wake_up` woke the companion,
+    /// or `zz` did; call `sleep`, which in a dream wakes it), or `None` when
+    /// no turn was open (the doctor token, a frozen memory, or a vetoed turn).
     /// `reflect` on a dream's turns does nothing.
     fn end_turn(&self, py: Python<'_>, reply: &str) -> PyResult<Option<(i64, i64, bool)>> {
         py.detach(|| {
             let Some(pending) = lock(&self.pending).take() else {
                 return Ok(None);
             };
-            let spent = pending.wake;
+            let sleep = pending.wake || pending.sleep;
             let (user, companion) =
                 turn::end(&mut lock(&self.chat), pending, reply).map_err(err)?;
-            Ok(Some((user, companion, spent)))
+            Ok(Some((user, companion, sleep)))
         })
     }
 
