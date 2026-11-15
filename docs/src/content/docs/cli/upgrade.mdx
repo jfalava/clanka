@@ -1,0 +1,43 @@
+---
+title: upgrade
+description: Replace this clanka with the latest release on GitHub, and the Hermes plugin with it.
+---
+
+```sh
+clanka upgrade [--no-restart]
+```
+
+Downloads the latest [release](https://github.com/jfalava/clanka/releases)
+for this machine and checks it against the release's `SHA256SUMS`. An archive
+that does not match is refused and nothing is installed. Then it replaces
+this binary where it is.
+
+Releases are built for Linux on x86_64 and arm64, and for macOS on Apple
+Silicon. On any other machine, build clanka from source.
+
+If the Hermes plugin is installed under `~/.hermes/plugins/clanka`, the
+command replaces it too. It also replaces the soul-writer skill under
+`~/.agents/skills/clanka-soul-writer` if the skill is there. Then the new
+clanka runs [`clanka hermes refresh`](/cli/hermes/#refresh), which gives each
+profile the new plugin and restarts the gateway.
+
+The plugin has to change with the CLI. A release that changes the database
+schema moves each companion to it the first time it opens one, and older
+builds refuse that companion after that.
+
+When this is already the latest release, the command does nothing.
+
+```sh
+clanka upgrade
+```
+
+<Aside type="caution">
+  If a package manager or a read-only directory holds the binary, the command
+  can't replace it. Upgrade it the way it was installed.
+</Aside>
+
+### `--no-restart`
+
+Leave the Hermes gateway running the build it loaded.
+
+- Default: `false`

@@ -1,6 +1,6 @@
 [package]
 name = "clanka-core"
-version = "0.1.0"
+version.workspace = true
 description = "Companion memory engine: storage, souls and memory lifecycle, with no transport."
 edition.workspace = true
 rust-version.workspace = true

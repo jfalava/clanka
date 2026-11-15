@@ -10,15 +10,20 @@ profile's `SOUL.md`, and clanka's tools are the only toolset it has.
 
 ## Install the plugin
 
-You need `hermes` on your `PATH` and a clone of the clanka repository.
+You need `hermes` on your `PATH`, and Linux on x86_64 or arm64 or macOS on
+Apple Silicon.
 
 ```sh
-hermes/install.sh
+curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
 ```
 
 The script:
 
-- builds the Python extension and the `clanka` CLI,
+- downloads the latest [release](https://github.com/jfalava/clanka/releases)
+  and checks it against the release's `SHA256SUMS`, installing nothing when
+  it does not match,
+- installs the `clanka` CLI under `~/.local/bin` (`CLANKA_BIN_DIR` picks
+  another directory),
 - installs the plugin under `~/.hermes/plugins/clanka`,
 - installs the soul-writer skill under `~/.agents/skills/clanka-soul-writer`,
   so any agent on the machine can write a soul the same way,
@@ -79,20 +84,24 @@ hermes -p nightshade chat
 Without `--model` it runs on the Hermes default. A stronger model interviews
 better, and the session is short.
 
+From a clone, `hermes/install.sh --source` builds the checkout and installs
+that instead, to try a change before it is released. It needs what
+[building from source](/getting-started/#build) needs, plus Python 3.11 or
+newer.
+
 ## Update
 
-Pull the repository and run the installer again:
-
 ```sh
-git pull
-hermes/install.sh
+clanka upgrade
 ```
 
-It ends with `clanka hermes refresh`, which gives every profile clanka made
-the new plugin and restarts the gateway.
+[`clanka upgrade`](/cli/upgrade/) installs the latest release over the CLI,
+the plugin and the skill, after the same checksum check. It ends with
+`clanka hermes refresh`, which gives every profile clanka made the new
+plugin and restarts the gateway.
 
 <Aside type="caution">
   Where systemd runs the gateway, the restart interrupts live sessions without
-  asking. Use `hermes/install.sh --no-restart` to leave the gateway running the
+  asking. Use `clanka upgrade --no-restart` to leave the gateway running the
   old build, and restart it yourself later.
 </Aside>

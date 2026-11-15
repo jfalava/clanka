@@ -1,6 +1,6 @@
 [package]
 name = "clanka-py"
-version = "0.1.0"
+version.workspace = true
 description = "Python bindings for clanka companions, for host plugins such as Hermes Agent."
 edition.workspace = true
 rust-version.workspace = true

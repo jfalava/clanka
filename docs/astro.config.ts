@@ -51,6 +51,7 @@ const nimbusConfig = defineNimbusConfig({
           "cli/export",
           "cli/import",
           "cli/embedding",
+          "cli/upgrade",
           "cli/tics",
           "cli/debug",
         ],

@@ -10,7 +10,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const EXTENSION: &str = "_clanka.abi3.so";
+pub const EXTENSION: &str = "_clanka.abi3.so";
 /// Where a companion's profile keeps the path of its soul.md.
 const SOUL_SETTING: &str = "plugins.entries.clanka.settings.soul";
 const NIGHTSHADE: &str = include_str!("../../../hermes/nightshade/SOUL.md");
@@ -708,6 +708,16 @@ mod tests {
         assert!(!reset.contains(&"cli") && !reset.contains(&"telegram"));
         assert!(reset.contains(&"discord") && reset.contains(&"slack"));
         assert_eq!(reset.len(), PLATFORMS.len() - 2);
+    }
+
+    #[test]
+    fn the_plugin_is_versioned_with_the_workspace() {
+        let manifest = include_str!("../../../hermes/clanka/plugin.yaml");
+        let version = format!("version: \"{}\"", env!("CARGO_PKG_VERSION"));
+        assert!(
+            manifest.lines().any(|line| line == version),
+            "hermes/clanka/plugin.yaml should say {version}, as Cargo.toml does"
+        );
     }
 
     #[test]

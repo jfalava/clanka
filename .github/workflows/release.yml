@@ -1,0 +1,102 @@
+name: Release
+
+# A tag v<version> builds clanka for Linux (x86_64, arm64) and macOS (Apple
+# Silicon) and publishes a GitHub release of it. Each archive holds the CLI,
+# the Hermes plugin with its extension and the soul-writer skill;
+# SHA256SUMS lists their checksums, which hermes/install.sh and `clanka
+# upgrade` check before installing anything. There is no Intel macOS build:
+# ort ships no prebuilt ONNX Runtime for x86_64-apple-darwin.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag, Cargo.toml and plugin.yaml name one version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          plugin=$(sed -n 's/^version: "\(.*\)"/\1/p' hermes/clanka/plugin.yaml)
+          if [ "$GITHUB_REF_NAME" != "v$version" ] || [ "$plugin" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, Cargo.toml $version, plugin.yaml $plugin"
+            exit 1
+          fi
+
+  build:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          # 22.04 for the oldest glibc (2.35) the Linux builds then need.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$version" --profile minimal
+          rustup default "$version"
+      # The extension is abi3: built against 3.11, it loads in any later Python.
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: "3.11"
+      - name: Build
+        env:
+          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: cargo build --release --locked -p clanka -p clanka-py
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+          PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          dir=clanka-$TARGET
+          mkdir -p "$dir/hermes/clanka" "$dir/skills/soul-writer"
+          cp target/release/clanka "$dir/"
+          case $TARGET in *-apple-darwin) lib=lib_clanka.dylib ;; *) lib=lib_clanka.so ;; esac
+          cp "target/release/$lib" "$dir/hermes/clanka/_clanka.abi3.so"
+          cp hermes/clanka/plugin.yaml hermes/clanka/__init__.py "$dir/hermes/clanka/"
+          cp skills/soul-writer/SKILL.md "$dir/skills/soul-writer/"
+          # Both halves start: the CLI reports the tagged version and the
+          # extension imports.
+          test "$("$dir/clanka" --version)" = "clanka ${GITHUB_REF_NAME#v}"
+          "$PYTHON" -c "import sys; sys.path.insert(0, '$dir/hermes/clanka'); import _clanka"
+          tar -czf "$dir.tar.gz" -C "$dir" clanka hermes skills
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: clanka-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum clanka-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" clanka-*.tar.gz SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

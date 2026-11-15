@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Build clanka, create a companion, point it at a model and have the first conversation.
+description: Install clanka, create a companion, point it at a model and have the first conversation.
 sidebar:
   order: 1
 ---
@@ -9,10 +9,24 @@ A companion is a `soul.md` (its persona and traits) plus an encrypted database
 of what it remembers. This page takes you from a clone of the repository to a
 companion that remembers a conversation.
 
+## Install
+
+Each [release](https://github.com/jfalava/clanka/releases) has builds for
+Linux on x86_64 and arm64 and for macOS on Apple Silicon. The installer
+downloads the one for your machine, checks it against the release's
+`SHA256SUMS`, and puts `clanka` in `~/.local/bin`, along with the
+[Hermes plugin](/guides/hermes/):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
+```
+
+Later, [`clanka upgrade`](/cli/upgrade/) installs a newer release.
+
 ## Build
 
-clanka is built from source. You need Rust 1.95, a C toolchain and `perl`
-(for the vendored OpenSSL).
+On any other machine, or to run your own changes, build from source. You
+need Rust 1.95, a C toolchain and `perl` (for the vendored OpenSSL).
 
 ```sh
 git clone https://github.com/jfalava/clanka.git

@@ -18,6 +18,7 @@ mod hermes;
 mod probe;
 mod soul;
 mod transfer;
+mod upgrade;
 
 use doctor::DoctorCommand;
 use soul::{
@@ -279,7 +280,7 @@ enum Command {
     /// Run companions on Hermes: a profile per companion, and Nightshade, the agent that
     /// interviews you and makes one.
     ///
-    /// Needs the clanka plugin that hermes/install.sh builds and installs under
+    /// Needs the clanka plugin that hermes/install.sh installs under
     /// ~/.hermes/plugins/clanka, and `hermes` on PATH. The commands drive the Hermes CLI
     /// and are safe to run again: they set the same values and rewrite the profile's
     /// SOUL.md. They work the same from a shell and from an agent's terminal inside Hermes.
@@ -292,6 +293,25 @@ enum Command {
     Hermes {
         #[command(subcommand)]
         command: HermesCommand,
+    },
+    /// Replace this clanka with the latest release on GitHub, and the Hermes plugin with it.
+    ///
+    /// Downloads the release for this machine (Linux on x86_64 or arm64, macOS on Apple
+    /// Silicon), checks it against the release's SHA256SUMS and installs nothing that does
+    /// not match. Then replaces this binary where it is. If the Hermes plugin is installed
+    /// under ~/.hermes/plugins/clanka it is replaced too, as is the soul-writer skill under
+    /// ~/.agents/skills/clanka-soul-writer if it is there, and the new clanka runs `clanka
+    /// hermes refresh`, which restarts the gateway. Does nothing when this is the latest
+    /// release already. A release that changes the database schema moves each companion to
+    /// it the first time it opens one, and older builds refuse the companion after that,
+    /// which is why the plugin goes with the CLI.
+    #[command(after_long_help = "Example:\n  \
+        clanka upgrade\n  \
+        clanka upgrade --no-restart")]
+    Upgrade {
+        /// Leave the Hermes gateway running the build it loaded.
+        #[arg(long)]
+        no_restart: bool,
     },
     /// Send sample program status, to see how a terminal shows it.
     ///
@@ -385,8 +405,8 @@ enum HermesCommand {
     /// Bring every profile clanka made up to the installed plugin, then restart the
     /// gateway.
     ///
-    /// hermes/install.sh replaces the plugin under ~/.hermes/plugins/clanka and runs this,
-    /// because each profile runs a copy of its own and a running gateway keeps the build
+    /// hermes/install.sh and `clanka upgrade` replace the plugin under
+    /// ~/.hermes/plugins/clanka and run this, because each profile runs a copy of its own and a running gateway keeps the build
     /// it loaded. A profile with a soul in its clanka settings gets what `clanka hermes
     /// profile` does with that soul; one whose SOUL.md is Nightshade's gets what `clanka
     /// hermes nightshade` does, on the model it has; any other profile is left alone. A
@@ -672,6 +692,7 @@ fn run(command: Command) -> Result<bool> {
         Command::Hermes {
             command: HermesCommand::Refresh { no_restart },
         } => hermes::refresh(!no_restart),
+        Command::Upgrade { no_restart } => upgrade::run(!no_restart),
         Command::Chat { soul, budget } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
@@ -863,46 +884,52 @@ fn download_model(paths: &Paths, embedding: Embedding) -> Result<()> {
         if path.exists() && setup::sha256_file(&path)? == sha256 {
             continue;
         }
-        let url = format!("{}/{remote}", embedding.repo());
-        clanka::ui::note(&format!("Downloading {url}"));
-        status::phase(&format!("Downloading {local}"));
-        let mut response = ureq::get(&url).call().with_context(|| url.clone())?;
-        // 0 when the server doesn't say: then there is no percentage.
-        let size = response
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        let mut body = response
-            .body_mut()
-            .with_config()
-            .limit(1024 * 1024 * 1024)
-            .reader();
-        // Written whole, checked and renamed, so a download that was
-        // interrupted or answered with something else never looks complete.
-        let partial = path.with_extension("part");
-        let mut file = std::fs::File::create(&partial)?;
-        let (mut chunk, mut read) = (vec![0; 64 * 1024], 0);
-        loop {
-            status::bytes(read, size);
-            let n = body.read(&mut chunk).with_context(|| url.clone())?;
-            if n == 0 {
-                break;
-            }
-            file.write_all(&chunk[..n])?;
-            read += n;
-        }
-        drop(file);
-        let found = setup::sha256_file(&partial)?;
-        if found != sha256 {
-            std::fs::remove_file(&partial)?;
-            bail!("{url} is not the expected file: its SHA-256 is {found}, not {sha256}");
-        }
-        std::fs::rename(&partial, &path)?;
+        download(&format!("{}/{remote}", embedding.repo()), &path, sha256)?;
     }
     // What the caller prints next is not this step's.
     status::quiet();
+    Ok(())
+}
+
+/// Downloads `url` to `path` and keeps it only if its SHA-256 is `sha256`.
+fn download(url: &str, path: &Path, sha256: &str) -> Result<()> {
+    clanka::ui::note(&format!("Downloading {url}"));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    status::phase(&format!("Downloading {name}"));
+    let mut response = ureq::get(url).call().with_context(|| url.to_owned())?;
+    // 0 when the server doesn't say: then there is no percentage.
+    let size = response
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let mut body = response
+        .body_mut()
+        .with_config()
+        .limit(1024 * 1024 * 1024)
+        .reader();
+    // Written whole, checked and renamed, so a download that was
+    // interrupted or answered with something else never looks complete.
+    let partial = path.with_extension("part");
+    let mut file = std::fs::File::create(&partial)?;
+    let (mut chunk, mut read) = (vec![0; 64 * 1024], 0);
+    loop {
+        status::bytes(read, size);
+        let n = body.read(&mut chunk).with_context(|| url.to_owned())?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&chunk[..n])?;
+        read += n;
+    }
+    drop(file);
+    let found = setup::sha256_file(&partial)?;
+    if found != sha256 {
+        std::fs::remove_file(&partial)?;
+        bail!("{url} is not the expected file: its SHA-256 is {found}, not {sha256}");
+    }
+    std::fs::rename(&partial, path)?;
     Ok(())
 }
 
@@ -929,6 +956,7 @@ mod tests {
             "clanka recall help",
             "clanka eval help",
             "clanka embedding help",
+            "clanka upgrade help",
             "clanka soul help",
             "clanka help soul help",
         ] {

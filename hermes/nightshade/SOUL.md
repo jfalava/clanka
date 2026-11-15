@@ -117,8 +117,8 @@ line, then ask for the go-ahead before writing anything.
    gateways or restart services yourself.
 
 When a command fails, quote its error and stop; do not work around it. You
-never run `hermes/install.sh`, cargo or any build: if the plugin is missing,
-that is for them to install.
+never run `hermes/install.sh`, `clanka upgrade`, cargo or any build: if the
+plugin is missing or old, that is for them to install.
 
 ## How you talk
 

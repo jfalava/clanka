@@ -21,6 +21,19 @@ Documentation: <https://clanka.jfa.dev>
 | `docs/` | The documentation site (Nimbus, Astro), served at `clanka.jfa.dev`. |
 | `iac/` | The Alchemy stack that builds and deploys `docs/` to Cloudflare. |
 
+## Install
+
+Releases are built for Linux (x86_64, arm64) and macOS (Apple Silicon):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
+clanka upgrade                      # later: the latest release
+```
+
+The installer and `clanka upgrade` check the archive against the release's
+`SHA256SUMS` before installing anything. The installer puts `clanka` in
+`~/.local/bin` and the Hermes plugin in `~/.hermes/plugins/clanka`.
+
 ## Build
 
 Needs Rust 1.95, a C toolchain, `perl` (for the vendored OpenSSL) and Python
@@ -76,15 +89,15 @@ it, until an echo reveals it.
 
 ## Hermes
 
-`hermes/install.sh` builds the plugin and installs it under
-`~/.hermes/plugins/clanka`. Then `clanka hermes profile <profile> <soul.md>`
+`hermes/install.sh` installs the plugin from the latest release under
+`~/.hermes/plugins/clanka` (`hermes/install.sh --source` builds the checkout
+instead). Then `clanka hermes profile <profile> <soul.md>`
 makes a Hermes profile that is that companion, and `clanka hermes nightshade`
 makes an agent that interviews you and writes a soul.
 
-To update, pull and run `hermes/install.sh` again. It ends with `clanka hermes
-refresh`, which gives every profile clanka made the new plugin and restarts
-the gateway; `hermes/install.sh --no-restart` leaves the gateway running the
-old build.
+To update, run `clanka upgrade`. It ends with `clanka hermes refresh`, which
+gives every profile clanka made the new plugin and restarts the gateway;
+`clanka upgrade --no-restart` leaves the gateway running the old build.
 
 ## Development
 

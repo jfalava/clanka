@@ -58,6 +58,9 @@
     "/cli/tics",
     "/cli/tics/index.md",
     "/cli/tics/index.mdx",
+    "/cli/upgrade",
+    "/cli/upgrade/index.md",
+    "/cli/upgrade/index.mdx",
     "/concepts/llms.txt",
     "/concepts/memory",
     "/concepts/memory/index.md",
@@ -114,6 +117,7 @@
     "/og/cli/recall.png",
     "/og/cli/soul.png",
     "/og/cli/tics.png",
+    "/og/cli/upgrade.png",
     "/og/concepts/memory.png",
     "/og/concepts/sleep-and-dreams.png",
     "/og/concepts/souls.png",
@@ -134,5 +138,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-12T19:17:56.068Z"
+  "builtAt": "2026-11-15T22:13:48.231Z"
 }

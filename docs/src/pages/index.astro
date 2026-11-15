@@ -13,7 +13,7 @@ const terminalCommand = `clanka init Nova
 $EDITOR ~/.config/clanka/souls/<id>.md
 clanka soul lint ~/.config/clanka/souls/<id>.md
 clanka chat ~/.config/clanka/souls/<id>.md`;
-const hermesCommand = `hermes/install.sh
+const hermesCommand = `curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
 clanka hermes profile nova ~/.config/clanka/souls/<id>.md
 hermes -p nova chat`;
 const mcpCommand = `clanka mcp ~/.config/clanka/souls/<id>.md`;

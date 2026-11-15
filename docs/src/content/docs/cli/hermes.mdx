@@ -7,7 +7,7 @@ description: Run companions on Hermes, with a profile per companion and Nightsha
 clanka hermes <subcommand>
 ```
 
-Needs the clanka plugin that `hermes/install.sh` builds and installs under
+Needs the clanka plugin that `hermes/install.sh` installs under
 `~/.hermes/plugins/clanka`, and `hermes` on your `PATH`. See the
 [Hermes guide](/guides/hermes/).
 
@@ -100,8 +100,9 @@ clanka hermes refresh [--no-restart]
 ```
 
 Brings every profile clanka made up to the installed plugin, then restarts
-the gateway. `hermes/install.sh` runs it, because each profile runs a copy
-of the plugin and a running gateway keeps the build it loaded.
+the gateway. `hermes/install.sh` and [`clanka upgrade`](/cli/upgrade/) run
+it, because each profile runs a copy of the plugin and a running gateway
+keeps the build it loaded.
 
 - A profile with a soul in its clanka settings gets what
   `clanka hermes profile` does with that soul.
