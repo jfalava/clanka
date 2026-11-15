@@ -15,7 +15,8 @@ Each [release](https://github.com/jfalava/clanka/releases) has builds for
 Linux on x86_64 and arm64 and for macOS on Apple Silicon. The installer
 downloads the one for your machine, checks it against the release's
 `SHA256SUMS`, and puts `clanka` in `~/.local/bin`, along with the
-[Hermes plugin](/guides/hermes/):
+[Hermes plugin](/guides/hermes/). The Linux builds need glibc 2.39 and
+libstdc++ from GCC 14 or newer, as on Ubuntu 24.04 or Debian 13.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh

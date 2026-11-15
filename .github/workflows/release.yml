@@ -33,13 +33,16 @@ jobs:
   build:
     needs: version
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # 22.04 for the oldest glibc (2.35) the Linux builds then need.
+          # Not older: ort's prebuilt ONNX Runtime is built with GCC 14 and
+          # doesn't link against 22.04's libstdc++. The Linux builds need
+          # glibc 2.39 and libstdc++ from GCC 14 (Ubuntu 24.04, Debian 13).
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
           - target: aarch64-apple-darwin
             runner: macos-15
     runs-on: ${{ matrix.runner }}
