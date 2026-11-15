@@ -13,8 +13,8 @@ const terminalCommand = `clanka init Nova
 $EDITOR ~/.config/clanka/souls/<id>.md
 clanka soul lint ~/.config/clanka/souls/<id>.md
 clanka chat ~/.config/clanka/souls/<id>.md`;
-const hermesCommand = `curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
-clanka hermes profile nova ~/.config/clanka/souls/<id>.md
+const installCommand = `curl -fsSL https://clanka.jfa.dev/install.sh | sh`;
+const hermesCommand = `clanka hermes profile nova ~/.config/clanka/souls/<id>.md
 hermes -p nova chat`;
 const mcpCommand = `clanka mcp ~/.config/clanka/souls/<id>.md`;
 
@@ -59,7 +59,7 @@ const features = [
 const references = [
   {
     title: "Getting started",
-    body: "Build clanka, create a companion and have the first conversation.",
+    body: "Install clanka, create a companion and have the first conversation.",
     href: "/getting-started/",
   },
   {
@@ -135,6 +135,30 @@ const references = [
             CLI reference
           </LinkButton>
         </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="install-title" class="border-b border-border">
+      <div class="mx-auto max-w-5xl px-6 py-16">
+        <h2 id="install-title" class="section-title text-foreground">
+          Install
+        </h2>
+        <div class="mt-6 max-w-2xl">
+          <Code code={installCommand} lang="sh" />
+        </div>
+        <p class="mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          Linux on x86_64 and arm64, and macOS on Apple Silicon. The script
+          checks the release against its checksums before it installs the{" "}
+          <code>clanka</code> CLI and the Hermes plugin. Later,{" "}
+          <code>clanka upgrade</code> installs the next release. Anywhere else,{" "}
+          <a
+            href={withBase("/getting-started/#build")}
+            class="text-primary underline underline-offset-2 hover:decoration-2"
+          >
+            build it from source
+          </a>
+          .
+        </p>
       </div>
     </section>
 

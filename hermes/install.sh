@@ -10,7 +10,8 @@
 # plugin and restarts the gateway; arguments go to it, so
 # `hermes/install.sh --no-restart` leaves the gateway running.
 #
-# Without a clone: curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
+# Without a clone: curl -fsSL https://clanka.jfa.dev/install.sh | sh
+# (the docs site serves this file as it is: docs/src/pages/install.sh.ts)
 #
 # From a clone, `hermes/install.sh --source` builds and installs the checkout
 # instead, to try a change before it is released.

@@ -98,6 +98,7 @@
     "/guides/writing-a-soul/index.md",
     "/guides/writing-a-soul/index.mdx",
     "/index.md",
+    "/install.sh",
     "/llms-full.txt",
     "/llms.txt",
     "/og.png",
@@ -138,5 +139,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-15T22:13:48.231Z"
+  "builtAt": "2026-11-15T22:35:57.703Z"
 }

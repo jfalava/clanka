@@ -26,7 +26,7 @@ Documentation: <https://clanka.jfa.dev>
 Releases are built for Linux (x86_64, arm64) and macOS (Apple Silicon):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/jfalava/clanka/main/hermes/install.sh | sh
+curl -fsSL https://clanka.jfa.dev/install.sh | sh
 clanka upgrade                      # later: the latest release
 ```
 
