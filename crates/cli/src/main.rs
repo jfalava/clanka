@@ -86,9 +86,10 @@ enum Command {
     ///
     /// The persona is the soul.md's Markdown body: who the companion is. Editing it makes
     /// chat, MCP and Hermes refuse the companion until you choose what its memories do:
-    /// `continue`, `update` or `fork`. Editing the frontmatter (traits such as drift or
-    /// tired_at, or the doctor token) is not a persona change; it applies the next time the
-    /// companion opens. Either way, restart anything that has the companion open.
+    /// `continue`, `update` or `fork`; anything that has it open takes up the persona they
+    /// settle on its next turn. Editing the frontmatter (traits such as drift or tired_at, or
+    /// the doctor token) is not a persona change; it applies the next time the companion
+    /// opens, so restart anything that has the companion open.
     #[command(after_long_help = "Example, after editing the persona:\n  \
         clanka soul lint ~/.config/clanka/souls/<id>.md\n  \
         clanka soul continue ~/.config/clanka/souls/<id>.md\n  \

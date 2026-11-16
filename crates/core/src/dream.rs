@@ -317,6 +317,7 @@ impl Companion {
     /// running (it calls the model). Any handle may wake a dream. If the pass
     /// fails before the mood is settled, the dream stays open for a retry.
     pub fn wake(&mut self, session: i64) -> Result<WakeReport> {
+        self.reload_settled_persona()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
         ensure_open(&self.conn, session)?;
         if !is_dream(&self.conn, session)? {

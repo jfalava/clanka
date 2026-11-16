@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub struct Companion {
     pub(crate) conn: Connection,
     pub(crate) soul: Soul,
+    soul_path: PathBuf,
     db_path: PathBuf,
     pub(crate) deps: Deps,
     persona: PersonaStatus,
@@ -120,6 +121,7 @@ impl Companion {
         Ok(Self {
             conn,
             soul,
+            soul_path: soul_path.to_owned(),
             db_path,
             deps,
             persona,
@@ -212,6 +214,23 @@ impl Companion {
         )?;
         tx.commit()?;
         self.persona = PersonaStatus::Unchanged;
+        Ok(())
+    }
+
+    /// Takes up the soul.md as it is on disk when the database has accepted its
+    /// persona since this handle opened: `clanka soul continue` or `update`
+    /// from another process settles an edit for a host that keeps its handle
+    /// open. Anything else is left for the persona check to refuse.
+    pub fn reload_settled_persona(&mut self) -> Result<()> {
+        let accepted = meta(&self.conn, "persona_hash")?;
+        if accepted.as_deref() == Some(self.soul.hash.as_str()) {
+            return Ok(());
+        }
+        let soul = Soul::load(&self.soul_path)?;
+        if soul.traits.id == self.id() && accepted.as_deref() == Some(soul.hash.as_str()) {
+            self.soul = soul;
+            self.persona = PersonaStatus::Unchanged;
+        }
         Ok(())
     }
 

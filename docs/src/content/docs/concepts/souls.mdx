@@ -84,9 +84,9 @@ refuse the companion until you choose what its memories do:
 | [`clanka soul update`](/cli/soul/#update)     | The companion re-reads them under the new persona. Seared memories never change.      | One model call per batch.    |
 | [`clanka soul fork`](/cli/soul/#fork)         | The old database is archived read-only and a new companion starts with no memories.   | Instant. Nothing is deleted. |
 
-After settling the change, restart anything that has the companion open. On
-Hermes, run [`clanka hermes profile`](/cli/hermes/#profile) again to refresh
-the profile's `SOUL.md`.
+Anything that has the companion open takes up the settled persona on its next
+turn. On Hermes, run [`clanka hermes profile`](/cli/hermes/#profile) again to
+refresh the profile's `SOUL.md`.
 
 ```sh
 clanka soul lint ~/.config/clanka/souls/<id>.md

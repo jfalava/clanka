@@ -50,6 +50,7 @@ pub struct SleepReport {
 impl Companion {
     /// Sleeps on the session. Long-running (it calls the model).
     pub fn sleep(&mut self, session: i64) -> Result<SleepReport> {
+        self.reload_settled_persona()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
         ensure_open(&self.conn, session)?;
         if crate::dream::is_dream(&self.conn, session)? {

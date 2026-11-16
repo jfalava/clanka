@@ -85,6 +85,7 @@ impl Companion {
     /// decided once, when the companion wakes (see [`Companion::wake`]).
     pub fn reflect(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
         // Fail before paying for a model call.
+        self.reload_settled_persona()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
         let session: Option<i64> = self
             .conn

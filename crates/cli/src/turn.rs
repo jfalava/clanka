@@ -233,6 +233,7 @@ pub fn wake_up(
 /// A dream another handle left open (its front end exited or died) is lost
 /// and dropped first. A dream this handle started goes on.
 pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Opened> {
+    c.reload_settled_persona()?;
     if c.soul().is_doctor_token(message) {
         c.set_frozen(true)?;
         return Ok(Opened::Doctor);

@@ -282,3 +282,21 @@ fn a_leading_zz_says_goodnight_and_wakes_a_dream() {
     assert!(said.contains(clanka_core::dream::WAKING_HINT), "{said}");
     assert!(!said.contains(turn::GOODNIGHT_HINT), "{said}");
 }
+
+/// A host keeps its handle open for days. After the persona is edited and
+/// settled from another process (`clanka soul continue`), its next turn talks
+/// under the settled soul instead of refusing it.
+#[test]
+fn an_open_handle_takes_up_a_persona_settled_elsewhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = open(dir.path());
+    begin(&mut host, "hi", true);
+
+    let soul = dir.path().join("soul.md");
+    let edited = std::fs::read_to_string(&soul).unwrap() + "Now fond of tea.\n";
+    std::fs::write(&soul, &edited).unwrap();
+    open(dir.path()).continue_with_persona().unwrap();
+
+    begin(&mut host, "still there?", false);
+    assert!(host.soul().body.contains("Now fond of tea."));
+}

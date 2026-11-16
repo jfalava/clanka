@@ -23,8 +23,8 @@ pub fn persona_continue(paths: &Paths, soul: &Path) -> Result<()> {
     }
     companion.continue_with_persona()?;
     clanka::ui::success(&format!(
-        "Continued {} under its new persona; its memories stay as they were felt. Restart \
-         anything that has it open.",
+        "Continued {} under its new persona; its memories stay as they were felt. \
+         Anything that has it open takes up the new persona on its next turn.",
         soul.display()
     ));
     Ok(())
@@ -64,7 +64,7 @@ pub fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
     let rounds: usize = reflections.iter().map(|r| r.rounds).sum();
     clanka::ui::success(&format!(
         "Updated {}: {reinterpreted} memories re-read under the new persona in {rounds} model \
-         calls. Restart anything that has it open.",
+         calls. Anything that has it open takes up the new persona on its next turn.",
         soul.display()
     ));
     status::summary(&format!(
