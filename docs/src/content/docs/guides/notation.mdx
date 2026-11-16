@@ -1,0 +1,172 @@
+---
+title: Notation
+description: A suggested way to write actions, your own voice and other characters' voices so any model reads and answers them the same way.
+---
+
+clanka reads only its own markers, such as `zz`, `~~`, `<<`, `>>N` and
+`||` (see [Sleep and dreams](/concepts/sleep-and-dreams/)). Everything else in
+a message goes to the model as you wrote it. This page suggests a notation
+for the rest: what you do, what you say and what other characters say. It is
+a convention, not a feature. Pick one and keep to it, so the companion and
+its memory see the same shapes every night.
+
+## The short version
+
+- Plain text is you speaking.
+- `*asterisks*` around something you do.
+- `Name:` at the start of a line is another character speaking.
+- The companion answers the same way, as itself, with no label.
+
+```text
+you> *drops the keys on the counter* I'm back. Long day.
+nightshade> *looks up from the book* You're late. Long how?
+```
+
+## Actions in asterisks
+
+```text
+you> *sits on the edge of the bed* Can I tell you something?
+```
+
+Single asterisks win for a few reasons:
+
+- Every model has seen `*action*` in roleplay and chat logs, so even a small
+  one reads it and answers in kind without examples.
+- It still reads well where nothing renders it, as in `clanka chat`. On
+  Telegram it shows as bold rather than italic, which does no harm.
+- It costs two keystrokes and never collides with clanka's markers.
+
+Keep each action short, about what a person would notice. Long narration in
+asterisks turns the conversation into a novel, and the companion will start
+writing one back.
+
+## Another character's voice
+
+When you play someone else in the scene, put their line on its own line and
+start it with their name and a colon. Lines with no name stay yours.
+
+```text
+*drops the keys on the counter* I'm back. Long day.
+Mara: *without looking up* He's been grumpy since noon.
+*glares at her* I have not.
+```
+
+The companion answers as itself and never speaks for you or Mara:
+
+```text
+nightshade> *glances between you two* Since noon? That's early, even for you.
+```
+
+`Name: line` is how scripts, transcripts and chat logs write dialogue, so
+models follow it without being told. The label also tells the reflection
+model who said what. Unlabeled lines are about you. A labeled line belongs to
+Mara, so the companion is less likely to remember it as something you said.
+
+`clanka chat` sends each line as its own message. There, write the other
+character's line after yours, on the same line:
+
+```text
+you> *drops the keys on the counter* I'm back. Long day. Mara: *without looking up* He's been grumpy since noon.
+```
+
+Chat apps that take several lines in one message, such as Telegram, keep the
+one-line-per-speaker form.
+
+### When everyone gets a label
+
+In a scene with three or more characters, you can label your own lines too:
+
+```text
+Juan: I'm back.
+Mara: He's been grumpy since noon.
+Tomás: Leave him alone.
+```
+
+Use it only when the scene needs it. Once every line has a label, models
+tend to keep the script going and write your next line for you.
+
+## How it looks
+
+The same notation in three places. These are drawings, not screenshots.
+Most apps show your own message as you typed it and render the companion's
+marks: bold on Telegram, usually italic in an app that renders Markdown, and
+not at all in a terminal.
+
+<div class="chat-mockups">
+  <ChatMockup
+    look="telegram"
+    name="Nightshade"
+    caption="Telegram: one line per speaker in one message"
+    messages={[
+      { from: "you", text: "*drops the keys on the counter* I'm back. Long day.\nMara: *without looking up* He's been grumpy since noon.\n*glares at her* I have not." },
+      { from: "them", text: "*glances between you two* Since noon? That's early, even for you." },
+    ]}
+  />
+  <ChatMockup
+    look="ios"
+    name="Nightshade"
+    caption="An iOS chat app, such as Hermes's"
+    messages={[
+      { from: "you", text: "*sits on the edge of the bed* Can I tell you something?" },
+      { from: "them", text: "*closes the book, keeps a finger in the page* Always. Go on." },
+      { from: "you", text: "I haven't told Mara about the job." },
+      { from: "them", text: "*quietly* Then don't tell me first." },
+    ]}
+  />
+</div>
+
+<ChatMockup
+  look="terminal"
+  name="Nightshade"
+  caption="clanka chat: each line is a message, so Mara goes on yours"
+  messages={[
+    { from: "you", text: "*drops the keys on the counter* I'm back. Long day. Mara: *without looking up* He's been grumpy since noon." },
+    { from: "them", text: "*glances between you two* Since noon? That's early, even for you." },
+  ]}
+/>
+
+## What to avoid
+
+- **Backticks around a character's line.** `` `Mara: hi` `` marks code.
+  Models may treat the line as code or answer in code, and chat apps show it
+  in monospace. The label alone already says who is talking.
+- **Several speakers run together with no labels.** Nobody can tell where
+  one voice ends and the next begins, neither the companion nor the
+  reflection model that decides what to remember about you.
+- **Quotes and narration, like a novel.** `I drop the keys. "I'm back."`
+  pulls models into long, third-person prose, and speech blurs into
+  narration in memory.
+- **Parentheses for actions.** `(sighs)` renders the same everywhere, but
+  models confuse it with asides and drift back to asterisks.
+- **A line that starts with `>`.** It is one keystroke from the `>>N` reply
+  length marker, and blockquotes render differently on each app.
+- **Emoji or brackets for mood.** Every model invents its own variant.
+
+Backticks and run-on voices together, as Telegram shows them:
+
+<div class="chat-mockups">
+  <ChatMockup
+    look="telegram"
+    name="Nightshade"
+    caption="Mara in backticks turns into code"
+    messages={[
+      { from: "you", text: "*drops the keys* I'm back. `Mara: He's been grumpy since noon.` *glares at her* I have not." },
+      { from: "them", text: "*looks from you to Mara* Since noon?" },
+    ]}
+  />
+</div>
+
+## Telling the companion
+
+Most models follow this notation unprompted. To make it certain, say it in
+the soul, under how it talks:
+
+```md
+You speak as yourself, with no name before your words. Put what you do in
+*single asterisks*, short. Lines that start with a name and a colon are
+other people the user plays: answer them, but never write their lines or the
+user's.
+```
+
+A companion that should only ever talk can leave the asterisks out of that
+line. See [Writing a soul](/guides/writing-a-soul/).

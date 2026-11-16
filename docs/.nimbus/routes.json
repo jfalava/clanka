@@ -88,6 +88,9 @@
     "/guides/mcp",
     "/guides/mcp/index.md",
     "/guides/mcp/index.mdx",
+    "/guides/notation",
+    "/guides/notation/index.md",
+    "/guides/notation/index.mdx",
     "/guides/repairing-memory",
     "/guides/repairing-memory/index.md",
     "/guides/repairing-memory/index.mdx",
@@ -126,6 +129,7 @@
     "/og/getting-started.png",
     "/og/guides/hermes.png",
     "/og/guides/mcp.png",
+    "/og/guides/notation.png",
     "/og/guides/repairing-memory.png",
     "/og/guides/tuning-recall.png",
     "/og/guides/writing-a-soul.png",
@@ -139,5 +143,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-15T22:35:57.703Z"
+  "builtAt": "2026-11-16T21:44:42.773Z"
 }

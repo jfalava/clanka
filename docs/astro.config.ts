@@ -27,6 +27,7 @@ const nimbusConfig = defineNimbusConfig({
         label: "Guides",
         items: [
           "guides/writing-a-soul",
+          "guides/notation",
           "guides/hermes",
           "guides/mcp",
           "guides/repairing-memory",

@@ -28,6 +28,7 @@
     "src/content/docs/getting-started.mdx",
     "src/content/docs/guides/hermes.mdx",
     "src/content/docs/guides/mcp.mdx",
+    "src/content/docs/guides/notation.mdx",
     "src/content/docs/guides/repairing-memory.mdx",
     "src/content/docs/guides/tuning-recall.mdx",
     "src/content/docs/guides/writing-a-soul.mdx"
