@@ -5,7 +5,8 @@ A general plugin on Hermes's public plugin API only:
 - ``pre_llm_call``: checks for the doctor token (the turn is blocked and memory
   frozen), blocks every turn while memory is frozen or cannot be opened, then
   records the user's message and adds the turn's memory, mood and notes as
-  context.
+  context. A photo is recorded as ``*shows you a photo*``, not as the notes and
+  paths Hermes writes about it for the model.
 - ``transform_llm_output``: takes the em dashes out of the reply before Hermes
   keeps it, so the model's own history stops teaching it the next one. The
   reply is not held back for this: on a surface that streams, the user sees it
@@ -40,6 +41,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import threading
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,46 @@ GO_TO_SLEEP = "Call go_to_sleep first, then write that goodnight."
 # callback 30s, then drops it and lets the model answer with no memory, so the
 # turn has to be blocked before that.
 OPEN_TIMEOUT = 20
+
+
+PHOTO = "*shows you a photo*"
+# The desktop app's line for an attached image in the message it keeps.
+_IMAGE_LINE = re.compile(r"^@image:.*$\n?", re.MULTILINE)
+
+
+def _images(content):
+    """How many image parts a message's content holds."""
+    if not isinstance(content, list):
+        return 0
+    return sum(isinstance(p, dict) and "image" in str(p.get("type")) for p in content)
+
+
+def _heard(message, history=None):
+    """What the user said in a turn's message, as memory keeps it. Hermes hands
+    over a photo as content parts, as notes about it for the model (a
+    description, a path to look at, ``@image:`` lines, a caption it made up when
+    there was none), or not at all (the CLI passes the typed text, and the photo
+    is only in the turn's own message, the last in ``history``); each photo
+    becomes ``PHOTO`` after the words, which keeps the markers a message starts
+    with (``zz``, ``~~``) at its start."""
+    last = history[-1] if history else None
+    photos = _images(last.get("content")) if isinstance(last, dict) and last.get("role") == "user" else 0
+    if isinstance(message, list):
+        photos = max(photos, _images(message))
+        message = "\n".join(
+            p.get("text") or "" for p in message if isinstance(p, dict) and "text" in str(p.get("type"))
+        )
+    text = message or ""
+    try:
+        from agent.image_routing import split_image_notes
+
+        text, paths = split_image_notes(text)
+        photos = max(photos, len(paths))
+    except Exception:
+        logger.debug("clanka: Hermes's image notes are not readable here", exc_info=True)
+    photos = max(photos, len(_IMAGE_LINE.findall(text)))
+    text = _IMAGE_LINE.sub("", text).strip()
+    return " ".join([text] * bool(text) + [PHOTO] * photos)
 
 
 def _block(message):
@@ -162,7 +204,7 @@ class _Plugin:
         logger.debug("clanka: memory model reply: %s", result.text)
         return result.text
 
-    def pre_llm_call(self, user_message="", is_first_turn=True, **_):
+    def pre_llm_call(self, user_message="", is_first_turn=True, conversation_history=None, **_):
         # Hermes replays injected context on every later turn, so after the
         # first one only what the model hasn't seen is injected, and nothing
         # at all when nothing is new.
@@ -172,7 +214,9 @@ class _Plugin:
         # remembers. So a memory that cannot take the turn blocks it instead.
         try:
             companion = self.companion(OPEN_TIMEOUT)
-            kind, context = companion.begin_turn(user_message or "", bool(is_first_turn))
+            kind, context = companion.begin_turn(
+                _heard(user_message, conversation_history), bool(is_first_turn)
+            )
         except concurrent.futures.TimeoutError:
             logger.warning("clanka: memory did not open in %ds; the turn is blocked", OPEN_TIMEOUT)
             return _block(

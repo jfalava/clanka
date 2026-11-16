@@ -29,6 +29,9 @@ Makes a Hermes profile that is one companion and nothing else:
   agent-style guidance are off.
 - clanka may send messages (`allow_gateway_injection`), so
   [`/sleep`](/guides/hermes/#saying-goodnight) can say goodnight for you.
+- Photos go to the model as images (`model.supports_vision`), not as a note
+  to look at them with a tool the profile doesn't have. Memory records each
+  as `*shows you a photo*`. Give the companion a model that takes images.
 - `SOUL.md` is the persona.
 
 Each turn then carries the persona and the conversation instead of Hermes's

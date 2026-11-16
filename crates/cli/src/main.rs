@@ -363,7 +363,9 @@ enum HermesCommand {
     /// than behind Hermes's tool-search bridge; Hermes's own memory, user profile, coding
     /// brief, toolchain probe and agent-style guidance are off; the terminal and Telegram
     /// notes are a line each; clanka may send messages, so /sleep can say goodnight for
-    /// the user; and SOUL.md is the persona. Each turn then carries the
+    /// the user; photos go to the model as images (`model.supports_vision`), not as a note
+    /// to look at them with a tool the profile doesn't have; and SOUL.md is the persona.
+    /// Each turn then carries the
     /// persona and the conversation instead of Hermes's whole toolbox: on Haiku the system
     /// prompt and tools went from about 19k tokens on a stock profile to about 1.2k. The
     /// root's own `providers:`, model aliases, reasoning overrides and `model_overrides`

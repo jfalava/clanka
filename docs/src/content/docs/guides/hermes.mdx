@@ -38,7 +38,9 @@ hermes -p nova chat
 
 The profile is that companion and nothing else. Hermes's own memory, user
 profile, coding brief and agent-style guidance are off, so each turn carries
-the persona and the conversation instead of Hermes's whole toolbox.
+the persona and the conversation instead of Hermes's whole toolbox. A photo
+you send goes to the model as an image, so pick a model that takes images,
+and memory records it as `*shows you a photo*`.
 
 The root's own providers, model aliases and the keys they read are copied
 into the profile, so `/model <alias>` works in its chat.
@@ -105,3 +107,26 @@ plugin and restarts the gateway.
   asking. Use `clanka upgrade --no-restart` to leave the gateway running the
   old build, and restart it yourself later.
 </Aside>
+
+## Gotchas
+
+**Only the gateway restarts.** `clanka hermes refresh` and `clanka upgrade`
+restart the Hermes gateway service. The Hermes desktop app, a terminal
+`hermes -p nova chat`, and the background gateway that `hermes chat` starts
+for itself (`hermes gateway run --idle-exit`) keep the plugin build they
+loaded. Quit and reopen them after an upgrade.
+
+**A changed persona.** Since 0.1.2, a companion that is already open takes up
+a persona settled with `clanka soul continue` or `update` on its next turn.
+With an older plugin, every turn says "the persona changed" until whatever
+has the companion open restarts. Editing only the traits still needs that
+restart.
+
+**Photos need a model with vision.** A companion profile sends each photo to
+the model as an image (`model.supports_vision`), never as a description, so a
+model that can't take images can't see it. Profiles made before 0.1.3 get
+the setting from `clanka hermes refresh`.
+
+**Memory keeps what was said about a photo, not the photo.** The turn is
+recorded as your words and `*shows you a photo*`. What the companion
+remembers of the picture is what it said about it in its reply.

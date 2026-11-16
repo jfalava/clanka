@@ -433,6 +433,11 @@ fn set_up_companion(
         ("agent.task_completion_guidance", "false"),
         ("agent.parallel_tool_call_guidance", "false"),
         ("agent.bot_mode_protocol", "false"),
+        // A photo goes to the model as it is, and a model without vision says
+        // so. For a model Hermes doesn't know, it would otherwise send a
+        // description, or (the desktop app) only a note to look at it with
+        // vision_analyze, a tool a companion doesn't have.
+        ("model.supports_vision", "true"),
         ("platform_hints.cli.replace", CLI_HINT),
         ("platform_hints.telegram.replace", TELEGRAM_HINT),
         ("platform_hints.api_server.replace", API_HINT),
