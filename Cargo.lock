@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "clanka"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "clanka-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fastembed",
  "rusqlite",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "clanka-py"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clanka",
  "clanka-core",
