@@ -4,6 +4,7 @@
   "license": "MIT",
   "type": "module",
   "workspaces": [
+    "admin",
     "docs",
     "iac",
     "ingest",
@@ -18,6 +19,6 @@
     "docs:check": "bun run --cwd docs lint && bun run --cwd docs typecheck && bun run --cwd iac typecheck",
     "docs:dev": "bun run --cwd docs dev",
     "plan": "bun run --cwd iac plan",
-    "workers:check": "bun run --cwd router typecheck && bun run --cwd router test && bun run --cwd ingest typecheck && bun run --cwd ingest test"
+    "workers:check": "bun run --cwd router typecheck && bun run --cwd router test && bun run --cwd ingest typecheck && bun run --cwd ingest test && bun run --cwd admin typecheck && bun run --cwd admin test && bun run --cwd admin build"
   }
 }

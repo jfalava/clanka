@@ -11,7 +11,7 @@ interface Forwarded {
 
 /** Bindings that note what reached them, and the requests each got. */
 function bindings() {
-  const calls: Record<keyof Env, Forwarded[]> = { INGEST: [], DOCS: [] };
+  const calls: Record<keyof Env, Forwarded[]> = { INGEST: [], ADMIN: [], DOCS: [] };
   const stub = (binding: keyof Env): Fetcher => ({
     fetch: async (input: Request | URL | string, init?: RequestInit) => {
       const request =
@@ -32,7 +32,10 @@ function bindings() {
       throw new Error(`connect is not stubbed for ${binding}`);
     },
   });
-  return { calls, env: { INGEST: stub("INGEST"), DOCS: stub("DOCS") } satisfies Env };
+  return {
+    calls,
+    env: { INGEST: stub("INGEST"), ADMIN: stub("ADMIN"), DOCS: stub("DOCS") } satisfies Env,
+  };
 }
 
 test("a send reaches the endpoint without the /ingest prefix, as it was sent", async () => {
@@ -65,11 +68,31 @@ test("/ingest alone is the endpoint's root", async () => {
 test("everything else goes to the docs untouched", async () => {
   const { calls, env } = bindings();
   // The last two only look like the endpoint's prefix.
-  const paths = ["/", "/cli/diagnostics/", "/install.sh", "/ingestion", "/cli/ingest/v1/events"];
+  const paths = [
+    "/",
+    "/cli/diagnostics/",
+    "/install.sh",
+    "/ingestion",
+    "/cli/ingest/v1/events",
+    "/administration",
+  ];
   for (const path of paths) {
     const response = await router.request(`https://clanka.example${path}`, {}, env);
     expect(await response.text()).toBe("DOCS");
   }
   expect(calls.DOCS.map((call) => call.path)).toEqual(paths);
   expect(calls.INGEST).toEqual([]);
+  expect(calls.ADMIN).toEqual([]);
+});
+
+test("the console gets /admin with its prefix, files and API alike", async () => {
+  const { calls, env } = bindings();
+  const paths = ["/admin", "/admin/", "/admin/assets/index.js", "/admin/api/overview?days=7"];
+  for (const path of paths) {
+    expect(await (await router.request(`https://clanka.example${path}`, {}, env)).text()).toBe(
+      "ADMIN",
+    );
+  }
+  expect(calls.ADMIN.map((call) => call.path)).toEqual(paths);
+  expect(calls.DOCS).toEqual([]);
 });
