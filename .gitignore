@@ -7,3 +7,6 @@ dist
 .alchemy
 .env.*
 !.env.example
+# A deployment's own config (iac/src/deploy-config.ts); this repository's is
+# iac/clanka.production.deploy.json.
+clanka.deploy.json

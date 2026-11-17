@@ -2,6 +2,13 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 
+import { loadDeployConfig } from "./src/deploy-config";
+
+// Which hostname, and whether the docs and the console are part of it: see
+// src/deploy-config.ts and README.md. Without a deploy config, the stack is the
+// endpoint alone.
+const config = loadDeployConfig();
+
 const observability = {
   enabled: true,
   logs: { enabled: true, invocationLogs: true },
@@ -9,9 +16,9 @@ const observability = {
 } as const;
 
 // The docs are static files. They have no hostname of their own: the router
-// below has clanka.jfa.dev and reaches them over a service binding.
-export const ClankaDocs = Cloudflare.Website.StaticSite("ClankaDocs", {
-  name: "clanka-docs",
+// below has the deployment's and reaches them over a service binding.
+const ClankaDocs = Cloudflare.Website.StaticSite("ClankaDocs", {
+  name: `${config.name}-docs`,
   cwd: "../docs",
   command: "bun run build",
   outdir: "dist",
@@ -29,7 +36,7 @@ export const ClankaDocs = Cloudflare.Website.StaticSite("ClankaDocs", {
 // Where the diagnostics events of installs that opted in are kept (`clanka
 // diagnostics send`): numbers and fixed words, never anything said.
 export const Diagnostics = Cloudflare.D1.Database("Diagnostics", {
-  name: "clanka-diagnostics",
+  name: `${config.name}-diagnostics`,
   primaryLocationHint: "weur",
   migrations: "../ingest/migrations",
 });
@@ -38,7 +45,7 @@ export const Diagnostics = Cloudflare.D1.Database("Diagnostics", {
 // let in by a row with its hash (see ingest/migrations/0001_events.sql), and
 // deletes events 90 days after they came. Only the router reaches it.
 export const Ingest = Cloudflare.Worker("Ingest", {
-  name: "clanka-ingest",
+  name: `${config.name}-ingest`,
   main: "../ingest/src/index.ts",
   workersDev: false,
   observability,
@@ -53,44 +60,44 @@ export const Ingest = Cloudflare.Worker("Ingest", {
 // The telemetry console (admin/): a Foldkit page that reads the diagnostics
 // database and changes nothing in it. The router mounts it at /admin, which a
 // Cloudflare Access application guards; the Worker checks each request's Access
-// token against that application's audience too, and refuses everything while
-// ACCESS_AUD is empty.
-export const ClankaAdmin = Cloudflare.Website.Foldkit("ClankaAdmin", {
-  name: "clanka-admin",
-  rootDir: "../admin",
-  main: "src/worker.ts",
-  // A service binding skips the asset layer anyway: every request reaches the
-  // Worker, which hands the page's files to ASSETS itself.
-  assets: { notFoundHandling: "single-page-application", runWorkerFirst: true },
-  domain: null,
-  workersDev: false,
-  observability,
-  compatibility: {
-    date: "2026-11-10",
-  },
-  env: {
-    DB: Diagnostics,
-    ACCESS_TEAM_DOMAIN: "jfa-d.cloudflareaccess.com",
-    // The audience tag of the Access application `clanka` on clanka.jfa.dev/admin.
-    ACCESS_AUD: "25ecf4f67717d8d68e300213f2b8a9604e709f3195c569da6c1f9ac879b73acb",
-  },
-});
+// token against that application's audience too. Deployed only with one.
+const ClankaAdmin = (access: NonNullable<typeof config.access>) =>
+  Cloudflare.Website.Foldkit("ClankaAdmin", {
+    name: `${config.name}-admin`,
+    rootDir: "../admin",
+    main: "src/worker.ts",
+    // A service binding skips the asset layer anyway: every request reaches the
+    // Worker, which hands the page's files to ASSETS itself.
+    assets: { notFoundHandling: "single-page-application", runWorkerFirst: true },
+    domain: null,
+    workersDev: false,
+    observability,
+    compatibility: {
+      date: "2026-11-10",
+    },
+    env: {
+      DB: Diagnostics,
+      ACCESS_TEAM_DOMAIN: access.teamDomain,
+      ACCESS_AUD: access.aud,
+    },
+  });
 
-// clanka.jfa.dev (router/): /ingest is the endpoint, /admin the console, the
-// rest is the docs.
+// The deployment's hostname (router/): /ingest is the endpoint, /admin the
+// console, the rest is the docs; a part left out answers 404.
 export const Router = Cloudflare.Worker("Router", {
-  name: "clanka-router",
+  name: `${config.name}-router`,
   main: "../router/src/index.ts",
-  domain: "clanka.jfa.dev",
-  workersDev: false,
+  // `null` with no domain, so none stays attached (see ClankaDocs).
+  domain: config.domain ?? null,
+  workersDev: config.domain === undefined,
   observability,
   compatibility: {
     date: "2026-11-10",
   },
   env: {
     INGEST: Ingest,
-    ADMIN: ClankaAdmin,
-    DOCS: ClankaDocs,
+    ...(config.access ? { ADMIN: ClankaAdmin(config.access) } : {}),
+    ...(config.docs ? { DOCS: ClankaDocs } : {}),
   },
 });
 

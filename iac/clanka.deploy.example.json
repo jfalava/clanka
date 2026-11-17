@@ -1,0 +1,8 @@
+{
+  "name": "clanka",
+  "domain": "clanka.example.com",
+  "access": {
+    "teamDomain": "your-team.cloudflareaccess.com",
+    "aud": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

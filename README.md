@@ -110,10 +110,10 @@ cargo test --workspace
 The tests need no model provider, keyring, Hermes or network. CI runs the same
 three commands.
 
-### Docs
+### Docs and Workers
 
-`docs/` and `iac/` are a Bun workspace of their own; the Rust build does not
-need it.
+`docs/`, the Workers (`ingest/`, `admin/`, `router/`) and `iac/` are a Bun
+workspace of their own; the Rust build does not need it.
 
 ```sh
 bun install
@@ -125,8 +125,11 @@ bun run deploy        # build and publish to clanka.jfa.dev
 ```
 
 Cloudflare Workers Builds deploys the site: a push to `main` that touches
-`docs/`, `package.json`, `bun.lock` or `bunfig.toml` runs `bun run ci:build`
-and then `bun run ci:deploy`.
+`admin/`, `docs/`, `iac/`, `ingest/`, `router/`, `package.json`, `bun.lock` or
+`bunfig.toml` runs `bun run ci:build` and then `bun run ci:deploy`.
+
+To run your own diagnostics endpoint, and the telemetry console if you want it,
+without the docs, see [iac/README.md](iac/README.md).
 
 ## License
 

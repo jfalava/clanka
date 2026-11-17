@@ -96,3 +96,14 @@ test("the console gets /admin with its prefix, files and API alike", async () =>
   expect(calls.ADMIN.map((call) => call.path)).toEqual(paths);
   expect(calls.DOCS).toEqual([]);
 });
+
+test("a deployment without the console or the docs answers 404 for them", async () => {
+  const { calls, env } = bindings();
+  const endpointOnly = { INGEST: env.INGEST } satisfies Env;
+  for (const path of ["/", "/cli/diagnostics/", "/admin", "/admin/api/overview"]) {
+    const response = await router.request(`https://clanka.example${path}`, {}, endpointOnly);
+    expect(response.status).toBe(404);
+  }
+  await router.request("https://clanka.example/ingest/v1/events", { method: "POST" }, endpointOnly);
+  expect(calls.INGEST.map((call) => call.path)).toEqual(["/v1/events"]);
+});

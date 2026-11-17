@@ -205,7 +205,8 @@ a Cloudflare Worker that keeps events in a D1 database for 90 days, behind a
 token per sender. It drops any line that is not an event, which includes one
 with a string longer than 64 characters, so a changed client cannot store
 text in it. `iac/alchemy.run.ts` deploys it, behind the Worker in `router/`
-that mounts it at `clanka.jfa.dev/ingest`.
+that mounts it at `clanka.jfa.dev/ingest`. To run your own copy, see
+[`iac/README.md`](https://github.com/jfalava/clanka/blob/main/iac/README.md).
 
 It never sees a token before a send carries one. A sender makes theirs with
 [`clanka diagnostics token --new`](#--new) and gives you its hash, and a row

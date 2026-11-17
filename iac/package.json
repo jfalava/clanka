@@ -4,10 +4,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "ci:deploy": "alchemy deploy --yes",
-    "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
-    "plan": "alchemy plan",
+    "ci:deploy": "CLANKA_DEPLOY_CONFIG=./clanka.production.deploy.json alchemy deploy --yes",
+    "deploy": "CLANKA_DEPLOY_CONFIG=./clanka.production.deploy.json alchemy deploy",
+    "destroy": "CLANKA_DEPLOY_CONFIG=./clanka.production.deploy.json alchemy destroy",
+    "plan": "CLANKA_DEPLOY_CONFIG=./clanka.production.deploy.json alchemy plan",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

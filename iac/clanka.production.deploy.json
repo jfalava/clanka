@@ -1,0 +1,8 @@
+{
+  "domain": "clanka.jfa.dev",
+  "docs": true,
+  "access": {
+    "teamDomain": "jfa-d.cloudflareaccess.com",
+    "aud": "25ecf4f67717d8d68e300213f2b8a9604e709f3195c569da6c1f9ac879b73acb"
+  }
+}
