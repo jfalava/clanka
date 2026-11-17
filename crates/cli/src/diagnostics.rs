@@ -16,6 +16,7 @@ use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -410,6 +411,52 @@ impl Upload {
             token: Keys::new(paths, config).upload_token()?,
         }))
     }
+
+    /// As [`Self::load`], for when nobody may be there to answer the key
+    /// store: an error once it has kept the token back for `within`. The
+    /// login keychain asks its owner before it gives an item to a program
+    /// that did not store it, such as the CLI after an upgrade or Hermes,
+    /// and waits for the answer for as long as it takes.
+    fn load_within(paths: &Paths, config: &Config, within: Duration) -> Result<Option<Self>> {
+        // One question at a time: a second one, while the first waits on its
+        // owner, would only put another prompt behind it.
+        static ASKING: AtomicBool = AtomicBool::new(false);
+        let Some(upload) = &config.diagnostics.upload else {
+            return Ok(None);
+        };
+        let waiting = "the key store has not handed over the upload token: it may be asking \
+                       whether clanka may use it (choose Always Allow). The events go with a \
+                       later send";
+        if ASKING.swap(true, Ordering::SeqCst) {
+            bail!("{waiting}");
+        }
+        let keys = Keys::new(paths, config);
+        let token = answer_within(within, move || {
+            let token = keys.upload_token();
+            ASKING.store(false, Ordering::SeqCst);
+            token
+        });
+        match token {
+            Some(token) => Ok(Some(Self {
+                url: upload.url.clone(),
+                token: token?,
+            })),
+            None => bail!("{waiting}"),
+        }
+    }
+}
+
+/// What `ask` answers, or `None` when it has not within `within`. It is then
+/// left to finish on its own, and its answer is dropped.
+fn answer_within<T: Send + 'static>(
+    within: Duration,
+    ask: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (answer, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = answer.send(ask());
+    });
+    answered.recv_timeout(within).ok()
 }
 
 /// What an endpoint keeps of a token to know it again: its SHA-256, as
@@ -627,12 +674,17 @@ pub fn send(file: &Path, upload: &Upload, within: Option<Duration>) -> Result<Se
 
 /// The send at the end of a conversation, for an owner who asked for the log
 /// to be sent: nothing without `[diagnostics.upload]`, or with the log off.
+/// [`QUIET_SEND`] covers the wait for the token too.
 pub fn send_after_conversation(paths: &Paths, config: &Config) -> Result<Sent> {
     if !config.diagnostics.enabled {
         return Ok(Sent::default());
     }
-    match Upload::load(paths, config)? {
-        Some(upload) => send(&Log::file(paths), &upload, Some(QUIET_SEND)),
+    let started = std::time::Instant::now();
+    match Upload::load_within(paths, config, QUIET_SEND)? {
+        Some(upload) => {
+            let left = QUIET_SEND.saturating_sub(started.elapsed());
+            send(&Log::file(paths), &upload, Some(left))
+        }
         None => Ok(Sent::default()),
     }
 }
@@ -812,6 +864,18 @@ mod tests {
             url,
             token: Some("s3cret".into()),
         }
+    }
+
+    #[test]
+    fn a_key_store_that_keeps_its_answer_back_is_not_waited_for() {
+        assert_eq!(answer_within(Duration::from_secs(5), || 7), Some(7));
+        // A prompt nobody answers: the question never returns.
+        let (never, asked) = std::sync::mpsc::channel::<()>();
+        let started = std::time::Instant::now();
+        let answer = answer_within(Duration::from_millis(50), move || asked.recv());
+        assert!(answer.is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(never);
     }
 
     #[test]

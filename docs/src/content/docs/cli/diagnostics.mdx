@@ -224,6 +224,12 @@ clanka diagnostics token < token.txt
 
 Typed at a terminal, the token shows as you paste it.
 
+On macOS the keychain asks before it gives the token to a program that did
+not store it: once after each [`clanka upgrade`](/cli/upgrade/), and once
+for Hermes. Choose **Always Allow**. Until you do, the send at the end of a
+conversation gives up after four seconds, and the events go with a later
+send. `clanka diagnostics send` waits for your answer.
+
 ### `--new`
 
 Make a new random token instead of reading one, and print its SHA-256 hash.
@@ -233,7 +239,7 @@ clanka diagnostics token --new
 ```
 
 ```text
-✓ Stored a new upload token in the Secret Service.
+✓ Stored a new upload token in the login keychain.
 Its hash, to give to whoever runs the endpoint (it is not the token):
 9f2c64d1…
 ```

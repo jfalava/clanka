@@ -460,6 +460,7 @@ impl Keys {
     /// Where the diagnostics upload token is kept, for telling its owner.
     pub fn upload_token_place(&self) -> String {
         match self.store {
+            KeyStore::SecretService if cfg!(target_os = "macos") => "the login keychain".to_owned(),
             KeyStore::SecretService => "the Secret Service".to_owned(),
             KeyStore::File => self.upload_token_file().display().to_string(),
         }

@@ -413,6 +413,11 @@ enum DiagnosticsCommand {
     /// whatever `url` `[diagnostics.upload]` names, so drop it before you point `url` at
     /// another endpoint. A new token replaces the one before it, which the endpoint then
     /// no longer hears from.
+    ///
+    /// On macOS the keychain asks before it gives the token to a program that did not
+    /// store it: once after each `clanka upgrade`, and once for Hermes. Choose Always
+    /// Allow. Until you do, the send at the end of a conversation gives up after four
+    /// seconds, and the events go with a later send.
     #[command(after_long_help = "Example:\n  \
         clanka diagnostics token --new         # makes one, prints its hash\n  \
         clanka diagnostics token               # asks for one you were given\n  \
