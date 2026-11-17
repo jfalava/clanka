@@ -43,8 +43,14 @@ jobs:
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
+          # The oldest macOS image GitHub runs (14 was retired on 2026-11-02),
+          # not `macos-latest`: v0.1.4's build waited 15 minutes for a
+          # `macos-latest` runner and was cancelled. The runner doesn't set
+          # what the binary needs, which is macOS 11.0, Rust's default
+          # deployment target, on any image. When GitHub retires this one,
+          # name the oldest it has then.
           - target: aarch64-apple-darwin
-            runner: macos-latest
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
