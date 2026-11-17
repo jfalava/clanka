@@ -15,7 +15,7 @@
 //! earshot.
 
 use clanka_core::diagnostics::{Event, Tics, ms_since};
-use clanka_core::dream::{ECHO_HINT, WAKE_UP};
+use clanka_core::dream::{ECHO_HINT, WAKE_UP, WAKING};
 use clanka_core::memory::has_unheard;
 use clanka_core::model::Speaker;
 use clanka_core::{Companion, Context, Error, Recalled, Result};
@@ -219,14 +219,44 @@ pub fn wake_call(calls: &[clanka_core::deps::ToolCall]) -> Option<String> {
 /// `because` as the words that wake it (see [`Companion::wake_up`]). When it
 /// wakes, the dream ends with this turn's reply. Returns whether it wakes and
 /// what to tell the model.
+///
+/// A dream that ends with this reply anyway wakes whatever the call quotes.
+/// The model was told it wakes ([`clanka_core::dream::WAKING_HINT`]), and it
+/// quotes that line:
+/// an answer that it is still there would tell it the opposite.
 pub fn wake_up(
     c: &Companion,
     pending: &mut Pending,
     because: &str,
 ) -> Result<(bool, &'static str)> {
-    let (wakes, note) = c.wake_up(because)?;
+    let ending = pending.wake;
+    let answered = if ending {
+        Ok((true, WAKING))
+    } else {
+        c.wake_up(because)
+    };
+    c.diagnose(&Event::WakeUp {
+        wakes: answered.as_ref().is_ok_and(|(wakes, _)| *wakes),
+        ending,
+        unopened: false,
+        quoted_words: because.split_whitespace().count(),
+        error: answered.as_ref().err().map(Error::code),
+    });
+    let (wakes, note) = answered?;
     pending.wake |= wakes;
     Ok((wakes, note))
+}
+
+/// Notes a `wake_up` call made while no turn is open, which a front end that
+/// holds the turn answers itself: there is nothing to wake from.
+pub fn wake_up_without_turn(c: &Companion, because: &str) {
+    c.diagnose(&Event::WakeUp {
+        wakes: false,
+        ending: false,
+        unopened: true,
+        quoted_words: because.split_whitespace().count(),
+        error: None,
+    });
 }
 
 /// Checks for the doctor token, assembles the turn's memory and records the

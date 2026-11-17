@@ -184,6 +184,7 @@ impl PyCompanion {
         py.detach(|| {
             let mut pending = lock(&self.pending);
             let Some(p) = pending.as_mut() else {
+                turn::wake_up_without_turn(&lock(&self.chat), because);
                 return Ok((false, "No turn is open: call wake_up before your reply."));
             };
             turn::wake_up(&lock(&self.chat), p, because).map_err(err)

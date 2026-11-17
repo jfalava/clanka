@@ -230,6 +230,7 @@ impl Server {
         blocking(move || {
             let mut pending = lock(&pending);
             let Some(p) = pending.as_mut() else {
+                turn::wake_up_without_turn(&lock(&chat), &because);
                 return Err(
                     "No turn is open: call wake_up after begin_turn, before your reply.".into(),
                 );

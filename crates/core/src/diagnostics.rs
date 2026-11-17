@@ -158,6 +158,22 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<&'static str>,
     },
+    /// The reply model called `wake_up` in a dream.
+    WakeUp {
+        /// It wakes the companion.
+        wakes: bool,
+        /// The dream ended with this reply already, whatever the call quoted:
+        /// it filled the session, the user said goodnight, or an earlier call
+        /// this turn woke the companion.
+        ending: bool,
+        /// No turn was open, so there was nothing to wake from: the model
+        /// called it before its turn began or after it ended.
+        unopened: bool,
+        /// How many words the call quoted as what wakes it.
+        quoted_words: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<&'static str>,
+    },
     /// The model made a pass over memory.
     MemoryPass {
         pass: Pass,

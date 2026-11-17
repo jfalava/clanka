@@ -165,6 +165,56 @@ fn a_reflection_refused_before_its_model_call_is_a_failed_pass() {
     assert_eq!(passes[0]["rounds"], 0);
 }
 
+/// The reply model's `wake_up` calls are in the log, refused or not. On the
+/// reply a dream ends with anyway, the model is told it wakes and quotes that
+/// line: the answer is that it wakes, not that it is still there.
+#[test]
+fn a_wake_up_call_is_noted_and_never_contradicts_a_dream_that_is_ending() {
+    use clanka_core::dream::{STAY, WAKING, WAKING_HINT};
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("diagnostics.jsonl");
+    let mut c = open_noting(dir.path(), Dummy, Log::to(file.clone()));
+    let begin = |c: &mut clanka_core::Companion, said: &str| match turn::begin(c, said, 4000, false)
+        .unwrap()
+    {
+        Begin::Open { context, pending } => (context, pending),
+        other => panic!("the turn did not open: {other:?}"),
+    };
+
+    // Something it made up wakes nothing, and the dream goes on.
+    let (_, mut pending) = begin(&mut c, "~~ The stairs go down into the sea.");
+    let made_up = turn::wake_up(&c, &mut pending, "the tide takes the house").unwrap();
+    assert_eq!(made_up, (false, STAY));
+    turn::end(&mut c, pending, "I go down.").unwrap();
+
+    // Goodnight in a dream ends it with this reply, as a full session does.
+    let (told, mut pending) = begin(&mut c, "zz");
+    assert!(told.contains(WAKING_HINT) && pending.wake, "{told}");
+    let quoted_the_hint = turn::wake_up(&c, &mut pending, WAKING_HINT).unwrap();
+    assert_eq!(quoted_the_hint, (true, WAKING));
+    // A call after the turn ended has nothing to wake from; its front end
+    // says so, and the log still has it.
+    turn::end(&mut c, pending, "I wake.").unwrap();
+    turn::wake_up_without_turn(&c, "wake me now");
+
+    let calls: Vec<Value> = lines(&file)
+        .into_iter()
+        .filter(|line| line["event"] == "wake_up")
+        .map(|line| {
+            let flags = ["wakes", "ending", "unopened"].map(|flag| line[flag].clone());
+            json!([flags, line["quoted_words"]])
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            json!([[false, false, false], 5]),
+            json!([[true, true, false], 10]),
+            json!([[false, false, true], 3]),
+        ]
+    );
+}
+
 /// An open that fails is still about a companion, and one refused for a
 /// changed persona says so: without either, a blocked turn in the log could
 /// not be tied to a companion or a cause.
