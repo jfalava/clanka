@@ -8,13 +8,15 @@
 use crate::companion::ensure_writable;
 use crate::context::estimate_tokens;
 use crate::deps::{ToolCall, ToolSpec};
+use crate::diagnostics::Pass;
 use crate::memory::{ensure_open, heard};
 use crate::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
 use crate::writer::{args, parse};
-use crate::{Companion, Error, MemoryDraft, Mood, Result};
+use crate::{Companion, Error, MemoryDraft, Mood, Reflection, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// Drift caps per level: faint memories shift the most, vivid ones only in detail.
 const DRIFT_CAP: [f64; 3] = [1.0, 0.6, 0.25];
@@ -50,6 +52,17 @@ pub struct SleepReport {
 impl Companion {
     /// Sleeps on the session. Long-running (it calls the model).
     pub fn sleep(&mut self, session: i64) -> Result<SleepReport> {
+        let started = Instant::now();
+        let mut calls = None;
+        let report = self.sleep_on(session, &mut calls);
+        let error = report.as_ref().err();
+        self.diagnose_pass(Pass::Sleep, started, false, calls.as_ref(), error);
+        report
+    }
+
+    /// [`Companion::sleep`]; `calls` is left with the model's calls once it
+    /// has made them, whatever comes of the night after.
+    fn sleep_on(&mut self, session: i64, calls: &mut Option<Reflection>) -> Result<SleepReport> {
         self.reload_settled_persona()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
         ensure_open(&self.conn, session)?;
@@ -72,12 +85,15 @@ impl Companion {
         // A night makes as many calls as it has memories to drift; only the
         // reply's own cap applies.
         let reflection = self.tool_loop(
+            Pass::Sleep,
             system,
             prompt,
             tool_specs(),
             crate::actions::MAX_ACTIONS,
             |c, call| c.run_sleep_tool(call, session, &offered, &mut episode, &mut drifted),
         )?;
+        let rounds = reflection.rounds;
+        *calls = Some(reflection);
         let episode = episode.ok_or_else(|| {
             Error::Llm("sleep ended without an episode; the session stays open".into())
         })?;
@@ -86,7 +102,7 @@ impl Companion {
             episode,
             escalated,
             drifted,
-            rounds: reflection.rounds,
+            rounds,
         })
     }
 
@@ -442,7 +458,7 @@ struct Drift {
     interpretation: String,
 }
 
-fn tool_specs() -> Vec<ToolSpec> {
+pub(crate) fn tool_specs() -> Vec<ToolSpec> {
     let axis = |d: &str| json!({ "type": "number", "minimum": -1, "maximum": 1, "description": d });
     let tool = |name: &str, description: &str, parameters: Value| ToolSpec {
         name: name.into(),

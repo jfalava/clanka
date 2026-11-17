@@ -2,17 +2,21 @@
 //! the Secret Service or a key file, the local embedding model, the
 //! companion's model and config.toml's tuning.
 
+use crate::diagnostics::Log;
 use crate::llm::{NoModel, OpenAiModel};
 use anyhow::{Context, Result, bail};
 use clanka_core::deps::{Embedder, EmbeddingModel, FastEmbedder, KeySource, Llm, Rng, SystemClock};
+use clanka_core::diagnostics::{Event, Recorder, ms_since};
 use clanka_core::{Companion, Deps, Ranking};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Secret Service entries are `clanka` / `<companion id>`.
+/// Secret Service entries are `clanka` / `<companion id>`, and `clanka` /
+/// [`UPLOAD_TOKEN_ENTRY`] for the diagnostics upload token.
 const KEYRING_SERVICE: &str = "clanka";
+const UPLOAD_TOKEN_ENTRY: &str = "diagnostics-upload-token";
 
 /// The local model that turns text into vectors for recall. Its ID is stored
 /// with every vector: a companion whose vectors came from another model
@@ -183,6 +187,43 @@ pub struct Config {
     pub keys: KeysConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub diagnostics: DiagnosticsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsConfig {
+    /// Whether what clanka does is noted in the local diagnostics log, which
+    /// holds numbers and fixed words, never what was said (see
+    /// [`crate::diagnostics`]).
+    #[serde(default = "enabled")]
+    pub enabled: bool,
+    /// Where the log is also sent. Unset, it never leaves the machine.
+    pub upload: Option<UploadConfig>,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            upload: None,
+        }
+    }
+}
+
+/// An endpoint the diagnostics log is sent to: the owner's own, or one
+/// someone they trust runs for them.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UploadConfig {
+    /// Takes a POST of one JSON object per line. The token it asks for, if
+    /// any, is not here: [`Keys::upload_token`] has it.
+    pub url: String,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -270,6 +311,7 @@ fn os_store() -> keyring_core::Result<std::sync::Arc<keyring_core::CredentialSto
 /// Where database keys are kept: the Secret Service, or a key file when you
 /// chose that in config.toml. A companion's key file wins when it exists,
 /// whatever the setting, so a companion moved here with its key still opens.
+/// The diagnostics upload token is kept the same way.
 pub struct Keys {
     dir: PathBuf,
     store: KeyStore,
@@ -287,7 +329,11 @@ impl Keys {
         self.dir.join(format!("{companion}.key"))
     }
 
-    fn entry(companion: Uuid) -> Result<keyring_core::Entry> {
+    fn upload_token_file(&self) -> PathBuf {
+        self.dir.join("diagnostics.token")
+    }
+
+    fn entry(name: &str) -> Result<keyring_core::Entry> {
         static STORE: std::sync::Once = std::sync::Once::new();
         static FAILED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         STORE.call_once(|| match os_store() {
@@ -299,16 +345,12 @@ impl Keys {
         if let Some(e) = FAILED.get() {
             bail!("Secret Service unavailable: {e}");
         }
-        Ok(keyring_core::Entry::new(
-            KEYRING_SERVICE,
-            &companion.to_string(),
-        )?)
+        Ok(keyring_core::Entry::new(KEYRING_SERVICE, name)?)
     }
 
-    /// The key from its file, if the companion has one.
-    fn read_file(&self, companion: Uuid) -> Result<Option<String>> {
-        let path = self.file(companion);
-        let key = match std::fs::read_to_string(&path) {
+    /// The secret in `path`, if the file is there.
+    fn read_file(path: &Path) -> Result<Option<String>> {
+        let key = match std::fs::read_to_string(path) {
             Ok(key) => key,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
@@ -316,7 +358,7 @@ impl Keys {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path)?.permissions().mode();
+            let mode = std::fs::metadata(path)?.permissions().mode();
             if mode & 0o077 != 0 {
                 bail!(
                     "{} can be read by other users; run `chmod 600` on it",
@@ -329,7 +371,7 @@ impl Keys {
 
     pub fn store(&self, companion: Uuid, key: &str) -> Result<()> {
         match self.store {
-            KeyStore::SecretService => Self::entry(companion)
+            KeyStore::SecretService => Self::entry(&companion.to_string())
                 .and_then(|entry| Ok(entry.set_password(key)?))
                 .context(
                     "storing the database key in the Secret Service; on a machine without one, \
@@ -348,13 +390,78 @@ impl Keys {
     pub fn forget(&self, companion: Uuid) {
         match self.store {
             KeyStore::SecretService => {
-                if let Ok(entry) = Self::entry(companion) {
+                if let Ok(entry) = Self::entry(&companion.to_string()) {
                     let _ = entry.delete_credential();
                 }
             }
             KeyStore::File => {
                 let _ = std::fs::remove_file(self.file(companion));
             }
+        }
+    }
+
+    /// The token sent with the diagnostics log, if `clanka diagnostics token`
+    /// put one away. Unlike a database key it is only looked for where the
+    /// setting says: no token moves here with a companion.
+    pub fn upload_token(&self) -> Result<Option<String>> {
+        match self.store {
+            KeyStore::SecretService => Self::entry(UPLOAD_TOKEN_ENTRY)
+                .and_then(|entry| match entry.get_password() {
+                    Ok(token) => Ok(Some(token)),
+                    Err(keyring_core::Error::NoEntry) => Ok(None),
+                    Err(e) => Err(e.into()),
+                })
+                .context(
+                    "reading the diagnostics upload token from the Secret Service; on a \
+                     machine without one, put `[keys]` and `store = \"file\"` in config.toml",
+                ),
+            KeyStore::File => Self::read_file(&self.upload_token_file()),
+        }
+    }
+
+    /// Puts the diagnostics upload token away, replacing the one before it.
+    pub fn store_upload_token(&self, token: &str) -> Result<()> {
+        match self.store {
+            KeyStore::SecretService => Self::entry(UPLOAD_TOKEN_ENTRY)
+                .and_then(|entry| Ok(entry.set_password(token)?))
+                .context(
+                    "storing the diagnostics upload token in the Secret Service; on a \
+                     machine without one, put `[keys]` and `store = \"file\"` in config.toml",
+                ),
+            KeyStore::File => {
+                let path = self.upload_token_file();
+                write_private(&self.dir, &path, token)
+                    .with_context(|| format!("writing {}", path.display()))
+            }
+        }
+    }
+
+    /// Drops the diagnostics upload token, and says whether there was one.
+    pub fn forget_upload_token(&self) -> Result<bool> {
+        match self.store {
+            KeyStore::SecretService => Self::entry(UPLOAD_TOKEN_ENTRY)
+                .and_then(|entry| match entry.delete_credential() {
+                    Ok(()) => Ok(true),
+                    Err(keyring_core::Error::NoEntry) => Ok(false),
+                    Err(e) => Err(e.into()),
+                })
+                .context("dropping the diagnostics upload token from the Secret Service"),
+            KeyStore::File => {
+                let path = self.upload_token_file();
+                match std::fs::remove_file(&path) {
+                    Ok(()) => Ok(true),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                    Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+                }
+            }
+        }
+    }
+
+    /// Where the diagnostics upload token is kept, for telling its owner.
+    pub fn upload_token_place(&self) -> String {
+        match self.store {
+            KeyStore::SecretService => "the Secret Service".to_owned(),
+            KeyStore::File => self.upload_token_file().display().to_string(),
         }
     }
 }
@@ -386,13 +493,12 @@ pub fn write_private(dir: &Path, path: &Path, content: &str) -> std::io::Result<
 impl KeySource for Keys {
     fn key(&self, companion: Uuid) -> clanka_core::Result<String> {
         let err = |e: String| clanka_core::Error::Key(e);
-        if let Some(key) = self
-            .read_file(companion)
-            .map_err(|e| err(format!("{e:#}")))?
+        if let Some(key) =
+            Self::read_file(&self.file(companion)).map_err(|e| err(format!("{e:#}")))?
         {
             return Ok(key);
         }
-        Self::entry(companion)
+        Self::entry(&companion.to_string())
             .and_then(|entry| Ok(entry.get_password()?))
             .map_err(|e| {
                 err(format!(
@@ -509,7 +615,17 @@ pub fn open_with(
     llm: Box<dyn Llm>,
 ) -> Result<Companion> {
     let config = Config::load(paths)?;
-    let mut companion = Companion::open(&paths.data, soul, deps(paths, &config, embedder, llm)?)?;
+    let deps = deps(paths, &config, embedder, llm)?;
+    let started = std::time::Instant::now();
+    let opened = Companion::open(&paths.data, soul, deps);
+    Log::open(paths, &config).record(
+        opened.as_ref().ok().map(Companion::id),
+        &Event::Open {
+            ms: ms_since(started),
+            error: opened.as_ref().err().map(clanka_core::Error::code),
+        },
+    );
+    let mut companion = opened?;
     // Plain messages, not core errors: a bad setting isn't a broken companion.
     let config_file = paths.config_file();
     let bad = |e: clanka_core::Error| anyhow::anyhow!("{}: {e}", config_file.display());
@@ -548,6 +664,7 @@ fn deps(
         clock: Box::new(SystemClock),
         rng: Box::new(OsRng),
         keys: Box::new(Keys::new(paths, config)),
+        diagnostics: Box::new(Log::open(paths, config)),
     })
 }
 
@@ -580,6 +697,15 @@ mod tests {
         assert_eq!(config.recall.seared_limit, Ranking::default().seared_limit);
         assert_eq!(config.keys.store, KeyStore::File);
         assert_eq!(config.ui.glyphs, crate::ui::GlyphSetting::Unicode);
+        assert!(config.diagnostics.enabled);
+        assert!(config.diagnostics.upload.is_none());
+        let upload = "[diagnostics.upload]\nurl = \"https://example.com/v1/events\"\n";
+        let sending: Config = toml::from_str(upload).unwrap();
+        let url = sending.diagnostics.upload.unwrap().url;
+        assert_eq!(url, "https://example.com/v1/events");
+        assert!(sending.diagnostics.enabled);
+        // The token is kept with the keys, never in the file.
+        assert!(toml::from_str::<Config>(&format!("{upload}token = \"t\"\n")).is_err());
 
         let empty: Config = toml::from_str("").unwrap();
         assert_eq!(empty.embedding.model, Embedding::English);
@@ -619,5 +745,32 @@ mod tests {
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
         let err = keys.key(id).unwrap_err().to_string();
         assert!(err.contains("chmod 600"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_upload_token_is_kept_with_the_keys() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths(root.path());
+        let config: Config = toml::from_str("[keys]\nstore = \"file\"\n").unwrap();
+        let keys = Keys::new(&paths, &config);
+        assert_eq!(keys.upload_token().unwrap(), None);
+        assert!(!keys.forget_upload_token().unwrap());
+
+        keys.store_upload_token("t0ken").unwrap();
+        let file = paths.config.join("keys/diagnostics.token");
+        assert_eq!(keys.upload_token_place(), file.display().to_string());
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(keys.upload_token().unwrap().as_deref(), Some("t0ken"));
+        keys.store_upload_token("an0ther").unwrap();
+        assert_eq!(keys.upload_token().unwrap().as_deref(), Some("an0ther"));
+
+        assert!(keys.forget_upload_token().unwrap());
+        assert_eq!(keys.upload_token().unwrap(), None);
+        assert!(!file.exists());
     }
 }

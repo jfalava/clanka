@@ -7,6 +7,7 @@
 
 use crate::companion::{ensure_doctor, ensure_embedder, log, meta, set_meta};
 use crate::deps::{ToolCall, ToolSpec};
+use crate::diagnostics::Pass;
 use crate::memory::{Rewrite, remove_memory, rewrite_interpretation};
 use crate::model::Level;
 use crate::writer::args;
@@ -15,6 +16,7 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 /// Memories re-interpreted per model call during a persona update.
 const REINTERPRET_BATCH: usize = 20;
@@ -344,13 +346,23 @@ impl Companion {
             self.soul.body.trim(),
             instructions(&self.soul.traits.name)
         );
-        self.tool_loop(
+        let started = Instant::now();
+        let result = self.tool_loop(
+            Pass::Reinterpret,
             system,
             listed.join("\n\n"),
             tool_specs(),
             crate::actions::MAX_ACTIONS,
             |c, call| c.run_reinterpret(call, &allowed, &mut done),
-        )
+        );
+        self.diagnose_pass(
+            Pass::Reinterpret,
+            started,
+            false,
+            result.as_ref().ok(),
+            result.as_ref().err(),
+        );
+        result
     }
 
     /// "Update" after a persona change: accept the new persona and re-interpret
@@ -493,7 +505,7 @@ struct Reinterpret {
     interpretation: String,
 }
 
-fn tool_specs() -> Vec<ToolSpec> {
+pub(crate) fn tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: "reinterpret".into(),
         description: "How you see one of the listed memories now.".into(),

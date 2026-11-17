@@ -17,7 +17,8 @@ On Linux:
 | `~/.config/clanka/config.toml`   | The settings on this page.                        |
 | `~/.config/clanka/souls/<id>.md` | Each companion's `soul.md`.                       |
 | `~/.config/clanka/keys/<id>.key` | Database keys, only with `[keys] store = "file"`. |
-| `~/.local/share/clanka/`         | The databases and the embedding model.            |
+| `~/.config/clanka/keys/diagnostics.token` | The [diagnostics upload token](/cli/diagnostics/#token), only with `[keys] store = "file"`. |
+| `~/.local/share/clanka/`         | The databases, the embedding model and the [diagnostics log](/cli/diagnostics/#the-log). |
 
 On macOS, config and data both live in
 `~/Library/Application Support/clanka`.
@@ -164,7 +165,8 @@ The weight per level, in the order faint, normal, vivid, seared.
 
 ## `[keys]`
 
-Where a new companion's database key is put.
+Where a new companion's database key is put, and the
+[diagnostics upload token](/cli/diagnostics/#token).
 
 ```toml
 [keys]
@@ -176,7 +178,8 @@ store = "file"
 `secret-service` puts the key in the Secret Service (the login keychain on
 macOS), under the service `clanka`. `file` puts it in
 `~/.config/clanka/keys/<id>.key`, a file only you can read, for a machine
-with no Secret Service.
+with no Secret Service. The upload token goes to the same place, as
+`diagnostics-upload-token` or `keys/diagnostics.token`.
 
 - Default: `secret-service`
 
@@ -215,6 +218,48 @@ Which symbols mark the lines clanka prints and its
 
 No terminal reports its font, so `auto` is a guess. If you see boxes, set
 `unicode`.
+
+## `[diagnostics]`
+
+The local log of what clanka does, which
+[`clanka diagnostics`](/cli/diagnostics/) counts.
+
+```toml
+[diagnostics]
+enabled = false
+```
+
+### `enabled`
+
+Whether clanka writes the log. It holds numbers and fixed words, never what
+was said or remembered, and it is never sent anywhere.
+[What is kept](/cli/diagnostics/#what-is-kept) lists every event.
+
+- Default: `true`
+
+Turning it off stops new events, and stops the send at the end of a
+conversation. The log already written stays until you delete it. Restart
+anything that has a companion open for the change to reach it.
+
+## `[diagnostics.upload]`
+
+Where the diagnostics log is also sent. Without this section it never leaves
+the machine. [`clanka diagnostics send`](/cli/diagnostics/#send) says what
+is sent and when.
+
+```toml
+[diagnostics.upload]
+url = "https://diagnostics.example.com/v1/events"
+```
+
+### `url`
+
+The endpoint that takes the events: your own, or one someone you trust runs
+for you. Required.
+
+The token an endpoint asks for is not in this file.
+[`clanka diagnostics token`](/cli/diagnostics/#token) makes it, or reads one
+you were given, and puts it away with the database keys.
 
 ## Environment
 

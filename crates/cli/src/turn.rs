@@ -14,10 +14,12 @@
 //! Anywhere in a waking message, text between a pair of `||` is said out of
 //! earshot.
 
+use clanka_core::diagnostics::{Event, Tics, ms_since};
 use clanka_core::dream::{ECHO_HINT, WAKE_UP};
 use clanka_core::memory::has_unheard;
 use clanka_core::model::Speaker;
-use clanka_core::{Companion, Context, Error, Result};
+use clanka_core::{Companion, Context, Error, Recalled, Result};
+use std::time::Instant;
 
 /// The turn `begin` opened and `end` closes.
 #[derive(Debug, Clone, PartialEq)]
@@ -233,6 +235,41 @@ pub fn wake_up(
 /// A dream another handle left open (its front end exited or died) is lost
 /// and dropped first. A dream this handle started goes on.
 pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Opened> {
+    let started = Instant::now();
+    let opened = open_turn(c, message, budget, first);
+    let open = match &opened {
+        Ok(Opened::Open(open)) => Some(open),
+        _ => None,
+    };
+    let count = |of: fn(&Open) -> usize| open.map_or(0, |open| of(open));
+    let is = |of: fn(&Open) -> bool| open.is_some_and(|open| of(open));
+    c.diagnose(&Event::TurnBegin {
+        ms: ms_since(started),
+        outcome: match &opened {
+            Ok(Opened::Doctor) => "doctor",
+            Ok(Opened::Frozen) => "frozen",
+            Ok(Opened::Awake) => "awake",
+            Ok(Opened::Open(_)) => "open",
+            Err(_) => "error",
+        },
+        first,
+        dream: is(|o| o.pending.dream),
+        goodnight: is(|o| o.pending.sleep),
+        echo: is(|o| o.echo),
+        unheard: is(|o| o.unheard),
+        stretch: open.and_then(|o| o.stretch),
+        message_chars: count(|o| o.message.chars().count()),
+        context_tokens: count(|o| o.context.tokens),
+        memories: count(|o| o.context.memories.len()),
+        hot_threads: count(|o| o.context.hot_threads.len()),
+        omitted_turns: count(|o| o.context.omitted_turns),
+        spent: is(|o| o.context.spent),
+        error: opened.as_ref().err().map(Error::code),
+    });
+    opened
+}
+
+fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Opened> {
     c.reload_settled_persona()?;
     if c.soul().is_doctor_token(message) {
         c.set_frozen(true)?;
@@ -331,10 +368,36 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
 /// Records the reply, without its em dashes, and marks what was recalled.
 /// Returns the (user, companion) turn IDs to reflect on.
 pub fn end(c: &mut Companion, pending: Pending, reply: &str) -> Result<(i64, i64)> {
-    let reply = clanka_core::tics::without_dashes(reply);
-    let turn = c.record_turn(pending.session, Speaker::Companion, &reply)?;
-    c.mark_recalled(pending.session, &pending.recalled)?;
-    Ok((pending.user_turn, turn))
+    let started = Instant::now();
+    let said = clanka_core::tics::without_dashes(reply);
+    let ended = c
+        .record_turn(pending.session, Speaker::Companion, &said)
+        .and_then(|turn| {
+            c.mark_recalled(pending.session, &pending.recalled)?;
+            Ok((pending.user_turn, turn))
+        });
+    c.diagnose(&Event::TurnEnd {
+        ms: ms_since(started),
+        reply_chars: said.chars().count(),
+        dashes: said != reply,
+        tics: Tics::of(&said),
+        recalled: pending.recalled.len(),
+        error: ended.as_ref().err().map(Error::code),
+    });
+    ended
+}
+
+/// What the reply model's own search of memory brings up (the recall tool a
+/// host offers it), on the handle's ranking.
+pub fn recall(c: &Companion, query: &str) -> Result<Vec<Recalled>> {
+    let started = Instant::now();
+    let found = c.recall(query, c.ranking());
+    c.diagnose(&Event::Recall {
+        ms: ms_since(started),
+        found: found.as_ref().map_or(0, Vec::len),
+        error: found.as_ref().err().map(Error::code),
+    });
+    found
 }
 
 /// The turn's context without the persona (the host holds it) or the session's

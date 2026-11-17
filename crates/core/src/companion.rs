@@ -193,6 +193,11 @@ impl Companion {
         &self.deps
     }
 
+    /// Notes something this handle did, for diagnostics.
+    pub fn diagnose(&self, event: &crate::diagnostics::Event) {
+        self.deps.diagnostics.record(Some(self.id()), event);
+    }
+
     pub fn persona_status(&self) -> &PersonaStatus {
         &self.persona
     }

@@ -143,6 +143,7 @@ pub fn deps(key: &'static str, model: &'static str) -> Deps {
         clock: Box::new(TestClock(clock())),
         rng: Box::new(FixedRng),
         keys: Box::new(Key(key)),
+        diagnostics: Box::new(clanka_core::diagnostics::Silent),
     }
 }
 

@@ -65,6 +65,15 @@ pub fn open(dir: &Path) -> Companion {
 
 /// A handle to the companion in `dir`, whose soul.md the first handle writes.
 pub fn open_with(dir: &Path, llm: impl Llm + 'static) -> Companion {
+    open_noting(dir, llm, clanka_core::diagnostics::Silent)
+}
+
+/// [`open_with`], on a handle whose diagnostics go to `diagnostics`.
+pub fn open_noting(
+    dir: &Path,
+    llm: impl Llm + 'static,
+    diagnostics: impl clanka_core::diagnostics::Recorder + 'static,
+) -> Companion {
     let soul = dir.join("soul.md");
     if !soul.exists() {
         std::fs::write(
@@ -84,6 +93,7 @@ pub fn open_with(dir: &Path, llm: impl Llm + 'static) -> Companion {
         clock: Box::new(Ticking(AtomicI64::new(1))),
         rng: Box::new(Dummy),
         keys: Box::new(Dummy),
+        diagnostics: Box::new(diagnostics),
     };
     Companion::open(dir, &soul, deps).unwrap()
 }

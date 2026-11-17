@@ -1,0 +1,273 @@
+---
+title: diagnostics
+description: Print what the diagnostics log holds, how clanka has been running here, counted.
+---
+
+```sh
+clanka diagnostics [--since <when>] [--json]
+clanka diagnostics send
+clanka diagnostics token [--new | --clear]
+```
+
+clanka notes what it does in a local file, the diagnostics log, one line of
+JSON per event. `clanka diagnostics` counts what is in it, so a bug in real
+use shows up without scripting an evening to reproduce it: a reflection that
+fails, a call the model keeps having refused, a turn that takes seconds to
+begin, a reply that came back empty.
+
+```sh
+clanka diagnostics
+```
+
+```text
+clanka 0.1.3 on linux x86_64. Diagnostics are on.
+Log: /home/you/.local/share/clanka/diagnostics.jsonl
+Sent nowhere: there is no [diagnostics.upload] in config.toml.
+412 events from 2026-11-10 to 2026-11-17, 2 companions.
+Builds: cli 0.1.3, hermes 0.1.3.
+
+memory_pass.reflect: 96 (hermes 96)
+  left_out         p50 0, p95 1, max 2, 0 in 81
+  ms               p50 2100, p95 6400, max 9800
+  ok               p50 1, p95 3, max 4, 0 in 22
+  rounds           p50 1, p95 2, max 3
+  late             2 of 96
+  error            llm 3
+  refused          remember/duplicate 9, unknown/invalid_reply 4
+```
+
+## What is kept
+
+An event holds numbers, yes or no, and words clanka spells out itself, such
+as the kind of an error or the name of a tool. Every line also carries when
+it was, the build, the front end (`cli`, `chat`, `mcp` or `hermes`), the
+process, and the last eight characters of the companion's ID.
+
+An event never holds what was said, a memory, a soul, a path or the text of
+an error. A model's error can quote the prompt, so only its kind is kept.
+
+Nothing is sent anywhere unless you turn [sending](#send) on. Until then the
+file stays on this machine, and only you can read it.
+
+| Event         | When                                                    | What it counts                                                                                                    |
+| ------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `command`     | A `clanka` command ended.                               | Its name, how long it took, and `ok`, `found` or `error`.                                                         |
+| `open`        | A front end opened a companion.                         | How long it took.                                                                                                 |
+| `turn_begin`  | A message was checked, recalled on and recorded.        | The message's length, the context's estimated tokens, the memories and hot threads recalled, the markers used.    |
+| `turn_end`    | A reply was recorded.                                   | The reply's length, whether it had em dashes, its [prose tics](/cli/tics/) by kind, the memories marked recalled. |
+| `recall`      | The reply model searched memory on purpose.             | How many memories came up.                                                                                        |
+| `memory_pass` | The model reflected, slept, woke or re-read memories.   | Model calls, the calls that ran, each refused call as `tool/kind`, the facts left out.                            |
+| `model_call`  | One model call of a pass.                               | How long it took, and the characters sent and returned.                                                           |
+| `plugin`      | The Hermes plugin could not do something.               | `open_timeout`, `turn_blocked` or `goodnight_not_sent`.                                                           |
+
+Every event that can fail has an `error` with the kind of error, such as
+`llm`, `frozen`, `sqlite_busy` or `wrong_key`. A command that fails with
+something other than a memory error says `other`.
+
+## The report
+
+Events are counted per kind, and a pass and its model calls per pass, as
+`memory_pass.reflect`. Under each kind:
+
+- A number has its median (`p50`), the value 95 in 100 are at or below
+  (`p95`) and its largest, with how many events had 0 there. `ms` is how
+  long the event took.
+- A yes or no has how often it was yes.
+- A word has how often each came up. The errors and the refused calls are
+  here.
+
+`Builds` lists the builds each front end ran. Two builds for one front end,
+or a `hermes` build that differs from the `cli` one, is a plugin or a CLI
+that an upgrade left behind. [`clanka upgrade`](/cli/upgrade/) replaces
+both.
+
+## Flags
+
+### `--since <when>`
+
+Only count events from then on: how long ago (`45m`, `6h`, `2d`), or a time
+in UTC (`2026-03-09` or `2026-03-09T14:30:05`).
+
+- Default: every event in the log
+
+```sh
+clanka diagnostics --since 2d
+```
+
+### `--json`
+
+Print the report as one JSON object, with the build, the system and the path
+of the log.
+
+```sh
+clanka diagnostics --json > report.json
+```
+
+## send
+
+```sh
+clanka diagnostics send
+```
+
+Sends the events not sent yet to an endpoint you name. Sending is off until
+you put [`[diagnostics.upload]`](/configuration/#diagnosticsupload) in
+`config.toml`:
+
+```toml
+[diagnostics.upload]
+url = "https://diagnostics.example.com/v1/events"
+```
+
+The endpoint is yours, or one someone you trust runs for you. An endpoint
+that asks for a token gets the one [`clanka diagnostics token`](#token) made
+or put away. [Running an endpoint](#running-an-endpoint) says what one has
+to do.
+
+To have clanka's maintainer keep your events:
+
+1. Set `url` to `https://clanka.jfa.dev/ingest/v1/events`.
+2. Run `clanka diagnostics token --new`.
+3. Post the hash it prints on the
+   [issue tracker](https://github.com/jfalava/clanka/issues). The hash is
+   not the token, so it can be read by anyone.
+
+Sends are refused with a 401 until the hash is let in, and the events wait
+in the log until then.
+
+With sending on, clanka also sends at the end of each conversation: when
+`chat` or `mcp` exits, and when a companion on Hermes falls asleep. That send
+takes at most four seconds, and what it does not get to goes with the next.
+
+### What is sent
+
+Each event goes as it is in the log, with three fields added:
+
+- `install` is a random name for this machine, so its events can be told
+  from another's. clanka makes it on the first send and keeps it in
+  `diagnostics.id` beside the log. Delete the file to get a new one.
+- `os` and `arch` are the system and the processor, such as `linux` and
+  `x86_64`.
+
+The endpoint also sees the address the request comes from, as any server
+does.
+
+clanka keeps how far it got in `diagnostics.sent`, so an event is sent once.
+When a request fails, its events and everything after them go with the next
+send, and the command says why:
+
+```text
+✗ https://diagnostics.example.com/v1/events: HTTP 401 Unauthorized: {"error":"this token is not known here, or was revoked"}
+```
+
+### Running an endpoint
+
+A send is one or more requests like this one, each with at most 500 events:
+
+```http
+POST /v1/events
+Authorization: Bearer <token>
+Content-Type: application/x-ndjson
+
+{"at":1794924599413,"event":"recall","found":0,"host":"mcp","ms":19,"pid":92173,"version":"0.1.3","companion":"01c2b4d2","install":"5f0c…","os":"linux","arch":"x86_64"}
+{"at":1794924602420,"event":"turn_end","host":"mcp","ms":1,"pid":92173,"reply_chars":55,…}
+```
+
+An endpoint has two things to do:
+
+- Answer with a 2xx status once it has the events. On any other status
+  clanka keeps the events and sends them again next time, in the same order,
+  so an endpoint that refuses a request for one bad line holds back
+  everything after it.
+- Take the same line twice without counting it twice. That happens when the
+  answer to a request is lost on the way back.
+
+The `Authorization` header is left out when no token was put away.
+
+The endpoint clanka's maintainer runs is in the repository under `ingest/`:
+a Cloudflare Worker that keeps events in a D1 database for 90 days, behind a
+token per sender. It drops any line that is not an event, which includes one
+with a string longer than 64 characters, so a changed client cannot store
+text in it. `iac/alchemy.run.ts` deploys it, behind the Worker in `router/`
+that mounts it at `clanka.jfa.dev/ingest`.
+
+It never sees a token before a send carries one. A sender makes theirs with
+[`clanka diagnostics token --new`](#--new) and gives you its hash, and a row
+in the `tokens` table lets it in:
+
+```sql
+INSERT INTO tokens (hash, label, created_at)
+VALUES ('<hash>', '<who it is>', unixepoch() * 1000);
+```
+
+## token
+
+```sh
+clanka diagnostics token [--new | --clear]
+```
+
+Makes the token an endpoint asks for, or puts away one you were given. The
+token is kept where the companions' database keys are: the Secret Service
+(the login keychain on macOS), or `~/.config/clanka/keys/diagnostics.token`
+with [`[keys] store = "file"`](/configuration/#keys). It is never in
+`config.toml`.
+
+Every send from then on carries the token as `Authorization: Bearer` to
+whatever `url` [`[diagnostics.upload]`](/configuration/#diagnosticsupload)
+names. Drop it before you point `url` at another endpoint.
+
+Without a flag, clanka reads a token the endpoint's owner gave you from
+standard input, one line:
+
+```sh
+clanka diagnostics token < token.txt
+```
+
+Typed at a terminal, the token shows as you paste it.
+
+### `--new`
+
+Make a new random token instead of reading one, and print its SHA-256 hash.
+
+```sh
+clanka diagnostics token --new
+```
+
+```text
+✓ Stored a new upload token in the Secret Service.
+Its hash, to give to whoever runs the endpoint (it is not the token):
+9f2c64d1…
+```
+
+Give the hash to whoever runs the endpoint, so it knows the token when it
+comes. The hash says nothing else about the token, so it can go in an issue
+or an email, and the token never leaves this machine except with a send. The
+endpoint in clanka's repository is [told about tokens](#running-an-endpoint)
+this way.
+
+A new token replaces the one before it, which the endpoint then no longer
+hears from.
+
+### `--clear`
+
+Drop the token instead of reading one.
+
+```sh
+clanka diagnostics token --clear
+```
+
+## The log
+
+The log is `diagnostics.jsonl` in the
+[data directory](/configuration/#files). Read it with any tool that reads
+JSON lines:
+
+```sh
+grep '"error"' ~/.local/share/clanka/diagnostics.jsonl
+```
+
+At 8 MB it starts over, and the full one is kept beside it as
+`diagnostics.1.jsonl` until the next one is full. The report reads both, and
+a send sends what is left of both. Deleting the files clears the log.
+
+[`[diagnostics] enabled = false`](/configuration/#diagnostics) stops clanka
+from writing it.

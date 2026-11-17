@@ -10,6 +10,7 @@
 use crate::actions;
 use crate::companion::ensure_writable;
 use crate::deps::{LlmMessage, LlmRequest, Role, ToolCall, ToolSpec};
+use crate::diagnostics::{self, Event, Pass, Refused};
 use crate::memory::heard;
 use crate::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
 use crate::soul::Soul;
@@ -17,6 +18,7 @@ use crate::{Companion, Error, Memory, MemoryDraft, Mood, Result};
 use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use std::time::Instant;
 
 /// Model calls per reflection. A model that keeps calling tools is cut off here.
 pub const MAX_ROUNDS: usize = 4;
@@ -70,6 +72,9 @@ pub struct ToolOutcome {
     pub ok: bool,
     /// What the model was told: `ok: …` or `error: …`.
     pub result: String,
+    /// Why a refused call was refused, as the word diagnostics keep in place
+    /// of `result`, which can quote the conversation.
+    pub code: Option<&'static str>,
 }
 
 impl Companion {
@@ -102,7 +107,7 @@ impl Companion {
         }
         let mut caught_up = 0;
         for (user, companion) in self.missed_reflections(companion_turn)? {
-            match self.reflect_once(user, companion) {
+            match self.reflect_once(user, companion, true) {
                 // Zero rounds: another handle was already on it.
                 Ok(done) => caught_up += usize::from(done.rounds > 0),
                 Err(Error::Frozen) => return Err(Error::Frozen),
@@ -112,29 +117,49 @@ impl Companion {
                 Err(_) => break,
             }
         }
-        let reflection = self.reflect_once(user_turn, companion_turn)?;
+        let reflection = self.reflect_once(user_turn, companion_turn, false)?;
         Ok(Reflection {
             caught_up,
             ..reflection
         })
     }
 
-    fn reflect_once(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
+    /// `late` is a reflection made up for after its first try failed.
+    fn reflect_once(
+        &mut self,
+        user_turn: i64,
+        companion_turn: i64,
+        late: bool,
+    ) -> Result<Reflection> {
         let (mut exchange, said) = self.said_before(user_turn, companion_turn)?;
         let replied = self.turn_text(companion_turn, Speaker::Companion)?;
         let Some(claimed) = self.claim_reflection(user_turn, companion_turn)? else {
             return Ok(Reflection::default());
         };
+        let started = Instant::now();
         exchange.push(companion_turn);
         let spoken = format!("{said}\n{replied}");
         let result = self
             .reflection_prompt(&exchange, &said, &replied)
             .and_then(|prompt| {
                 let system = reflection_system(&self.soul);
-                self.tool_loop(system, prompt, tool_specs(), MAX_CALLS, |c, call| {
-                    c.run_tool(call, &exchange, &spoken)
-                })
+                let tools = tool_specs();
+                self.tool_loop(
+                    Pass::Reflect,
+                    system,
+                    prompt,
+                    tools,
+                    MAX_CALLS,
+                    |c, call| c.run_tool(call, &exchange, &spoken),
+                )
             });
+        self.diagnose_pass(
+            Pass::Reflect,
+            started,
+            late,
+            result.as_ref().ok(),
+            result.as_ref().err(),
+        );
         let (state, refund) = match &result {
             Ok(_) => ("done", false),
             // Not the exchange's failure, so the try doesn't count: the doctor
@@ -249,6 +274,7 @@ impl Companion {
     /// a model that over-calls isn't asked to fix anything.
     pub(crate) fn tool_loop(
         &mut self,
+        pass: Pass,
         system: String,
         prompt: String,
         tools: Vec<ToolSpec>,
@@ -274,7 +300,27 @@ impl Companion {
                 tools: if json { Vec::new() } else { tools.clone() },
                 temperature: TEMPERATURE,
             };
-            let response = self.deps.llm.complete(&request)?;
+            let asked = Instant::now();
+            let response = self.deps.llm.complete(&request);
+            self.diagnose(&Event::ModelCall {
+                pass,
+                ms: diagnostics::ms_since(asked),
+                prompt_chars: request.system.chars().count()
+                    + request
+                        .messages
+                        .iter()
+                        .map(|m| m.content.chars().count())
+                        .sum::<usize>(),
+                reply_chars: response.as_ref().map_or(0, |r| {
+                    r.text.chars().count()
+                        + r.tool_calls
+                            .iter()
+                            .map(|c| c.arguments.chars().count())
+                            .sum::<usize>()
+                }),
+                error: response.as_ref().err().map(Error::code),
+            });
+            let response = response?;
             let round_calls = if json {
                 match actions::parse(&response.text, &tools) {
                     Ok(found) => found,
@@ -286,6 +332,7 @@ impl Companion {
                             name: INVALID_REPLY.into(),
                             ok: false,
                             result: format!("error: {why}"),
+                            code: Some(diagnostics::INVALID_REPLY),
                         });
                         if corrected {
                             break;
@@ -328,6 +375,7 @@ impl Companion {
                         result: format!(
                             "error: not run; {max_calls} calls is the most one reflection makes"
                         ),
+                        code: Some(diagnostics::TOO_MANY_CALLS),
                     });
                     continue;
                 }
@@ -336,6 +384,7 @@ impl Companion {
                         name: call.name.clone(),
                         ok: true,
                         result: format!("ok: {done}"),
+                        code: None,
                     },
                     // A freeze from another process mid-reflection stops it at
                     // once, and so does anything else the model can't fix: told
@@ -346,6 +395,7 @@ impl Companion {
                         name: call.name.clone(),
                         ok: false,
                         result: format!("error: {e}"),
+                        code: Some(e.code()),
                     },
                 };
                 failed |= !outcome.ok;
@@ -380,6 +430,40 @@ impl Companion {
             calls,
             caught_up: 0,
         })
+    }
+
+    /// Notes how a pass went: what the model's calls came to, when it got as
+    /// far as making them, and the error that ended it, if one did.
+    pub(crate) fn diagnose_pass(
+        &self,
+        pass: Pass,
+        started: Instant,
+        late: bool,
+        reflection: Option<&Reflection>,
+        error: Option<&Error>,
+    ) {
+        let calls = reflection.map_or(&[][..], |r| &r.calls);
+        self.diagnose(&Event::MemoryPass {
+            pass,
+            ms: diagnostics::ms_since(started),
+            late,
+            rounds: reflection.map_or(0, |r| r.rounds),
+            ok: calls.iter().filter(|o| o.ok).count(),
+            refused: calls
+                .iter()
+                .filter_map(|o| {
+                    Some(Refused {
+                        tool: diagnostics::tool(&o.name),
+                        code: o.code?,
+                    })
+                })
+                .collect(),
+            left_out: calls
+                .iter()
+                .filter(|o| o.ok && o.result.contains(LEFT_OUT))
+                .count(),
+            error: error.map(Error::code),
+        });
     }
 
     fn turn_text(&self, id: i64, speaker: Speaker) -> Result<String> {
@@ -865,7 +949,7 @@ struct LeaveNote {
     note: String,
 }
 
-fn tool_specs() -> Vec<ToolSpec> {
+pub(crate) fn tool_specs() -> Vec<ToolSpec> {
     // Shared fields are described once, in the instructions.
     let level = json!({ "type": "string", "enum": ["faint", "normal", "vivid", "seared"] });
     let memory = |extra: Value, required: &[&str]| {

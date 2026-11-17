@@ -102,6 +102,17 @@ def _block(message):
     return {"action": "block", "message": message}
 
 
+def _note(what):
+    """Notes what the core can't see in clanka's diagnostics log (``clanka
+    diagnostics``): one of a few fixed words, never anything that was said."""
+    try:
+        from . import _clanka
+
+        _clanka.note(what)
+    except Exception:
+        logger.debug("clanka: diagnostics did not take %r", what, exc_info=True)
+
+
 def _said(history, final):
     """The whole reply, as the user saw it. Hermes passes ``post_llm_call`` only
     the text after the last tool call; what the model wrote before a call (a
@@ -219,12 +230,14 @@ class _Plugin:
             )
         except concurrent.futures.TimeoutError:
             logger.warning("clanka: memory did not open in %ds; the turn is blocked", OPEN_TIMEOUT)
+            _note("open_timeout")
             return _block(
                 "Memory has not opened yet, so nothing was sent. On a Mac, choose Always Allow "
                 "on the keychain prompt on its screen, then say that again."
             )
         except Exception as e:
             logger.exception("clanka: memory cannot take the turn; the turn is blocked")
+            _note("turn_blocked")
             return _block(f"Memory is not working, so nothing was sent: {e}")
         if kind == "doctor":
             return _block("Memory frozen.")
@@ -319,6 +332,17 @@ class _Plugin:
                     logger.info("clanka: %s", c.sleep())
                 except Exception:
                     logger.exception("clanka: sleep failed")
+                # The conversation is over: what clanka noted of it goes to the
+                # endpoint its owner named, if they named one. A send that
+                # fails costs nothing; its events go with the next.
+                try:
+                    from . import _clanka
+
+                    sent = _clanka.send_diagnostics()
+                    if sent:
+                        logger.info("clanka: sent %d diagnostics events", sent)
+                except Exception as e:
+                    logger.warning("clanka: diagnostics were not sent: %s", e)
 
     def recall_memory(self, args, **_):
         found = self.companion().recall(str(args.get("query", "")))
@@ -337,6 +361,7 @@ class _Plugin:
         message = f"zz {raw_args.strip()}".strip()
         if self._ctx.inject_message(message, session_key=session_key or None):
             return None
+        _note("goodnight_not_sent")
         return (
             "Couldn't say goodnight for you here. Send zz, with your goodnight after it if "
             "you like, and the companion falls asleep after its reply."

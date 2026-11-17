@@ -3,6 +3,7 @@
 //! terminal front ends. The `clanka` binary and the Hermes extension use it.
 
 pub mod chat;
+pub mod diagnostics;
 pub mod llm;
 pub mod mcp;
 pub mod setup;

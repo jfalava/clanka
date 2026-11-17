@@ -10,10 +10,12 @@
 //! handles: one for the turn hooks and one for reflection and sleep, so a slow
 //! reflection on the host's background worker never blocks the next turn.
 
-use clanka::setup::{self, Paths, SharedEmbedder};
+use clanka::diagnostics::{Host, Log};
+use clanka::setup::{self, Config, Paths, SharedEmbedder};
 use clanka::turn::{self, Begin, Pending};
 use clanka_core::Companion;
 use clanka_core::deps::{Llm, LlmRequest, LlmResponse, Role};
+use clanka_core::diagnostics::{Event, PLUGIN_EVENTS, Recorder};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -232,10 +234,7 @@ impl PyCompanion {
     /// Memories for a deliberate attempt to remember, as interpretations.
     fn recall(&self, py: Python<'_>, query: &str) -> PyResult<Vec<String>> {
         py.detach(|| {
-            let found = {
-                let chat = lock(&self.chat);
-                chat.recall(query, chat.ranking()).map_err(err)?
-            };
+            let found = turn::recall(&lock(&self.chat), query).map_err(err)?;
             if let Some(p) = lock(&self.pending).as_mut() {
                 p.recalled.extend(found.iter().map(|r| r.memory.id));
             }
@@ -293,6 +292,40 @@ fn wake_up_tool() -> (String, String) {
     (spec.description, spec.parameters)
 }
 
+/// Notes something the plugin saw that the core can't, in the diagnostics
+/// log: one of [`PLUGIN_EVENTS`], and never anything else, so nothing said can
+/// be passed in. Does nothing when the log is off or the settings don't load.
+#[pyfunction]
+fn note(py: Python<'_>, what: &str) -> PyResult<()> {
+    let Some(what) = PLUGIN_EVENTS.iter().find(|known| **known == what) else {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "not a plugin event; one of {PLUGIN_EVENTS:?}"
+        )));
+    };
+    py.detach(|| {
+        if let Ok(paths) = Paths::get()
+            && let Ok(config) = Config::load(&paths)
+        {
+            Log::open(&paths, &config).record(None, &Event::Plugin { what });
+        }
+    });
+    Ok(())
+}
+
+/// Sends the diagnostics events not sent yet to the endpoint config.toml
+/// names in `[diagnostics.upload]`, and returns how many went. 0, with
+/// nothing sent, without that setting. For the end of a conversation.
+#[pyfunction]
+fn send_diagnostics(py: Python<'_>) -> PyResult<usize> {
+    py.detach(|| {
+        let paths = Paths::get().map_err(err)?;
+        let config = Config::load(&paths).map_err(err)?;
+        let sent = clanka::diagnostics::send_after_conversation(&paths, &config)
+            .map_err(|e| err(format!("{e:#}")))?;
+        Ok(sent.events)
+    })
+}
+
 /// A reply without its em dashes, the way `end_turn` records it.
 #[pyfunction]
 fn without_dashes(reply: &str) -> String {
@@ -301,7 +334,11 @@ fn without_dashes(reply: &str) -> String {
 
 #[pymodule]
 fn _clanka(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // The only front end this module is loaded by.
+    clanka::diagnostics::start(Host::Hermes);
     m.add_class::<PyCompanion>()?;
+    m.add_function(wrap_pyfunction!(note, m)?)?;
+    m.add_function(wrap_pyfunction!(send_diagnostics, m)?)?;
     m.add_function(wrap_pyfunction!(without_dashes, m)?)?;
     m.add_function(wrap_pyfunction!(wake_up_tool, m)?)
 }

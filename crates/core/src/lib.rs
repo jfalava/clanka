@@ -9,6 +9,7 @@ mod companion;
 pub mod context;
 mod db;
 pub mod deps;
+pub mod diagnostics;
 pub mod doctor;
 pub mod dream;
 mod error;

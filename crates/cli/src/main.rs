@@ -1,9 +1,11 @@
 //! `clanka`: set up companions, check their souls and serve them over MCP.
 
 use anyhow::{Context, Result, bail};
-use clanka::setup::{self, Config, Embedding, Paths, SharedEmbedder};
+use clanka::diagnostics::{Host, Log, Report, Upload};
+use clanka::setup::{self, Config, Embedding, Keys, Paths, SharedEmbedder};
 use clanka::status::{self, Outcome};
 use clanka_core::PersonaStatus;
+use clanka_core::diagnostics::{Event, Recorder, ms_since};
 use clanka_core::soul::Soul;
 use clap::builder::styling::Styles;
 use clap::{Parser, Subcommand};
@@ -46,8 +48,10 @@ const HELP: Styles = Styles::styled()
     after_long_help = "Files (Linux):\n  \
         ~/.config/clanka/souls/<id>.md   each companion's soul.md\n  \
         ~/.config/clanka/config.toml     the [model] chat and memory writing run on, and\n\
-        \x20                                  optional [recall], [embedding], [keys] and [ui] settings\n  \
-        ~/.local/share/clanka/           the databases and the embedding model\n\n\
+        \x20                                  optional [recall], [embedding], [keys], [ui] and\n\
+        \x20                                  [diagnostics] settings\n  \
+        ~/.local/share/clanka/           the databases, the embedding model and the\n\
+        \x20                                  diagnostics log\n\n\
         Environment:\n  \
         CLANKA_PROGRAM_STATUS=0          don't send program status to the terminal (OSC 7501)\n  \
         NO_COLOR=1                       no colors\n\n\
@@ -314,6 +318,41 @@ enum Command {
         #[arg(long)]
         no_restart: bool,
     },
+    /// Print what the diagnostics log holds: how clanka has been running here, counted.
+    ///
+    /// clanka notes what it does in ~/.local/share/clanka/diagnostics.jsonl, one line of
+    /// JSON per event: a command that ran, a companion opened, a turn begun and ended, a
+    /// search of memory, each pass the model made over memory (reflection, sleep, waking)
+    /// with its model calls, and what the Hermes plugin could not do. An event holds
+    /// numbers, yes or no, and words clanka spells out itself (an error's kind, a tool's
+    /// name), with when it was, the build, the front end, the process and the last eight
+    /// characters of the companion's ID. It never holds what was said, a memory, a soul, a
+    /// path or an error's text. Nothing is sent anywhere unless you set
+    /// `[diagnostics.upload]` in config.toml (see `clanka diagnostics send`).
+    ///
+    /// The report counts the events per kind: how long each took (p50, p95 and the
+    /// longest, in ms), how the other numbers spread and how often they were 0, how often
+    /// each yes/no was yes, and how often each word came up, which is where the errors and
+    /// the calls a model had refused are. `[diagnostics] enabled = false` in config.toml
+    /// stops the notes; the log starts over at 8 MB, keeping the one before it as
+    /// diagnostics.1.jsonl.
+    #[command(after_long_help = "Example:\n  \
+        clanka diagnostics\n  \
+        clanka diagnostics --since 2d\n  \
+        clanka diagnostics --json > report.json   # to attach to a bug report\n  \
+        clanka diagnostics token --new\n  \
+        clanka diagnostics send")]
+    Diagnostics {
+        #[command(subcommand)]
+        command: Option<DiagnosticsCommand>,
+        /// Only events from then on: 45m, 6h or 2d ago, or a time in UTC (2026-03-09 or
+        /// 2026-03-09T14:30:05).
+        #[arg(long, value_name = "WHEN")]
+        since: Option<String>,
+        /// Print the report as one JSON object.
+        #[arg(long)]
+        json: bool,
+    },
     /// Send sample program status, to see how a terminal shows it.
     ///
     /// Plays what real commands report to the terminal (OSC 7501 and the window title) on
@@ -328,6 +367,64 @@ enum Command {
     Debug {
         #[command(subcommand)]
         command: DebugCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DiagnosticsCommand {
+    /// Send the events not sent yet to the endpoint config.toml names.
+    ///
+    /// Sending is off until you turn it on: put `[diagnostics.upload]` in config.toml with
+    /// the `url` of an endpoint, and make or put away its token with `clanka diagnostics
+    /// token` if it asks for one. The endpoint is yours, or one someone you trust runs for you. With it set,
+    /// clanka also sends at the end of each conversation: when `chat` or `mcp` exits, and
+    /// when a companion on Hermes falls asleep.
+    ///
+    /// A send is a POST of one JSON object per line (NDJSON), at most 500 lines a request,
+    /// with `Authorization: Bearer <token>` when a token was put away. Each line is an event of the log as it is,
+    /// plus `install` (a random name for this machine, made on the first send and kept in
+    /// diagnostics.id beside the log), `os` and `arch`. clanka remembers how far it got in
+    /// diagnostics.sent, so an event is sent once; when a request fails, it and everything
+    /// after it go with the next send. An endpoint should take the same line twice without
+    /// counting it twice: that happens when its answer is lost.
+    #[command(after_long_help = "Example config.toml:\n  \
+        [diagnostics.upload]\n  \
+        url = \"https://diagnostics.example.com/v1/events\"\n\n\
+        Then:\n  \
+        clanka diagnostics token --new   # only for an endpoint that asks for one\n  \
+        clanka diagnostics send")]
+    Send,
+    /// Make the token the endpoint asks for, put away one you were given, or drop it.
+    ///
+    /// The token is kept where the companions' database keys are: the Secret Service (the
+    /// login keychain on macOS), or keys/diagnostics.token beside config.toml with
+    /// `[keys] store = "file"`. It is never in config.toml.
+    ///
+    /// With --new, clanka makes the token itself and prints its SHA-256 hash. Give the hash
+    /// to whoever runs the endpoint, so it knows the token when it comes. The hash says
+    /// nothing else about the token, so it can go in an issue or an email; the token never
+    /// leaves this machine except with a send. The endpoint in clanka's repository
+    /// (ingest/) is told about tokens this way.
+    ///
+    /// Without --new, clanka reads a token the endpoint's owner gave you from standard
+    /// input, one line. Typed at a terminal, the token shows as you paste it.
+    ///
+    /// Every send from then on carries the token as `Authorization: Bearer <token>` to
+    /// whatever `url` `[diagnostics.upload]` names, so drop it before you point `url` at
+    /// another endpoint. A new token replaces the one before it, which the endpoint then
+    /// no longer hears from.
+    #[command(after_long_help = "Example:\n  \
+        clanka diagnostics token --new         # makes one, prints its hash\n  \
+        clanka diagnostics token               # asks for one you were given\n  \
+        clanka diagnostics token < token.txt\n  \
+        clanka diagnostics token --clear")]
+    Token {
+        /// Make a new random token instead of reading one, and print its hash.
+        #[arg(long, conflicts_with = "clear")]
+        new: bool,
+        /// Drop the token instead of reading one.
+        #[arg(long)]
+        clear: bool,
     },
 }
 
@@ -354,6 +451,51 @@ enum DebugCommand {
 }
 
 const SOUL_HELP: &str = "The companion's soul.md, as printed by `clanka init`";
+
+impl Command {
+    /// The command as diagnostics name it.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Init { .. } => "init",
+            Self::Soul { command } => match command {
+                SoulCommand::Lint { .. } => "soul lint",
+                SoulCommand::Guide => "soul guide",
+                SoulCommand::Draft { .. } => "soul draft",
+                SoulCommand::Persona { .. } => "soul persona",
+                SoulCommand::Continue { .. } => "soul continue",
+                SoulCommand::Update { .. } => "soul update",
+                SoulCommand::Fork { .. } => "soul fork",
+            },
+            Self::Doctor { command } => command.name(),
+            Self::Memories { .. } => "memories",
+            Self::Tics { .. } => "tics",
+            Self::Chat { .. } => "chat",
+            Self::Mcp { .. } => "mcp",
+            Self::List => "list",
+            Self::Export { .. } => "export",
+            Self::Import { .. } => "import",
+            Self::Recall { .. } => "recall",
+            Self::Eval { .. } => "eval",
+            Self::Embedding => "embedding",
+            Self::Hermes { command } => match command {
+                HermesCommand::Profile { .. } => "hermes profile",
+                HermesCommand::Nightshade { .. } => "hermes nightshade",
+                HermesCommand::Refresh { .. } => "hermes refresh",
+            },
+            Self::Upgrade { .. } => "upgrade",
+            Self::Diagnostics {
+                command: Some(DiagnosticsCommand::Send),
+                ..
+            } => "diagnostics send",
+            Self::Diagnostics {
+                command: Some(DiagnosticsCommand::Token { .. }),
+                ..
+            } => "diagnostics token",
+            Self::Diagnostics { .. } => "diagnostics",
+            Self::Debug { .. } => "debug status",
+        }
+    }
+}
 
 #[derive(Subcommand)]
 enum HermesCommand {
@@ -554,17 +696,51 @@ fn args(mut args: Vec<OsString>) -> Vec<OsString> {
 fn main() -> ExitCode {
     let cli = Cli::parse_from(args(std::env::args_os().collect()));
     // A config.toml that doesn't load is for the command that needs it to
-    // report; until then the symbols are picked as if it said nothing.
-    let glyphs = Paths::get()
-        .and_then(|paths| Config::load(&paths))
-        .map(|config| config.ui.glyphs)
+    // report; until then the symbols are picked as if it said nothing, and
+    // nothing is noted: whether it may be is in that file.
+    let settings = Paths::get().and_then(|paths| {
+        let config = Config::load(&paths)?;
+        Ok((paths, config))
+    });
+    let glyphs = settings
+        .as_ref()
+        .map(|(_, config)| config.ui.glyphs)
         .unwrap_or_default();
+    let log = match &settings {
+        Ok((paths, config)) => Log::open(paths, config),
+        Err(_) => Log::off(),
+    };
+    clanka::diagnostics::start(match cli.command {
+        Command::Chat { .. } => Host::Chat,
+        Command::Mcp { .. } => Host::Mcp,
+        _ => Host::Cli,
+    });
     clanka::ui::start(glyphs);
     let session = status::start();
     if session.on_terminal() {
         stop_on_interrupt(session.clone());
     }
-    match run(cli.command) {
+    let name = cli.command.name();
+    let started = std::time::Instant::now();
+    let ran = run(cli.command);
+    // Reading the log, or sending it, is not something to find in it.
+    if !name.starts_with("diagnostics") {
+        let (outcome, error) = match &ran {
+            Ok(true) => ("ok", None),
+            Ok(false) => ("found", None),
+            Err(error) => ("error", Some(error_code(error))),
+        };
+        log.record(
+            None,
+            &Event::Command {
+                name,
+                ms: ms_since(started),
+                outcome,
+                error,
+            },
+        );
+    }
+    match ran {
         Ok(true) => {
             session.close(Outcome::Done);
             ExitCode::SUCCESS
@@ -582,6 +758,16 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The kind of error a command failed with, as diagnostics keep it: the
+/// memory engine's own kind when it is one of its errors, `other` for the
+/// rest, whose text could hold anything.
+fn error_code(error: &anyhow::Error) -> &'static str {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<clanka_core::Error>())
+        .map_or("other", clanka_core::Error::code)
 }
 
 /// Ctrl-C reports `idle` on the way out: otherwise a terminal that doesn't see
@@ -705,7 +891,9 @@ fn run(command: Command) -> Result<bool> {
                 );
             }
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
-            clanka::chat::run(chat, writer.expect("a model is configured"), budget)
+            let chatted = clanka::chat::run(chat, writer.expect("a model is configured"), budget);
+            send_quietly(&paths, &config);
+            chatted
         }
         Command::Mcp { soul, budget } => {
             let config = Config::load(&paths)?;
@@ -723,8 +911,23 @@ fn run(command: Command) -> Result<bool> {
                 ),
             }
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
-            clanka::mcp::serve(chat, writer, budget)
+            let served = clanka::mcp::serve(chat, writer, budget);
+            send_quietly(&paths, &config);
+            served
         }
+        Command::Diagnostics {
+            command: None,
+            since,
+            json,
+        } => report(&paths, since.as_deref(), json),
+        Command::Diagnostics {
+            command: Some(DiagnosticsCommand::Send),
+            ..
+        } => send(&paths),
+        Command::Diagnostics {
+            command: Some(DiagnosticsCommand::Token { new, clear }),
+            ..
+        } => token(&paths, new, clear),
         Command::Debug {
             command:
                 DebugCommand::Status {
@@ -771,6 +974,133 @@ fn open_pair(
         None => None,
     };
     Ok((chat, writer))
+}
+
+/// `clanka diagnostics`: the diagnostics log, counted.
+fn report(paths: &Paths, since: Option<&str>, json: bool) -> Result<()> {
+    let config = Config::load(paths)?.diagnostics;
+    let enabled = config.enabled;
+    let file = Log::file(paths);
+    // What a token is for is nobody else's to read: only where the log goes.
+    let upload = config.upload.as_ref().map(|upload| upload.url.as_str());
+    let unsent = match upload {
+        Some(_) => Some(
+            clanka::diagnostics::unsent(&file)
+                .with_context(|| format!("reading {}", file.display()))?,
+        ),
+        None => None,
+    };
+    let since = since
+        .map(|since| doctor::when(since, doctor::now()))
+        .transpose()?;
+    let report =
+        Report::read(&file, since).with_context(|| format!("reading {}", file.display()))?;
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    if json {
+        let all = serde_json::json!({
+            "clanka": env!("CARGO_PKG_VERSION"),
+            "os": os,
+            "arch": arch,
+            "enabled": enabled,
+            "log": file,
+            "upload": upload,
+            "unsent": unsent,
+            "report": report,
+        });
+        println!("{}", serde_json::to_string_pretty(&all)?);
+        return Ok(());
+    }
+    println!(
+        "clanka {} on {os} {arch}. Diagnostics are {}.",
+        env!("CARGO_PKG_VERSION"),
+        if enabled { "on" } else { "off" }
+    );
+    println!("Log: {}", file.display());
+    match (upload, unsent) {
+        (Some(url), Some(1)) => println!("Sends to {url}: 1 event not sent yet."),
+        (Some(url), Some(unsent)) => println!("Sends to {url}: {unsent} events not sent yet."),
+        _ => println!("Sent nowhere: there is no [diagnostics.upload] in config.toml."),
+    }
+    print!("{}", report.text());
+    Ok(())
+}
+
+/// `clanka diagnostics send`.
+fn send(paths: &Paths) -> Result<()> {
+    let config = Config::load(paths)?;
+    let Some(upload) = Upload::load(paths, &config)? else {
+        bail!(
+            "sending is off: put [diagnostics.upload] with the endpoint's `url` in {} to turn \
+             it on, and give `clanka diagnostics token` its token if it asks for one",
+            paths.config_file().display()
+        );
+    };
+    status::phase("Sending diagnostics");
+    let sent = clanka::diagnostics::send(&Log::file(paths), &upload, None)?;
+    status::quiet();
+    let summary = match sent.events {
+        0 => "Nothing to send: every event was sent already.".to_owned(),
+        1 => format!("Sent 1 event to {}.", upload.url),
+        events => format!("Sent {events} events to {}.", upload.url),
+    };
+    clanka::ui::success(&summary);
+    status::summary(&summary);
+    Ok(())
+}
+
+/// `clanka diagnostics token`: the token a send carries, made here or read,
+/// put away with the keys, or dropped.
+fn token(paths: &Paths, new: bool, clear: bool) -> Result<()> {
+    use std::io::{BufRead, IsTerminal};
+    let config = Config::load(paths)?;
+    let keys = Keys::new(paths, &config);
+    if clear {
+        clanka::ui::success(match keys.forget_upload_token()? {
+            true => "Dropped the upload token.",
+            false => "There was no upload token to drop.",
+        });
+        return Ok(());
+    }
+    let token = if new {
+        setup::random_hex(32)
+    } else {
+        let stdin = std::io::stdin();
+        if stdin.is_terminal() {
+            eprint!("Token: ");
+            std::io::stderr().flush()?;
+        }
+        let mut line = String::new();
+        stdin.lock().read_line(&mut line)?;
+        line.trim().to_owned()
+    };
+    // What a header can carry, and what an endpoint would make.
+    if token.is_empty() || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        bail!("a token is one word of letters, digits and marks; nothing was stored");
+    }
+    keys.store_upload_token(&token)?;
+    let place = keys.upload_token_place();
+    if new {
+        clanka::ui::success(&format!("Stored a new upload token in {place}."));
+        clanka::ui::note("Its hash, to give to whoever runs the endpoint (it is not the token):");
+        // Alone on stdout's last line, for a script to take.
+        println!("{}", clanka::diagnostics::token_hash(&token));
+    } else {
+        clanka::ui::success(&format!("Stored the upload token in {place}."));
+    }
+    if config.diagnostics.upload.is_none() {
+        clanka::ui::note(
+            "Nothing is sent yet: there is no [diagnostics.upload] with a `url` in config.toml.",
+        );
+    }
+    Ok(())
+}
+
+/// The send at the end of a conversation. A send that fails costs nothing:
+/// its events go with the next one.
+fn send_quietly(paths: &Paths, config: &Config) {
+    if let Err(error) = clanka::diagnostics::send_after_conversation(paths, config) {
+        clanka::ui::note(&format!("clanka: diagnostics were not sent: {error:#}"));
+    }
 }
 
 fn tics(replies: &[PathBuf], json: bool) -> Result<()> {
@@ -960,6 +1290,7 @@ mod tests {
             "clanka eval help",
             "clanka embedding help",
             "clanka upgrade help",
+            "clanka diagnostics help",
             "clanka soul help",
             "clanka help soul help",
         ] {
@@ -975,5 +1306,12 @@ mod tests {
         assert!(parse("clanka doctor delete x.md 12 15").is_ok());
         assert!(parse("clanka export x.md out").is_ok());
         assert!(parse("clanka recall x.md concert").is_ok());
+        assert!(parse("clanka diagnostics --since 2d --json").is_ok());
+        assert!(parse("clanka diagnostics send").is_ok());
+        assert!(parse("clanka diagnostics token --clear").is_ok());
+        assert!(parse("clanka diagnostics token --new").is_ok());
+        assert!(parse("clanka diagnostics token --new --clear").is_err());
+        let err = parse("clanka diagnostics send help").expect_err("send help");
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
     }
 }

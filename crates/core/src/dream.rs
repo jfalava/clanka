@@ -19,16 +19,18 @@
 
 use crate::companion::ensure_writable;
 use crate::deps::{ToolCall, ToolSpec};
+use crate::diagnostics::Pass;
 use crate::memory::ensure_open;
 use crate::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Urgency};
 use crate::sleep::{TRANSCRIPT_TOKENS, clip, drift_spec, mood_spec, newest_that_fit};
 use crate::soul::Soul;
 use crate::writer::{args, parse, said_verbatim};
-use crate::{Companion, Error, MemoryDraft, Result};
+use crate::{Companion, Error, MemoryDraft, Reflection, Result};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// How far a dial is pushed toward the end it leans to in a dream: 0.7 becomes
 /// 0.94 and 0.3 becomes 0.06. A dial at 0.5 leans neither way and stays.
@@ -317,6 +319,17 @@ impl Companion {
     /// running (it calls the model). Any handle may wake a dream. If the pass
     /// fails before the mood is settled, the dream stays open for a retry.
     pub fn wake(&mut self, session: i64) -> Result<WakeReport> {
+        let started = Instant::now();
+        let mut calls = None;
+        let report = self.wake_from(session, &mut calls);
+        let error = report.as_ref().err();
+        self.diagnose_pass(Pass::Wake, started, false, calls.as_ref(), error);
+        report
+    }
+
+    /// [`Companion::wake`]; `calls` is left with the model's calls once it
+    /// has made them, whatever comes of the waking after.
+    fn wake_from(&mut self, session: i64, calls: &mut Option<Reflection>) -> Result<WakeReport> {
         self.reload_settled_persona()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
         ensure_open(&self.conn, session)?;
@@ -334,12 +347,15 @@ impl Companion {
         );
         let mut waking = Waking::default();
         let reflection = self.tool_loop(
+            Pass::Wake,
             system,
             prompt,
             tool_specs(),
             crate::actions::MAX_ACTIONS,
             |c, call| c.run_wake_tool(call, session, &offered, &mut waking),
         )?;
+        let rounds = reflection.rounds;
+        *calls = Some(reflection);
         if !waking.mood {
             return Err(Error::Llm(
                 "woke without settling a mood; the dream stays open".into(),
@@ -354,7 +370,7 @@ impl Companion {
             seared: waking.seared,
             thread: waking.thread,
             drifted: waking.drifted,
-            rounds: reflection.rounds,
+            rounds,
         })
     }
 
@@ -632,7 +648,7 @@ struct Sear {
     valence: Option<f64>,
 }
 
-fn tool_specs() -> Vec<ToolSpec> {
+pub(crate) fn tool_specs() -> Vec<ToolSpec> {
     let valence = json!({ "type": "number", "minimum": -1, "maximum": 1 });
     vec![
         mood_spec("How waking leaves you feeling. Once."),

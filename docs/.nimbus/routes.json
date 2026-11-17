@@ -16,6 +16,9 @@
     "/cli/debug",
     "/cli/debug/index.md",
     "/cli/debug/index.mdx",
+    "/cli/diagnostics",
+    "/cli/diagnostics/index.md",
+    "/cli/diagnostics/index.mdx",
     "/cli/doctor",
     "/cli/doctor/index.md",
     "/cli/doctor/index.mdx",
@@ -108,6 +111,7 @@
     "/og/cli.png",
     "/og/cli/chat.png",
     "/og/cli/debug.png",
+    "/og/cli/diagnostics.png",
     "/og/cli/doctor.png",
     "/og/cli/embedding.png",
     "/og/cli/eval.png",
@@ -143,5 +147,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-16T21:44:42.773Z"
+  "builtAt": "2026-11-17T16:18:09.337Z"
 }

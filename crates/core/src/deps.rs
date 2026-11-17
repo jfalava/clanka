@@ -12,6 +12,8 @@ pub struct Deps {
     pub clock: Box<dyn Clock>,
     pub rng: Box<dyn Rng>,
     pub keys: Box<dyn KeySource>,
+    /// Where what this handle does is noted; see [`crate::diagnostics`].
+    pub diagnostics: Box<dyn crate::diagnostics::Recorder>,
 }
 
 /// The companion's own model: the same model, provider and identity the

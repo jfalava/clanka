@@ -139,6 +139,23 @@ pub enum DoctorCommand {
     },
 }
 
+impl DoctorCommand {
+    /// The command as diagnostics name it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Freeze { .. } => "doctor freeze",
+            Self::Unfreeze { .. } => "doctor unfreeze",
+            Self::Log { .. } => "doctor log",
+            Self::Rollback { .. } => "doctor rollback",
+            Self::CheckFacts { .. } => "doctor check-facts",
+            Self::Reinterpret { .. } => "doctor reinterpret",
+            Self::Delete { .. } => "doctor delete",
+            Self::Reembed { .. } => "doctor reembed",
+            Self::DeleteAll { .. } => "doctor delete-all",
+        }
+    }
+}
+
 pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
     // The doctor opens the companion without a model, except to re-read memories.
     let open = |soul: &Path| setup::open(paths, soul, SharedEmbedder::load(paths)?, None);
@@ -331,7 +348,7 @@ fn ids(ids: &[i64]) -> String {
         .join(", ")
 }
 
-fn now() -> i64 {
+pub fn now() -> i64 {
     use clanka_core::deps::{Clock, SystemClock};
     SystemClock.now_ms()
 }
@@ -355,7 +372,7 @@ fn date_time(ms: i64) -> String {
 
 /// Milliseconds since the epoch for a `WHEN` argument: `45m`, `6h` or `2d`
 /// before `now`, or a UTC date with an optional time.
-fn when(text: &str, now: i64) -> Result<i64> {
+pub fn when(text: &str, now: i64) -> Result<i64> {
     let text = text.trim();
     let bad =
         || format!("{text:?} is not a time: use 2026-03-09T14:30:05, 2026-03-09 or an age like 6h");
