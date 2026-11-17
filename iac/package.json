@@ -1,7 +1,7 @@
 {
   "name": "@clanka/iac",
   "private": true,
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "ci:deploy": "CLANKA_DEPLOY_CONFIG=./clanka.production.deploy.json alchemy deploy --yes",

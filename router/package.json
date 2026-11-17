@@ -1,7 +1,7 @@
 {
   "name": "@clanka/router",
   "private": true,
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "test": "bun test",

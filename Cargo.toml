@@ -8,7 +8,7 @@ members = ["crates/core", "crates/cli", "crates/py"]
 version = "0.1.6"
 edition = "2024"
 rust-version = "1.95"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 # Crates more than one member uses, so their versions are set once.
 [workspace.dependencies]

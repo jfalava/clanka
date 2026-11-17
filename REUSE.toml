@@ -1,0 +1,36 @@
+version = 1
+
+# clanka's own files are AGPL-3.0-only unless an annotation below says
+# otherwise. Releases up to and including 0.1.6 were published under MIT.
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Jorge Fernando Álava"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# Copied from the foldcn registry (https://foldcn.elianiva.com,
+# github.com/elianiva/foldcn) and restyled; they keep its MIT license.
+[[annotations]]
+path = [
+  "admin/src/components/ui/**",
+  "admin/src/lib/icons.ts",
+  "admin/src/lib/utils.ts",
+]
+SPDX-FileCopyrightText = [
+  "2026 elianiva",
+  "2026 Jorge Fernando Álava",
+]
+SPDX-License-Identifier = "MIT"
+
+# Installed from the Nimbus docs registry (@cloudflare/nimbus-docs), MIT.
+[[annotations]]
+path = "docs/src/components/ui/**"
+SPDX-FileCopyrightText = [
+  "Cloudflare, Inc.",
+  "2026 Jorge Fernando Álava",
+]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docs/public/fonts/IBMPlexSans-Bold.ttf"
+SPDX-FileCopyrightText = "2017 IBM Corp."
+SPDX-License-Identifier = "OFL-1.1"

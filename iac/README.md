@@ -51,3 +51,6 @@ bunx wrangler d1 execute <name>-diagnostics --remote --command \
 ```
 
 Revoke it with `UPDATE tokens SET revoked_at = unixepoch() * 1000 WHERE label = '<label>'`.
+
+The code is AGPL-3.0: if you change the Workers and run them for others, offer those users the
+changed source.

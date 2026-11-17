@@ -133,4 +133,6 @@ without the docs, see [iac/README.md](iac/README.md).
 
 ## License
 
-MIT; see [LICENSE](LICENSE).
+AGPL-3.0-only; see [LICENSE](LICENSE). A few copied files keep their own
+licenses, listed in [REUSE.toml](REUSE.toml). Releases up to 0.1.6 were
+published under MIT.

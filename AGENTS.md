@@ -60,3 +60,7 @@ A schema change is a new file in `crates/core/src/migrations/`, added to `MIGRAT
 - CI is Cloudflare Workers Builds on the `clanka-router` Worker, not GitHub Actions: a push to `main` that touches `admin/`, `docs/`, `iac/`, `ingest/`, `router/`, `package.json`, `bun.lock` or `bunfig.toml` runs `bun run ci:build` and then `bun run ci:deploy`, which deploys the whole stack. A change only to `hermes/install.sh` matches none of those paths, so it starts no build. The trigger sets `ALCHEMY_STAGE=live_jfalava`, the stage the stack was first deployed from, so builds and local runs share one state; without it a build has no `USER` and would use `live_unknown`.
 
 The CLI pages under `docs/src/content/docs/cli/` mirror `clanka help <command>`, and `configuration.mdx` mirrors the defaults in `crates/core`. Update them with the command or setting they describe.
+
+## License
+
+AGPL-3.0-only (`LICENSE`, `Cargo.toml`, every `package.json`); releases up to 0.1.6 were MIT. `REUSE.toml` lists the files that keep another license (the foldcn copies in `admin/`, the Nimbus registry components in `docs/`, a vendored font); add an annotation there when you copy in third-party code.
