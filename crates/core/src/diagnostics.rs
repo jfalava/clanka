@@ -100,6 +100,9 @@ pub enum Event {
     /// A front end opened a handle to a companion.
     Open {
         ms: u64,
+        /// This open made the database. A companion that talked before and
+        /// has one of these again lost its memory in between.
+        created: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<&'static str>,
     },
@@ -117,6 +120,9 @@ pub enum Event {
         echo: bool,
         /// Something in it was said out of earshot.
         unheard: bool,
+        /// The message before it in the session got no reply: the reply
+        /// model failed, or the host never said what it answered.
+        unanswered: bool,
         /// Paragraphs a `>>N` asked for.
         #[serde(skip_serializing_if = "Option::is_none")]
         stretch: Option<u32>,
@@ -183,8 +189,15 @@ pub enum Event {
 
 /// What a host plugin may report, since it can only pass a string: memory did
 /// not open in time and the turn was blocked, memory could not take the turn
-/// and it was blocked, and a goodnight could not be sent for the user.
-pub const PLUGIN_EVENTS: [&str; 3] = ["open_timeout", "turn_blocked", "goodnight_not_sent"];
+/// and it was blocked, a goodnight could not be sent for the user, and a
+/// request to the host's reply model failed (once per try, so a turn the host
+/// retries counts more than once).
+pub const PLUGIN_EVENTS: [&str; 4] = [
+    "open_timeout",
+    "turn_blocked",
+    "goodnight_not_sent",
+    "model_failed",
+];
 
 /// Every tool a pass offers the model. A model can call anything, so a call's
 /// name goes into an event only as one of these.
@@ -240,6 +253,7 @@ impl Error {
             },
             Error::SchemaTooNew { .. } => "schema_too_new",
             Error::NoWal { .. } => "no_wal",
+            Error::DatabaseGone(_) => "database_gone",
             Error::Io { .. } => "io",
             Error::Soul(_) => "soul",
             Error::CompanionMismatch { .. } => "companion_mismatch",

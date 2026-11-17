@@ -137,6 +137,16 @@ fn append(file: &Path, line: &str) -> std::io::Result<()> {
     options.open(file)?.write_all(line.as_bytes())
 }
 
+/// The kind of error something failed with, as diagnostics keep it: the
+/// memory engine's own kind when it is one of its errors, `other` for the
+/// rest, whose text could hold anything.
+pub fn error_code(error: &anyhow::Error) -> &'static str {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<clanka_core::Error>())
+        .map_or("other", clanka_core::Error::code)
+}
+
 /// What the log holds, counted.
 #[derive(Debug, Default, PartialEq, Serialize)]
 pub struct Report {

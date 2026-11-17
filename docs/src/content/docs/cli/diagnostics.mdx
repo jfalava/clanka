@@ -49,20 +49,36 @@ an error. A model's error can quote the prompt, so only its kind is kept.
 Nothing is sent anywhere unless you turn [sending](#send) on. Until then the
 file stays on this machine, and only you can read it.
 
-| Event         | When                                                    | What it counts                                                                                                    |
-| ------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `command`     | A `clanka` command ended.                               | Its name, how long it took, and `ok`, `found` or `error`.                                                         |
-| `open`        | A front end opened a companion.                         | How long it took.                                                                                                 |
-| `turn_begin`  | A message was checked, recalled on and recorded.        | The message's length, the context's estimated tokens, the memories and hot threads recalled, the markers used.    |
-| `turn_end`    | A reply was recorded.                                   | The reply's length, whether it had em dashes, its [prose tics](/cli/tics/) by kind, the memories marked recalled. |
-| `recall`      | The reply model searched memory on purpose.             | How many memories came up.                                                                                        |
-| `memory_pass` | The model reflected, slept, woke or re-read memories.   | Model calls, the calls that ran, each refused call as `tool/kind`, the facts left out.                            |
-| `model_call`  | One model call of a pass.                               | How long it took, and the characters sent and returned.                                                           |
-| `plugin`      | The Hermes plugin could not do something.               | `open_timeout`, `turn_blocked` or `goodnight_not_sent`.                                                           |
+| Event         | When                                                  | What it counts                                                                                                                                                                |
+| ------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`     | A `clanka` command ended.                             | Its name, how long it took, and `ok`, `found` or `error`.                                                                                                                     |
+| `open`        | A front end opened a companion.                       | How long it took, and whether it made the database (`created`).                                                                                                               |
+| `turn_begin`  | A message was checked, recalled on and recorded.      | The message's length, the context's estimated tokens, the memories and hot threads recalled, the markers used, and whether the message before it got no reply (`unanswered`). |
+| `turn_end`    | A reply was recorded.                                 | The reply's length, whether it had em dashes, its [prose tics](/cli/tics/) by kind, the memories marked recalled.                                                             |
+| `recall`      | The reply model searched memory on purpose.           | How many memories came up.                                                                                                                                                    |
+| `memory_pass` | The model reflected, slept, woke or re-read memories. | Model calls, the calls that ran, each refused call as `tool/kind`, the facts left out.                                                                                        |
+| `model_call`  | One model call of a pass.                             | How long it took, and the characters sent and returned.                                                                                                                       |
+| `plugin`      | The Hermes plugin could not do something.             | `open_timeout`, `turn_blocked`, `goodnight_not_sent` or `model_failed`.                                                                                                       |
 
 Every event that can fail has an `error` with the kind of error, such as
 `llm`, `frozen`, `sqlite_busy` or `wrong_key`. A command that fails with
 something other than a memory error says `other`.
+
+An event about a companion carries its ID even when the companion did not
+open: an `open` that failed, or a turn the Hermes plugin blocked.
+
+Some failures show as more than an error:
+
+- `open` with `persona_unresolved` is a soul.md that changed since its
+  memories were written. Nothing talks with it until
+  [`clanka soul`](/cli/soul/) settles the change.
+- `turn_begin` with `database_gone` is a database file that was deleted or
+  replaced while a front end had it open. That front end refuses every turn
+  until it is restarted. An `open` with `created` for a companion that had
+  events before is the empty database that took its place.
+- `plugin` with `model_failed` is a request to Hermes's reply model that
+  failed. Hermes tries again, so one turn can count several. `unanswered` on
+  the next `turn_begin` says the turn got no reply at all, on any front end.
 
 ## The report
 

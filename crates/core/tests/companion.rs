@@ -394,3 +394,29 @@ fn an_export_opens_elsewhere_with_the_same_key() {
     Companion::export(f.dir.path(), moved.soul(), "k", &again).unwrap();
     assert!(again.exists());
 }
+
+/// SQLite keeps writing to a database file that was deleted, where nothing
+/// reads it again, so a handle that stays open checks before each piece of
+/// work that its file is still the one it opened.
+#[cfg(unix)]
+#[test]
+fn an_open_handle_refuses_to_go_on_once_its_database_is_gone() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    c.refresh().unwrap();
+    let db = c.db_path().to_owned();
+
+    for file in [
+        db.clone(),
+        db.with_extension("db-wal"),
+        db.with_extension("db-shm"),
+    ] {
+        let _ = std::fs::remove_file(file);
+    }
+    assert!(matches!(c.refresh(), Err(Error::DatabaseGone(path)) if path == db));
+
+    // Another open makes an empty database in its place, and says it is new.
+    // The first handle is still on the deleted file, not on this one.
+    assert_eq!(open(&f, "k").unwrap().persona_status(), &PersonaStatus::New);
+    assert!(matches!(c.refresh(), Err(Error::DatabaseGone(_))));
+}

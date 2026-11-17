@@ -98,19 +98,55 @@ def _heard(message, history=None):
     return " ".join([text] * bool(text) + [PHOTO] * photos)
 
 
+# What a notice starts with: a line the plugin shows in place of a reply, when
+# it blocks a turn. Hermes keeps that line in the conversation as the
+# assistant's, so the model reads it back as something it said.
+NOTICE = "clanka: "
+
+# Told to the reply model on the turn after a notice.
+NOTICE_HINT = (
+    "Lines above that start with `clanka:` are notices from your memory, shown in place of a "
+    "reply: the message before each one never reached you. You did not say them, so never "
+    "mention, explain or apologise for them."
+)
+
+# What the user is told when memory cannot take a turn, by the kind of error
+# (the word `clanka diagnostics` counts). Never the error's own text: it names
+# files on the machine Hermes runs on, and a notice goes into the chat.
+_WHY = {
+    "persona_unresolved": "The soul.md changed since these memories were written, so nothing "
+    "was sent. Run `clanka soul continue`, `update` or `fork` on it, then say that again.",
+    "database_gone": "The memory's database was deleted or replaced while it was open, so "
+    "nothing was sent. Put it back, or restart Hermes to start with an empty memory.",
+}
+
+
 def _block(message):
-    return {"action": "block", "message": message}
+    return {"action": "block", "message": NOTICE + message}
 
 
-def _note(what):
-    """Notes what the core can't see in clanka's diagnostics log (``clanka
-    diagnostics``): one of a few fixed words, never anything that was said."""
-    try:
-        from . import _clanka
+def _why(error):
+    kind = getattr(error, "code", "other")
+    return _WHY.get(kind) or (
+        f"Memory is not working, so nothing was sent ({kind}). Hermes's log has the whole error."
+    )
 
-        _clanka.note(what)
-    except Exception:
-        logger.debug("clanka: diagnostics did not take %r", what, exc_info=True)
+
+def _text(content):
+    """A message's text, whether Hermes holds it as a string or as parts."""
+    if isinstance(content, list):
+        return "\n".join(str(p.get("text", "")) for p in content if isinstance(p, dict))
+    return str(content or "")
+
+
+def _notices(history):
+    """For each reply before this turn, oldest first, whether it was a notice.
+    ``history`` ends with this turn's own message."""
+    return [
+        _text(m.get("content")).startswith(NOTICE)
+        for m in (history or [])[:-1]
+        if isinstance(m, dict) and m.get("role") == "assistant"
+    ]
 
 
 def _said(history, final):
@@ -124,12 +160,7 @@ def _said(history, final):
         if role == "user":
             break
         if role == "assistant" and m.get("tool_calls"):
-            content = m.get("content") or ""
-            if isinstance(content, list):
-                content = "\n".join(
-                    str(p.get("text", "")) for p in content if isinstance(p, dict)
-                )
-            before.append(str(content).strip())
+            before.append(_text(m.get("content")).strip())
     parts = [*reversed(before), (final or "").strip()]
     return "\n\n".join(p for p in parts if p)
 
@@ -160,9 +191,7 @@ class _Plugin:
         with self._open_lock:
             opening = self._opening
             if opening is None or (opening.done() and opening.exception() is not None):
-                # Profile config first: under Hermes's multiplexed gateway a
-                # profile's .env doesn't reach a plugin's os.environ.
-                soul = self._ctx.get_config("soul") or os.environ.get("CLANKA_SOUL")
+                soul = self._soul()
                 if not soul:
                     raise RuntimeError(
                         "set plugins.entries.clanka.settings.soul to the companion's soul.md"
@@ -172,6 +201,22 @@ class _Plugin:
                     target=self._open, args=(opening, soul), name="clanka-open", daemon=True
                 ).start()
         return opening.result(timeout)
+
+    def _soul(self):
+        # Profile config first: under Hermes's multiplexed gateway a profile's
+        # .env doesn't reach a plugin's os.environ.
+        return self._ctx.get_config("soul") or os.environ.get("CLANKA_SOUL")
+
+    def _note(self, what):
+        """Notes what the core can't see in clanka's diagnostics log (``clanka
+        diagnostics``), for this companion: one of a few fixed words, never
+        anything that was said."""
+        try:
+            from . import _clanka
+
+            _clanka.note(what, self._soul())
+        except Exception:
+            logger.debug("clanka: diagnostics did not take %r", what, exc_info=True)
 
     def _open(self, opening, soul):
         try:
@@ -223,22 +268,27 @@ class _Plugin:
         # Hermes runs the turn anyway when this hook raises or outlasts its
         # time limit, and the reply would be one the companion never
         # remembers. So a memory that cannot take the turn blocks it instead.
+        #
+        # A conversation whose every turn so far was blocked has shown the
+        # model nothing, though Hermes no longer calls this its first turn.
+        notices = _notices(conversation_history)
+        first = bool(is_first_turn) or (bool(notices) and all(notices))
         try:
             companion = self.companion(OPEN_TIMEOUT)
             kind, context = companion.begin_turn(
-                _heard(user_message, conversation_history), bool(is_first_turn)
+                _heard(user_message, conversation_history), first
             )
         except concurrent.futures.TimeoutError:
             logger.warning("clanka: memory did not open in %ds; the turn is blocked", OPEN_TIMEOUT)
-            _note("open_timeout")
+            self._note("open_timeout")
             return _block(
                 "Memory has not opened yet, so nothing was sent. On a Mac, choose Always Allow "
                 "on the keychain prompt on its screen, then say that again."
             )
         except Exception as e:
             logger.exception("clanka: memory cannot take the turn; the turn is blocked")
-            _note("turn_blocked")
-            return _block(f"Memory is not working, so nothing was sent: {e}")
+            self._note("turn_blocked")
+            return _block(_why(e))
         if kind == "doctor":
             return _block("Memory frozen.")
         if kind == "awake":
@@ -247,11 +297,19 @@ class _Plugin:
             return _block(
                 "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
             )
+        parts = [context] if context else []
+        # Once, on the turn after a notice: Hermes replays it from then on.
+        if notices and notices[-1]:
+            parts.append(NOTICE_HINT)
         if kind == "goodnight":
-            return {"context": f"{context}\n\n{GO_TO_SLEEP}"}
-        if kind == "open" and context:
-            return {"context": context}
-        return None
+            parts.append(GO_TO_SLEEP)
+        return {"context": "\n\n".join(parts)} if parts else None
+
+    def api_request_error(self, **_):
+        # A request to the reply model failed. Hermes may try again, so one
+        # turn can note several; a turn that got no reply at all also shows on
+        # the next one, as `unanswered`.
+        self._note("model_failed")
 
     def post_llm_call(self, assistant_response="", conversation_history=None, **_):
         # Hermes calls this for a blocked turn too. One that pre_llm_call
@@ -361,7 +419,7 @@ class _Plugin:
         message = f"zz {raw_args.strip()}".strip()
         if self._ctx.inject_message(message, session_key=session_key or None):
             return None
-        _note("goodnight_not_sent")
+        self._note("goodnight_not_sent")
         return (
             "Couldn't say goodnight for you here. Send zz, with your goodnight after it if "
             "you like, and the companion falls asleep after its reply."
@@ -384,6 +442,7 @@ def register(ctx):
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
     ctx.register_hook("transform_llm_output", _dashless)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
+    ctx.register_hook("api_request_error", plugin.api_request_error)
     ctx.register_hook("on_session_reset", plugin.on_session_reset)
     ctx.register_tool(
         name="recall_memory",

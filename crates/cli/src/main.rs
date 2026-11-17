@@ -1,10 +1,9 @@
 //! `clanka`: set up companions, check their souls and serve them over MCP.
 
 use anyhow::{Context, Result, bail};
-use clanka::diagnostics::{Host, Log, Report, Upload};
+use clanka::diagnostics::{Host, Log, Report, Upload, error_code};
 use clanka::setup::{self, Config, Embedding, Keys, Paths, SharedEmbedder};
 use clanka::status::{self, Outcome};
-use clanka_core::PersonaStatus;
 use clanka_core::diagnostics::{Event, Recorder, ms_since};
 use clanka_core::soul::Soul;
 use clap::builder::styling::Styles;
@@ -765,16 +764,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// The kind of error a command failed with, as diagnostics keep it: the
-/// memory engine's own kind when it is one of its errors, `other` for the
-/// rest, whose text could hold anything.
-fn error_code(error: &anyhow::Error) -> &'static str {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<clanka_core::Error>())
-        .map_or("other", clanka_core::Error::code)
-}
-
 /// Ctrl-C reports `idle` on the way out: otherwise a terminal that doesn't see
 /// the shell's next prompt would show clanka at work for good. It also takes
 /// the live row off the screen, which would be left under the prompt.
@@ -966,14 +955,8 @@ fn open_pair(
     config: &Config,
 ) -> Result<(clanka_core::Companion, Option<clanka_core::Companion>)> {
     let embedder = SharedEmbedder::load(paths)?;
-    let chat = setup::open(paths, soul, embedder.clone(), config.model.as_ref())?;
-    if let PersonaStatus::Changed { .. } = chat.persona_status() {
-        bail!(
-            "{} changed since its memories were written; run `clanka soul continue`, `update` or \
-             `fork` on it first (`clanka soul help` explains each)",
-            soul.display()
-        );
-    }
+    let model = setup::llm(config.model.as_ref());
+    let chat = setup::open_to_talk(paths, soul, embedder.clone(), model)?;
     let writer = match &config.model {
         Some(m) => Some(setup::open(paths, soul, embedder, Some(m))?),
         None => None,

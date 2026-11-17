@@ -11,6 +11,7 @@ name = "_clanka"
 crate-type = ["cdylib"]
 
 [dependencies]
+anyhow = "1"
 clanka = { path = "../cli" }
 clanka-core = { path = "../core", features = ["fastembed"] }
 pyo3 = { version = "0.30", features = ["abi3-py311", "extension-module"] }

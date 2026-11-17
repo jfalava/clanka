@@ -19,6 +19,8 @@ pub struct Companion {
     pub(crate) soul: Soul,
     soul_path: PathBuf,
     db_path: PathBuf,
+    /// Which file the database was when this handle opened it.
+    db_file: FileId,
     pub(crate) deps: Deps,
     persona: PersonaStatus,
     ranking: Ranking,
@@ -67,6 +69,10 @@ impl Companion {
         let db_path = data_dir.join(format!("{id}.db"));
         let key = deps.keys.key(id)?;
         let conn = db::open(&db_path, &key)?;
+        let db_file = file_id(&db_path).map_err(|source| Error::Io {
+            path: db_path.clone(),
+            source,
+        })?;
         let now = deps.clock.now_ms();
 
         match meta(&conn, "companion_id")? {
@@ -123,6 +129,7 @@ impl Companion {
             soul,
             soul_path: soul_path.to_owned(),
             db_path,
+            db_file,
             deps,
             persona,
             ranking: Ranking::default(),
@@ -222,11 +229,21 @@ impl Companion {
         Ok(())
     }
 
-    /// Takes up the soul.md as it is on disk when the database has accepted its
-    /// persona since this handle opened: `clanka soul continue` or `update`
-    /// from another process settles an edit for a host that keeps its handle
-    /// open. Anything else is left for the persona check to refuse.
-    pub fn reload_settled_persona(&mut self) -> Result<()> {
+    /// What a handle that stays open (a host plugin, `clanka chat`, MCP) does
+    /// before each piece of work, to catch up with the disk.
+    ///
+    /// It refuses to go on when the database file was deleted or another took
+    /// its place: SQLite keeps writing to a file that is gone, and nothing
+    /// would ever read it again.
+    ///
+    /// It takes up the soul.md as it is on disk when the database has accepted
+    /// its persona since this handle opened: `clanka soul continue` or
+    /// `update` from another process settles an edit. Anything else is left
+    /// for the persona check to refuse.
+    pub fn refresh(&mut self) -> Result<()> {
+        if file_id(&self.db_path).ok() != Some(self.db_file) {
+            return Err(Error::DatabaseGone(self.db_path.clone()));
+        }
         let accepted = meta(&self.conn, "persona_hash")?;
         if accepted.as_deref() == Some(self.soul.hash.as_str()) {
             return Ok(());
@@ -408,6 +425,23 @@ pub(crate) fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> 
         params![key, value],
     )?;
     Ok(())
+}
+
+/// Which file a path leads to: the same after a rename, another once the file
+/// is deleted and made again.
+type FileId = (u64, u64);
+
+#[cfg(unix)]
+fn file_id(path: &Path) -> std::io::Result<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    let file = std::fs::metadata(path)?;
+    Ok((file.dev(), file.ino()))
+}
+
+/// Without inodes, only whether the file is still there.
+#[cfg(not(unix))]
+fn file_id(path: &Path) -> std::io::Result<FileId> {
+    std::fs::metadata(path).map(|_| (0, 0))
 }
 
 /// Every write checks this inside its own transaction: the doctor's freeze and

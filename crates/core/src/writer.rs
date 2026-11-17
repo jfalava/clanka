@@ -89,24 +89,20 @@ impl Companion {
     /// A dream's exchanges are never reflected on: what stays of a dream is
     /// decided once, when the companion wakes (see [`Companion::wake`]).
     pub fn reflect(&mut self, user_turn: i64, companion_turn: i64) -> Result<Reflection> {
-        // Fail before paying for a model call.
-        self.reload_settled_persona()?;
-        ensure_writable(&self.conn, &self.soul.hash)?;
-        let session: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT session_id FROM turns WHERE id = ?1",
-                [companion_turn],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(session) = session
-            && crate::dream::is_dream(&self.conn, session)?
-        {
-            return Ok(Reflection::default());
-        }
+        let started = Instant::now();
+        let missed = match self.before_reflecting(companion_turn) {
+            Ok(Some(missed)) => missed,
+            Ok(None) => return Ok(Reflection::default()),
+            // Refused before its pass began, which is a pass that failed too:
+            // without this a freeze or a database that is gone shows only on
+            // the next turn, if there is one.
+            Err(e) => {
+                self.diagnose_pass(Pass::Reflect, started, false, None, Some(&e));
+                return Err(e);
+            }
+        };
         let mut caught_up = 0;
-        for (user, companion) in self.missed_reflections(companion_turn)? {
+        for (user, companion) in missed {
             match self.reflect_once(user, companion, true) {
                 // Zero rounds: another handle was already on it.
                 Ok(done) => caught_up += usize::from(done.rounds > 0),
@@ -124,6 +120,27 @@ impl Companion {
         })
     }
 
+    /// What fails a reflection before it pays for a model call, and the
+    /// earlier exchanges to make up for first. `None` for a dream's exchange.
+    fn before_reflecting(&mut self, companion_turn: i64) -> Result<Option<Vec<(i64, i64)>>> {
+        self.refresh()?;
+        ensure_writable(&self.conn, &self.soul.hash)?;
+        let session: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT session_id FROM turns WHERE id = ?1",
+                [companion_turn],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(session) = session
+            && crate::dream::is_dream(&self.conn, session)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(self.missed_reflections(companion_turn)?))
+    }
+
     /// `late` is a reflection made up for after its first try failed.
     fn reflect_once(
         &mut self,
@@ -131,12 +148,23 @@ impl Companion {
         companion_turn: i64,
         late: bool,
     ) -> Result<Reflection> {
-        let (mut exchange, said) = self.said_before(user_turn, companion_turn)?;
-        let replied = self.turn_text(companion_turn, Speaker::Companion)?;
-        let Some(claimed) = self.claim_reflection(user_turn, companion_turn)? else {
-            return Ok(Reflection::default());
-        };
         let started = Instant::now();
+        let claimed = self
+            .said_before(user_turn, companion_turn)
+            .and_then(|(exchange, said)| {
+                let replied = self.turn_text(companion_turn, Speaker::Companion)?;
+                let claimed = self.claim_reflection(user_turn, companion_turn)?;
+                Ok(claimed.map(|claimed| (exchange, said, replied, claimed)))
+            });
+        let (mut exchange, said, replied, claimed) = match claimed {
+            Ok(Some(claimed)) => claimed,
+            // Done already, or another handle is on it.
+            Ok(None) => return Ok(Reflection::default()),
+            Err(e) => {
+                self.diagnose_pass(Pass::Reflect, started, late, None, Some(&e));
+                return Err(e);
+            }
+        };
         exchange.push(companion_turn);
         let spoken = format!("{said}\n{replied}");
         let result = self

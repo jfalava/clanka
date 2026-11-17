@@ -431,6 +431,7 @@ dependencies = [
 name = "clanka-py"
 version = "0.1.4"
 dependencies = [
+ "anyhow",
  "clanka",
  "clanka-core",
  "pyo3",

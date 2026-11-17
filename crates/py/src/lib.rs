@@ -10,7 +10,7 @@
 //! handles: one for the turn hooks and one for reflection and sleep, so a slow
 //! reflection on the host's background worker never blocks the next turn.
 
-use clanka::diagnostics::{Host, Log};
+use clanka::diagnostics::{Host, Log, error_code};
 use clanka::setup::{self, Config, Paths, SharedEmbedder};
 use clanka::turn::{self, Begin, Pending};
 use clanka_core::Companion;
@@ -63,8 +63,17 @@ impl Llm for HostModel {
     }
 }
 
-fn err(e: impl std::fmt::Display) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+/// A Python error with the message, and the kind of error as its `code` (the
+/// word diagnostics keep): the plugin tells the user the kind and logs the
+/// message, which can name files on this machine.
+fn err(e: impl Into<anyhow::Error>) -> PyErr {
+    let e = e.into();
+    let error = PyRuntimeError::new_err(e.to_string());
+    Python::attach(|py| {
+        // Without the code the plugin says `other`.
+        let _ = error.value(py).setattr("code", error_code(&e));
+    });
+    error
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -97,17 +106,10 @@ impl PyCompanion {
             let paths = Paths::get().map_err(err)?;
             let embedder = SharedEmbedder::load(&paths).map_err(err)?;
             let [for_chat, for_writer] = models;
-            let open = |llm: HostModel| {
-                setup::open_with(&paths, &soul, embedder.clone(), Box::new(llm)).map_err(err)
-            };
-            let chat = open(for_chat)?;
-            if let clanka_core::PersonaStatus::Changed { .. } = chat.persona_status() {
-                return Err(err(format!(
-                    "{} changed since its memories were written; run `clanka soul continue`, `update` or `fork` on it first",
-                    soul.display()
-                )));
-            }
-            let writer = open(for_writer)?;
+            let chat = setup::open_to_talk(&paths, &soul, embedder.clone(), Box::new(for_chat))
+                .map_err(err)?;
+            let writer =
+                setup::open_with(&paths, &soul, embedder, Box::new(for_writer)).map_err(err)?;
             Ok(Self {
                 name: chat.soul().traits.name.clone(),
                 persona: chat.soul().persona(),
@@ -294,9 +296,12 @@ fn wake_up_tool() -> (String, String) {
 
 /// Notes something the plugin saw that the core can't, in the diagnostics
 /// log: one of [`PLUGIN_EVENTS`], and never anything else, so nothing said can
-/// be passed in. Does nothing when the log is off or the settings don't load.
+/// be passed in. `soul` is the soul.md of the companion it happened to, which
+/// need not be open. Does nothing when the log is off or the settings don't
+/// load.
 #[pyfunction]
-fn note(py: Python<'_>, what: &str) -> PyResult<()> {
+#[pyo3(signature = (what, soul = None))]
+fn note(py: Python<'_>, what: &str, soul: Option<PathBuf>) -> PyResult<()> {
     let Some(what) = PLUGIN_EVENTS.iter().find(|known| **known == what) else {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "not a plugin event; one of {PLUGIN_EVENTS:?}"
@@ -306,7 +311,8 @@ fn note(py: Python<'_>, what: &str) -> PyResult<()> {
         if let Ok(paths) = Paths::get()
             && let Ok(config) = Config::load(&paths)
         {
-            Log::open(&paths, &config).record(None, &Event::Plugin { what });
+            let companion = soul.as_deref().and_then(setup::companion_id);
+            Log::open(&paths, &config).record(companion, &Event::Plugin { what });
         }
     });
     Ok(())
@@ -321,7 +327,7 @@ fn send_diagnostics(py: Python<'_>) -> PyResult<usize> {
         let paths = Paths::get().map_err(err)?;
         let config = Config::load(&paths).map_err(err)?;
         let sent = clanka::diagnostics::send_after_conversation(&paths, &config)
-            .map_err(|e| err(format!("{e:#}")))?;
+            .map_err(|e| err(anyhow::anyhow!("{e:#}")))?;
         Ok(sent.events)
     })
 }

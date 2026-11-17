@@ -19,6 +19,11 @@ pub enum Error {
     },
     #[error("{path} is in journal mode {mode}; WAL is required so several processes can share it")]
     NoWal { path: PathBuf, mode: String },
+    #[error(
+        "{0} was deleted or replaced while this companion was open; put it back, or restart \
+         whatever has the companion open to start it with an empty memory"
+    )]
+    DatabaseGone(PathBuf),
     #[error("cannot read {path}: {source}")]
     Io {
         path: PathBuf,

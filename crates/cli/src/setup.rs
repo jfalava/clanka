@@ -7,7 +7,8 @@ use crate::llm::{NoModel, OpenAiModel};
 use anyhow::{Context, Result, bail};
 use clanka_core::deps::{Embedder, EmbeddingModel, FastEmbedder, KeySource, Llm, Rng, SystemClock};
 use clanka_core::diagnostics::{Event, Recorder, ms_since};
-use clanka_core::{Companion, Deps, Ranking};
+use clanka_core::soul::Soul;
+use clanka_core::{Companion, Deps, PersonaStatus, Ranking};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -600,11 +601,15 @@ pub fn open(
     embedder: SharedEmbedder,
     model: Option<&ModelConfig>,
 ) -> Result<Companion> {
-    let llm: Box<dyn Llm> = match model {
+    open_with(paths, soul, embedder, llm(model))
+}
+
+/// The companion's model as config.toml sets it, or one that says how to.
+pub fn llm(model: Option<&ModelConfig>) -> Box<dyn Llm> {
+    match model {
         Some(m) => Box::new(OpenAiModel::new(m.clone())),
         None => Box::new(NoModel),
-    };
-    open_with(paths, soul, embedder, llm)
+    }
 }
 
 /// Opens a companion on a model the host supplies, e.g. a plugin's handle on
@@ -612,17 +617,50 @@ pub fn open(
 pub fn open_with(
     paths: &Paths,
     soul: &Path,
-    embedder: SharedEmbedder,
+    embedder: impl Embedder + 'static,
     llm: Box<dyn Llm>,
+) -> Result<Companion> {
+    open_as(paths, soul, embedder, llm, false)
+}
+
+/// [`open_with`] for a front end about to talk with the companion: one whose
+/// persona changed since its memories were written is refused, as its first
+/// turn would be, and the refusal is noted as the open's error.
+pub fn open_to_talk(
+    paths: &Paths,
+    soul: &Path,
+    embedder: impl Embedder + 'static,
+    llm: Box<dyn Llm>,
+) -> Result<Companion> {
+    open_as(paths, soul, embedder, llm, true)
+}
+
+fn open_as(
+    paths: &Paths,
+    soul: &Path,
+    embedder: impl Embedder + 'static,
+    llm: Box<dyn Llm>,
+    to_talk: bool,
 ) -> Result<Companion> {
     let config = Config::load(paths)?;
     let deps = deps(paths, &config, embedder, llm)?;
     let started = std::time::Instant::now();
-    let opened = Companion::open(&paths.data, soul, deps);
+    let opened = Companion::open(&paths.data, soul, deps).and_then(|companion| {
+        match companion.persona_status() {
+            PersonaStatus::Changed { .. } if to_talk => Err(clanka_core::Error::PersonaUnresolved),
+            _ => Ok(companion),
+        }
+    });
     Log::open(paths, &config).record(
-        opened.as_ref().ok().map(Companion::id),
+        match &opened {
+            Ok(companion) => Some(companion.id()),
+            Err(_) => companion_id(soul),
+        },
         &Event::Open {
             ms: ms_since(started),
+            created: opened
+                .as_ref()
+                .is_ok_and(|companion| *companion.persona_status() == PersonaStatus::New),
             error: opened.as_ref().err().map(clanka_core::Error::code),
         },
     );
@@ -637,6 +675,14 @@ pub fn open_with(
             .map_err(bad)?;
     }
     Ok(companion)
+}
+
+/// Whose soul.md this is, for an event about a companion that is not open:
+/// the ID in the file, or the one it is named after (`clanka init` writes
+/// `<id>.md`) when the file is gone or is no soul.
+pub fn companion_id(soul: &Path) -> Option<Uuid> {
+    let named = || soul.file_stem()?.to_str()?.parse().ok();
+    Soul::load(soul).map_or_else(|_| named(), |soul| Some(soul.traits.id))
 }
 
 /// The doctor's re-embed: opens a companion whose vectors came from another
@@ -655,7 +701,7 @@ pub fn reembed(
 fn deps(
     paths: &Paths,
     config: &Config,
-    embedder: SharedEmbedder,
+    embedder: impl Embedder + 'static,
     llm: Box<dyn Llm>,
 ) -> Result<Deps> {
     std::fs::create_dir_all(&paths.data)?;

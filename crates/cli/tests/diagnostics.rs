@@ -1,10 +1,20 @@
 mod common;
 
-use clanka::diagnostics::{Log, Report};
+use clanka::diagnostics::{Log, Report, error_code};
+use clanka::setup::{self, Config, Keys, Paths};
 use clanka::turn::{self, Begin};
 use clanka_core::deps::{LlmResponse, ToolCall};
-use common::{Scripted, open_noting};
-use serde_json::json;
+use common::{Dummy, Scripted, open, open_noting};
+use serde_json::{Value, json};
+use std::path::Path;
+
+/// The log's lines, each as the JSON it is.
+fn lines(file: &Path) -> Vec<Value> {
+    let log = std::fs::read_to_string(file).unwrap();
+    log.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
 
 /// An evening with a model that misbehaves in every way the log should show:
 /// the turns, the reflection's refused calls and the sleep that fails are all
@@ -101,4 +111,118 @@ fn an_evening_is_counted_and_nothing_said_is_kept() {
     let night = &report.kinds["memory_pass.sleep"];
     assert_eq!(night.words["error"]["llm"], 1);
     assert_eq!(report.kinds["model_call.sleep"].count, 1);
+}
+
+/// A message whose reply never came (the host's model failed, or the host
+/// never said what it answered) leaves no event of its own: the next turn
+/// says so.
+#[test]
+fn a_message_that_got_no_reply_shows_on_the_next_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("diagnostics.jsonl");
+    let mut c = open_noting(dir.path(), Dummy, Log::to(file.clone()));
+    let mut begin = |said: &str, reply: Option<&str>| {
+        let Begin::Open { pending, .. } = turn::begin(&mut c, said, 4000, false).unwrap() else {
+            panic!("the turn did not open");
+        };
+        if let Some(reply) = reply {
+            turn::end(&mut c, pending, reply).unwrap();
+        }
+    };
+    begin("Are you there?", Some("Here."));
+    begin("And now?", None);
+    begin("Hello?", None);
+
+    let unanswered: Vec<Value> = lines(&file)
+        .into_iter()
+        .filter(|line| line["event"] == "turn_begin")
+        .map(|line| line["unanswered"].clone())
+        .collect();
+    assert_eq!(unanswered, [json!(false), json!(false), json!(true)]);
+}
+
+/// A reflection refused before it calls the model is a pass that failed, and
+/// the last exchange of a conversation has no later turn to show it on.
+#[test]
+fn a_reflection_refused_before_its_model_call_is_a_failed_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("diagnostics.jsonl");
+    let mut c = open_noting(dir.path(), Dummy, Log::to(file.clone()));
+    let Begin::Open { pending, .. } = turn::begin(&mut c, "Goodbye.", 4000, true).unwrap() else {
+        panic!("the turn did not open");
+    };
+    let (user, companion) = turn::end(&mut c, pending, "Until tomorrow.").unwrap();
+    c.set_frozen(true).unwrap();
+    assert!(c.reflect(user, companion).is_err());
+
+    let passes: Vec<Value> = lines(&file)
+        .into_iter()
+        .filter(|line| line["event"] == "memory_pass")
+        .collect();
+    assert_eq!(passes.len(), 1, "{passes:?}");
+    assert_eq!(passes[0]["pass"], "reflect");
+    assert_eq!(passes[0]["error"], "frozen");
+    assert_eq!(passes[0]["rounds"], 0);
+}
+
+/// An open that fails is still about a companion, and one refused for a
+/// changed persona says so: without either, a blocked turn in the log could
+/// not be tied to a companion or a cause.
+#[test]
+fn a_failed_open_names_its_companion_and_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        config: dir.path().join("config"),
+        souls: dir.path().join("config/souls"),
+        data: dir.path().join("data"),
+        models: dir.path().join("data/models"),
+    };
+    std::fs::create_dir_all(&paths.souls).unwrap();
+    std::fs::write(paths.config_file(), "[keys]\nstore = \"file\"\n").unwrap();
+    // A soul.md where `clanka init` puts it, named after its ID.
+    let id = open(dir.path()).id();
+    let soul = paths.souls.join(format!("{id}.md"));
+    std::fs::rename(dir.path().join("soul.md"), &soul).unwrap();
+    Keys::new(&paths, &Config::load(&paths).unwrap())
+        .store(id, "k")
+        .unwrap();
+    let to_talk = || setup::open_to_talk(&paths, &soul, Dummy, Box::new(Dummy));
+
+    to_talk().unwrap();
+    to_talk().unwrap();
+    let persona = std::fs::read_to_string(&soul).unwrap();
+    std::fs::write(&soul, format!("{persona}\nShe has changed.\n")).unwrap();
+    let Err(changed) = to_talk() else {
+        panic!("a changed persona was talked with");
+    };
+    assert_eq!(error_code(&changed), "persona_unresolved");
+    // `clanka soul continue` and the doctor still open it.
+    setup::open_with(&paths, &soul, Dummy, Box::new(Dummy)).unwrap();
+    std::fs::write(&soul, "not a soul").unwrap();
+    assert_eq!(error_code(&to_talk().err().unwrap()), "soul");
+    std::fs::remove_file(&soul).unwrap();
+    assert_eq!(error_code(&to_talk().err().unwrap()), "io");
+
+    let opens = lines(&clanka::diagnostics::Log::file(&paths));
+    let short = id.simple().to_string()[24..].to_owned();
+    assert!(
+        opens
+            .iter()
+            .all(|open| open["event"] == "open" && open["companion"] == short)
+    );
+    let seen: Vec<(Value, Value)> = opens
+        .iter()
+        .map(|open| (open["created"].clone(), open["error"].clone()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (json!(true), Value::Null),
+            (json!(false), Value::Null),
+            (json!(false), json!("persona_unresolved")),
+            (json!(false), Value::Null),
+            (json!(false), json!("soul")),
+            (json!(false), json!("io")),
+        ]
+    );
 }

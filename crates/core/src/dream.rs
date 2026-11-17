@@ -330,7 +330,7 @@ impl Companion {
     /// [`Companion::wake`]; `calls` is left with the model's calls once it
     /// has made them, whatever comes of the waking after.
     fn wake_from(&mut self, session: i64, calls: &mut Option<Reflection>) -> Result<WakeReport> {
-        self.reload_settled_persona()?;
+        self.refresh()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
         ensure_open(&self.conn, session)?;
         if !is_dream(&self.conn, session)? {

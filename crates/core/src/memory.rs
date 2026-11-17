@@ -160,6 +160,20 @@ impl Companion {
         self.insert_turn(session, Speaker::User, content, true)
     }
 
+    /// Whether the session's last message is the user's: the reply to it
+    /// never came (its model failed, or the host never passed it on).
+    pub fn unanswered(&self, session: i64) -> Result<bool> {
+        let last: Option<Speaker> = self
+            .conn
+            .query_row(
+                "SELECT role FROM turns WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                [session],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(last == Some(Speaker::User))
+    }
+
     fn insert_turn(
         &mut self,
         session: i64,

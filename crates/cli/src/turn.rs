@@ -183,6 +183,8 @@ pub struct Open {
     pub echo: bool,
     /// Something the model is shown was said out of earshot.
     pub unheard: bool,
+    /// The message before this one in the session got no reply.
+    pub unanswered: bool,
     pub pending: Pending,
 }
 
@@ -257,6 +259,7 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
         goodnight: is(|o| o.pending.sleep),
         echo: is(|o| o.echo),
         unheard: is(|o| o.unheard),
+        unanswered: is(|o| o.unanswered),
         stretch: open.and_then(|o| o.stretch),
         message_chars: count(|o| o.message.chars().count()),
         context_tokens: count(|o| o.context.tokens),
@@ -270,7 +273,7 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
 }
 
 fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Result<Opened> {
-    c.reload_settled_persona()?;
+    c.refresh()?;
     if c.soul().is_doctor_token(message) {
         c.set_frozen(true)?;
         return Ok(Opened::Doctor);
@@ -312,6 +315,7 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
         Some(dream) => dream,
         None => c.open_session()?,
     };
+    let unanswered = c.unanswered(session)?;
     let user_turn = if echo {
         c.record_echo(session, message)?
     } else {
@@ -330,6 +334,7 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
         stretch,
         echo,
         unheard,
+        unanswered,
         pending: Pending {
             session,
             user_turn,
