@@ -27,6 +27,11 @@ A general plugin on Hermes's public plugin API only:
   the companion sleeps on whatever was said since it last slept, so a
   conversation the user walked away from still becomes a memory. Nothing
   happens when nothing was said.
+- ``on_session_finalize``: the same when someone leaves the chat the
+  companion is talking in (quitting the CLI, a one-shot exiting, the TUI), so
+  that conversation doesn't stay open and run into the next one. Ends Hermes
+  makes on its own and keeps resumable, and other chats ending, leave it
+  awake.
 
 The companion is the soul.md named by ``plugins.entries.clanka.settings.soul``
 in the profile's config.yaml (``$CLANKA_SOUL`` as a fallback). Put its persona in
@@ -43,6 +48,7 @@ import logging
 import os
 import re
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,14 @@ GO_TO_SLEEP = "Call go_to_sleep first, then write that goodnight."
 # callback 30s, then drops it and lets the model answer with no memory, so the
 # turn has to be blocked before that.
 OPEN_TIMEOUT = 20
+
+# The finalize reasons that mean someone ended the conversation: a viewer
+# leaving it (cli_close, tui_close) or /new. Hermes also finalizes chats nobody
+# ended and that it keeps resumable (a dropped socket reaped, a gateway
+# stopping or restarting, an idle or evicted TUI session with no reason given,
+# a CLI viewer resuming another chat), and sleep can't be taken back, so only
+# these sleep. A CLI quit without the gateway is "shutdown" on platform "cli".
+DELIBERATE_ENDS = frozenset({"cli_close", "tui_close", "new_session"})
 
 
 PHOTO = "*shows you a photo*"
@@ -180,6 +194,15 @@ class _Plugin:
         # Reflections and sleep run one at a time, in order, off the turn thread.
         self._work_lock = threading.Lock()
         self._sleep_requested = False
+        # Sleeps started and not finished. A turn waits for them (within its
+        # OPEN_TIMEOUT), so a message sent as the companion falls asleep, such
+        # as the one an idle reset fires on, opens the next conversation
+        # instead of landing in the night being slept.
+        self._sleeps = 0
+        self._asleep = threading.Condition()
+        # The Hermes chat the companion's last turn came from: the one its
+        # open conversation is in.
+        self._live_chat = None
 
     # The companion opens on first use, so a slow Secret Service or model load
     # never counts against Hermes's plugin load timeout. It opens on a thread
@@ -260,7 +283,9 @@ class _Plugin:
         logger.debug("clanka: memory model reply: %s", result.text)
         return result.text
 
-    def pre_llm_call(self, user_message="", is_first_turn=True, conversation_history=None, **_):
+    def pre_llm_call(
+        self, user_message="", is_first_turn=True, conversation_history=None, session_id=None, **_
+    ):
         # Hermes replays injected context on every later turn, so after the
         # first one only what the model hasn't seen is injected, and nothing
         # at all when nothing is new.
@@ -273,8 +298,13 @@ class _Plugin:
         # model nothing, though Hermes no longer calls this its first turn.
         notices = _notices(conversation_history)
         first = bool(is_first_turn) or (bool(notices) and all(notices))
+        deadline = time.monotonic() + OPEN_TIMEOUT
+        with self._asleep:
+            if not self._asleep.wait_for(lambda: self._sleeps == 0, timeout=OPEN_TIMEOUT):
+                # The message is still kept, in the night being slept.
+                logger.warning("clanka: still asleep after %ds; the turn goes on", OPEN_TIMEOUT)
         try:
-            companion = self.companion(OPEN_TIMEOUT)
+            companion = self.companion(max(1, deadline - time.monotonic()))
             kind, context = companion.begin_turn(
                 _heard(user_message, conversation_history), first
             )
@@ -297,6 +327,7 @@ class _Plugin:
             return _block(
                 "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
             )
+        self._live_chat = session_id
         parts = [context] if context else []
         # Once, on the turn after a notice: Hermes replays it from then on.
         if notices and notices[-1]:
@@ -332,19 +363,58 @@ class _Plugin:
             sleep = sleep or wakes
         if turns is None and not sleep:
             return
+        if sleep:
+            self._off_thread(self._after_turn, turns, sleep, name="clanka-sleep", sleep=True)
+        else:
+            self._off_thread(self._after_turn, turns, sleep, name="clanka-reflect")
+
+    def _off_thread(self, target, *args, name, sleep=False):
         # A copied context keeps Hermes's live model selection for ctx.llm.
         run = contextvars.copy_context().run
-        threading.Thread(
-            target=run, args=(self._after_turn, turns, sleep), name="clanka-reflect"
-        ).start()
+        if sleep:
+            # Counted before the thread starts, so the next turn already waits.
+            with self._asleep:
+                self._sleeps += 1
+
+        def work():
+            try:
+                run(target, *args)
+            finally:
+                if sleep:
+                    with self._asleep:
+                        self._sleeps -= 1
+                        self._asleep.notify_all()
+
+        threading.Thread(target=work, name=name).start()
 
     def on_session_reset(self, reason="", **_):
         # Off the hook thread: Hermes gives a hook callback 30s, and sleep is
         # a model call plus a pass over memory. The work lock keeps it after
         # the reflection on the last exchange.
         logger.info("clanka: session reset (%s): sleeping", reason or "unknown")
-        run = contextvars.copy_context().run
-        threading.Thread(target=run, args=(self._reset,), name="clanka-sleep").start()
+        self._off_thread(self._reset, name="clanka-sleep", sleep=True)
+
+    def on_session_finalize(self, session_id=None, platform="", reason="", **_):
+        # The conversation is over without a /new: quitting the CLI, closing
+        # the TUI, a gateway viewer detaching. Without this the session stays
+        # open and the next conversation inherits it. /new fires this and then
+        # on_session_reset; the second finds nothing said and does nothing.
+        #
+        # One gateway serves every chat of the profile and the companion has
+        # one conversation, so only the end of the chat it is in counts, and
+        # only an end someone chose (DELIBERATE_ENDS). Anything else leaves
+        # the conversation open, as before: the next goodnight, /new or
+        # `clanka doctor end-session` ends it. A process that never had a turn
+        # has no chat here, so a bare quit never opens the companion.
+        deliberate = reason in DELIBERATE_ENDS or (reason == "shutdown" and platform == "cli")
+        if session_id is None or session_id != self._live_chat or not deliberate:
+            logger.info(
+                "clanka: chat %s ended (%s, %s): not the conversation's end; awake",
+                session_id, platform or "unknown", reason or "no reason",
+            )
+            return
+        self._live_chat = None
+        self.on_session_reset(reason=f"finalize: {reason}")
 
     def _reset(self):
         # A dream the conversation ended before the companion woke from is
@@ -444,6 +514,7 @@ def register(ctx):
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
     ctx.register_hook("api_request_error", plugin.api_request_error)
     ctx.register_hook("on_session_reset", plugin.on_session_reset)
+    ctx.register_hook("on_session_finalize", plugin.on_session_finalize)
     ctx.register_tool(
         name="recall_memory",
         toolset="clanka",

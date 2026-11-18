@@ -73,6 +73,49 @@ lets a plugin send a message only with
 `clanka hermes profile` sets. On an older profile, run it again, or send `zz`
 yourself.
 
+## When a conversation ends
+
+The companion has one conversation at a time, and sleep is what ends it: it
+writes the night's episode, settles its mood, lets the memories that came up
+drift and raises what was left unresolved. On Hermes it falls asleep:
+
+- On a goodnight, `zz` or `/sleep`.
+- On `/new` or `/reset`. Hermes no longer ends a gateway chat after a quiet
+  spell; the `hermes-session-reset-policy` plugin brings that back as a `/new`
+  on your first message after the gap, and the companion sleeps on it too.
+- When you leave the chat it is talking in from the CLI or the TUI: quitting,
+  or a `hermes chat -q` one-shot exiting. Each one-shot is its own night, so a
+  `--resume` after one starts a new conversation.
+
+It stays awake through:
+
+- Another chat ending. One profile has one companion, so only the chat its
+  last message came from counts.
+- Ends Hermes makes on its own and keeps resumable: a dropped connection
+  reaped, the gateway stopping or restarting, an idle or evicted session.
+  The Desktop app ends a chat only this way, so there the companion sleeps on
+  a goodnight or `/new`.
+- Archiving or deleting a chat.
+
+### Why
+
+A conversation left open runs into the next one. The companion's tiredness
+counts every message of the open conversation, so it starts the next one
+tired, it doesn't notice the time you were away, and nothing of the first is
+slept on until the next goodnight.
+
+Sleep can't be taken back, though, and Hermes ends chats it means to resume.
+Sleeping on those would close a conversation halfway and write a night for
+half of it. So only an end someone chose puts the companion to sleep, and
+anything else leaves the conversation open for the next goodnight.
+
+A message you send while the companion is falling asleep is kept and
+reflected on like any other, but it isn't part of that night.
+
+If a conversation stays open anyway,
+[`clanka doctor end-session`](/cli/doctor/#end-session) closes it without
+sleeping on it.
+
 ## Let Nightshade write the soul
 
 Nightshade is a Hermes agent that interviews you about the companion you
