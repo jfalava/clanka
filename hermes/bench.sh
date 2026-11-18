@@ -35,6 +35,18 @@ log=$home/profiles/$profile/logs/agent.log
 db=$home/profiles/$profile/state.db
 [ -d "$home/profiles/$profile" ] || { echo "no profile $profile; run clanka hermes profile first" >&2; exit 1; }
 
+# Each turn is a one-shot, and a one-shot exiting ends the companion's
+# conversation; sleep_on_leave false keeps the evening one conversation. The
+# profile's own value comes back on exit.
+setting=plugins.entries.clanka.settings.sleep_on_leave
+before=$(hermes -p "$profile" config get "$setting" 2>/dev/null) || before=
+hermes -p "$profile" config set "$setting" false > /dev/null
+restore() {
+    if [ -n "$before" ]; then hermes -p "$profile" config set "$setting" "$before"
+    else hermes -p "$profile" config unset "$setting"; fi > /dev/null 2>&1 || true
+}
+trap restore EXIT
+
 # Where the log stood before, so only this evening's writer calls are counted.
 touch "$log"
 mark=$(wc -l < "$log")

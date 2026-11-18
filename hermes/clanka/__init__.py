@@ -31,7 +31,9 @@ A general plugin on Hermes's public plugin API only:
   companion is talking in (quitting the CLI, a one-shot exiting, the TUI), so
   that conversation doesn't stay open and run into the next one. Ends Hermes
   makes on its own and keeps resumable, and other chats ending, leave it
-  awake.
+  awake. ``plugins.entries.clanka.settings.sleep_on_leave: false`` makes
+  leaving keep it awake too, for a script that sends each message as a
+  one-shot (``hermes/bench.sh``); ``/new`` still puts it to sleep.
 
 The companion is the soul.md named by ``plugins.entries.clanka.settings.soul``
 in the profile's config.yaml (``$CLANKA_SOUL`` as a fallback). Put its persona in
@@ -407,6 +409,10 @@ class _Plugin:
         # `clanka doctor end-session` ends it. A process that never had a turn
         # has no chat here, so a bare quit never opens the companion.
         deliberate = reason in DELIBERATE_ENDS or (reason == "shutdown" and platform == "cli")
+        # A scripted run (hermes/bench.sh) talks through one one-shot per
+        # message, so leaving must not end its conversation; /new still does.
+        if self._ctx.get_config("sleep_on_leave", True) in (False, "false") and reason != "new_session":
+            deliberate = False
         if session_id is None or session_id != self._live_chat or not deliberate:
             logger.info(
                 "clanka: chat %s ended (%s, %s): not the conversation's end; awake",
