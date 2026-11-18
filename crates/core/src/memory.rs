@@ -151,13 +151,23 @@ impl Companion {
 
     /// Appends to the immutable transcript.
     pub fn record_turn(&mut self, session: i64, speaker: Speaker, content: &str) -> Result<i64> {
-        self.insert_turn(session, speaker, content, false)
+        self.insert_turn(session, speaker, content, false, None)
+    }
+
+    /// Appends the companion's reply to `user_turn`. A message sent while the
+    /// companion was falling asleep lands in the session after the night's
+    /// prompt was written, and sleep ends the session before the reply
+    /// comes; that reply is still kept, in the slept session, so the exchange
+    /// is reflected on like any other. Only the reply to the session's last
+    /// turn, and only after sleep: a dropped dream keeps nothing.
+    pub fn record_reply(&mut self, session: i64, user_turn: i64, content: &str) -> Result<i64> {
+        self.insert_turn(session, Speaker::Companion, content, false, Some(user_turn))
     }
 
     /// Appends a message of the user's to a dream as an echo: a scene from the
     /// past. Only what an echo showed can survive the dream.
     pub fn record_echo(&mut self, session: i64, content: &str) -> Result<i64> {
-        self.insert_turn(session, Speaker::User, content, true)
+        self.insert_turn(session, Speaker::User, content, true, None)
     }
 
     /// Whether the session's last message is the user's: the reply to it
@@ -180,13 +190,18 @@ impl Companion {
         speaker: Speaker,
         content: &str,
         echo: bool,
+        answers: Option<i64>,
     ) -> Result<i64> {
         let now = self.deps.clock.now_ms();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_writable(&tx, &self.soul.hash)?;
-        ensure_open(&tx, session)?;
+        match (ensure_open(&tx, session), answers) {
+            (Err(Error::SessionClosed(_)), Some(user_turn))
+                if answers_last_after_sleep(&tx, session, user_turn)? => {}
+            (open, _) => open?,
+        }
         if echo && !crate::dream::is_dream(&tx, session)? {
             return Err(Error::Invalid(format!(
                 "session {session} is no dream; echoes happen only in dreams"
@@ -695,6 +710,21 @@ pub(crate) fn ensure_open(conn: &Connection, session: i64) -> Result<()> {
         Some(Some(_)) => Err(Error::SessionClosed(session)),
         Some(None) => Ok(()),
     }
+}
+
+/// Whether `session` ended in sleep and its last turn is `user_turn`, the
+/// user's: a reply to it may still be recorded ([`Companion::record_reply`]).
+fn answers_last_after_sleep(conn: &Connection, session: i64, user_turn: i64) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sessions s WHERE s.id = ?1 AND s.ended_by = 'sleep'
+             AND (SELECT id FROM turns WHERE session_id = s.id ORDER BY id DESC LIMIT 1) = ?2
+             AND (SELECT role FROM turns WHERE id = ?2) = 'user'",
+            [session, user_turn],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }
 
 /// `replaces` is left out of the duplicate check: a supersede is meant to be similar.

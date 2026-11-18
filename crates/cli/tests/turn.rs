@@ -300,3 +300,52 @@ fn an_open_handle_takes_up_a_persona_settled_elsewhere() {
     begin(&mut host, "still there?", false);
     assert!(host.soul().body.contains("Now fond of tea."));
 }
+
+/// A message that arrives while the companion is falling asleep lands in the
+/// session being slept, after the night's prompt was written. Its reply is
+/// still kept, in that session, and the next message starts a new one.
+#[test]
+fn a_reply_to_a_message_sent_while_falling_asleep_is_kept() {
+    use clanka_core::deps::{LlmResponse, ToolCall};
+    use std::sync::{Arc, Mutex};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut chat = open(dir.path());
+    let (_, pending) = begin(&mut chat, "long day", true);
+    let session = pending.session;
+    turn::end(&mut chat, pending, "Tell me.").unwrap();
+
+    // The late message is sent from the chat handle during sleep's model call.
+    let chat = Arc::new(Mutex::new(chat));
+    let late = Arc::new(Mutex::new(None));
+    let (during, sent) = (chat.clone(), late.clone());
+    let mut night = Some(ToolCall {
+        id: "e".into(),
+        name: "write_episode".into(),
+        arguments: r#"{"interpretation": "A long day, told.", "valence": 0.2}"#.into(),
+    });
+    let mut writer = common::open_with(
+        dir.path(),
+        common::Scripted::new(move |_| {
+            if let Some(episode) = night.take() {
+                *sent.lock().unwrap() =
+                    Some(begin(&mut during.lock().unwrap(), "one more thing", false).1);
+                return Ok(LlmResponse {
+                    text: String::new(),
+                    tool_calls: vec![episode],
+                });
+            }
+            Ok(LlmResponse::default())
+        }),
+    );
+    writer.sleep(session).unwrap();
+
+    let pending = late.lock().unwrap().take().unwrap();
+    assert_eq!(pending.session, session);
+    let mut chat = chat.lock().unwrap();
+    let (user, reply) = turn::end(&mut chat, pending, "Go on.").unwrap();
+    assert!(reply > user);
+    assert!(!chat.unanswered(session).unwrap());
+    let (_, next) = begin(&mut chat, "anyway", false);
+    assert_ne!(next.session, session);
+}

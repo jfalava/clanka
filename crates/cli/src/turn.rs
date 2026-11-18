@@ -406,7 +406,7 @@ pub fn end(c: &mut Companion, pending: Pending, reply: &str) -> Result<(i64, i64
     let started = Instant::now();
     let said = clanka_core::tics::without_dashes(reply);
     let ended = c
-        .record_turn(pending.session, Speaker::Companion, &said)
+        .record_reply(pending.session, pending.user_turn, &said)
         .and_then(|turn| {
             c.mark_recalled(pending.session, &pending.recalled)?;
             Ok((pending.user_turn, turn))
