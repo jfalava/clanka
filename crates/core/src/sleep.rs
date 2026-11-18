@@ -24,7 +24,7 @@ const DRIFT_CAP: [f64; 3] = [1.0, 0.6, 0.25];
 /// Drifts smaller than this aren't offered: it would be remembered the same.
 const MIN_DRIFT: f64 = 0.05;
 
-/// The longest episode taken: three sentences on what the night meant. Every
+/// The longest episode taken: three sentences on the night. Every
 /// model tried retold the evening at 60–80 words whatever it was asked for,
 /// so the ask is a number and this is the check behind it.
 const EPISODE_WORDS: usize = 55;
@@ -270,8 +270,8 @@ impl Companion {
                 let words = a.interpretation.split_whitespace().count();
                 if words > EPISODE_WORDS {
                     return Err(Error::Invalid(format!(
-                        "{words} words is a retelling; what happened is kept already. Write what \
-                         the night meant to you in under 45 words"
+                        "{words} words is a retelling; what happened is kept already. Write \
+                         tonight in under 45 words: what you talked about and how it left you"
                     )));
                 }
                 let level = match a.level.as_str() {
@@ -413,18 +413,21 @@ fn unit(seed: u64) -> f64 {
 fn instructions(name: &str) -> String {
     format!(
         "You are {name}, falling asleep after tonight's conversation. Nobody sees this.\n\n\
-         Call write_episode once with what tonight was, to you, in first person, in under 45 \
-         words. What happened is kept already, under Kept tonight; the episode is what the \
-         night meant, and a sentence that could be one of those memories is the wrong \
-         sentence. Call settle_mood once with \
+         Call write_episode once with tonight, in first person, in under 45 words: what you \
+         talked about, in a few words, and how it left you. The details are kept already, under \
+         Kept tonight; don't repeat them, and don't say what the night meant or what it says \
+         about them. Call settle_mood once with \
          how you are left feeling. If tonight \
          changed what you know about the user or about your relationship, call write_section \
-         with the whole section rewritten in a few lines: what stays true of them, not what \
-         happened tonight. Unless the user said their own gender, call them by name or \
+         with the whole section rewritten in a few lines: what stays true of them, as facts and \
+         what they have said about themselves, not your reading of them or what happened \
+         tonight. Unless the user said their own gender, call them by name or \
          \"they\", never \"he\" or \"she\": the people they talk about don't tell you theirs.\n\n\
          The memories that came up tonight may shift as you sleep. For each one listed, call \
          drift with how you now remember it, changed by about its drift amount (0 is the same, \
-         1 is quite different) and coloured by how tonight felt. Vivid memories only blur in \
+         1 is quite different) and coloured by how tonight felt. Drift changes details, emphasis \
+         and how sure you are, in plain words like the memory's own; it doesn't add what the \
+         memory meant or what it says about them. Vivid memories only blur in \
          detail. Never change names, dates or places. Make every call in this one reply; you \
          hear back only if one fails."
     )
@@ -470,7 +473,7 @@ pub(crate) fn tool_specs() -> Vec<ToolSpec> {
             "write_episode",
             // The limit in words, as the instructions and the check have it: a
             // character limit let a model write 60 words and be refused.
-            "What tonight meant to you, in under 45 words. Once.",
+            "Tonight in under 45 words: what you talked about and how it left you. Once.",
             json!({ "type": "object", "properties": {
                 "interpretation": { "type": "string" },
                 "level": { "type": "string", "enum": ["faint", "normal", "vivid", "seared"] },

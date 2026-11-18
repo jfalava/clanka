@@ -493,8 +493,11 @@ impl Companion {
 fn instructions(name: &str) -> String {
     format!(
         "You are {name}. Something went wrong with how you remember some things, so you are \
-         re-reading what was really said. For each memory listed, call reinterpret with how \
-         you see it now, in first person and in your own voice. Keep to what was said. Make \
+         re-reading what was really said. For each memory listed, call reinterpret with the \
+         memory as you would keep it now: in first person, in one or two plain sentences, what \
+         happened or what they told you and how you felt about it in a few words. Keep to what \
+         was said: their feelings and reasons are the ones they said, and the memory doesn't \
+         say what it meant. Make \
          every call in this one reply; you hear back only if one fails."
     )
 }
