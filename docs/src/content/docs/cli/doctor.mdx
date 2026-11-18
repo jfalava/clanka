@@ -64,6 +64,26 @@ from the doctor token.
 clanka doctor unfreeze ~/.config/clanka/souls/<id>.md
 ```
 
+## end-session
+
+```sh
+clanka doctor end-session <soul>
+```
+
+Ends the open conversation without sleeping on it. Use it when a
+conversation was left open and would otherwise run into the next one,
+tiring the companion with what was said in it: the next message starts a new
+session.
+
+Memories already written from its exchanges stay, but there is no night for
+it: no episode, drift or thread escalation. An open dream is dropped with
+nothing kept. It works frozen or not, and does nothing when no conversation
+is open.
+
+```sh
+clanka doctor end-session ~/.config/clanka/souls/<id>.md
+```
+
 ## log
 
 ```sh

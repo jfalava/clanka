@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use clanka::setup::{self, Config, Paths, SharedEmbedder};
 use clanka::status;
 use clanka_core::context::date;
+use clanka_core::model::SessionEnd;
 use clap::Subcommand;
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,19 @@ pub enum DoctorCommand {
     ///
     /// Lifts a freeze from `clanka doctor freeze` or from the doctor token.
     Unfreeze {
+        #[arg(help = SOUL_HELP)]
+        soul: PathBuf,
+    },
+    /// End the open conversation without sleeping on it.
+    ///
+    /// For a conversation that was left open and would otherwise run into the next one,
+    /// tiring the companion with what was said in it: the next message starts a new
+    /// session. Memories already written from its exchanges stay; there is no night for
+    /// it (no episode, drift or thread escalation). An open dream is dropped with nothing
+    /// kept. Works frozen or not, and does nothing when no conversation is open.
+    #[command(after_long_help = "Example:\n  \
+        clanka doctor end-session ~/.config/clanka/souls/<id>.md")]
+    EndSession {
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,
     },
@@ -145,6 +159,7 @@ impl DoctorCommand {
         match self {
             Self::Freeze { .. } => "doctor freeze",
             Self::Unfreeze { .. } => "doctor unfreeze",
+            Self::EndSession { .. } => "doctor end-session",
             Self::Log { .. } => "doctor log",
             Self::Rollback { .. } => "doctor rollback",
             Self::CheckFacts { .. } => "doctor check-facts",
@@ -173,6 +188,26 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
                 "Unfrozen {}. Writes go through again.",
                 soul.display()
             ));
+        }
+        DoctorCommand::EndSession { soul } => {
+            let mut companion = open(&soul)?;
+            if companion.drop_dream()?.is_some() {
+                clanka::ui::success(&format!(
+                    "Dropped the open dream of {}; nothing of it is kept.",
+                    soul.display()
+                ));
+                return Ok(());
+            }
+            match companion.session_in_progress()? {
+                Some(session) => {
+                    companion.end_session(session, SessionEnd::Doctor)?;
+                    clanka::ui::success(&format!(
+                        "Ended the open conversation of {}. The next message starts a new one.",
+                        soul.display()
+                    ));
+                }
+                None => println!("{} has no conversation open.", soul.display()),
+            }
         }
         DoctorCommand::Log { soul, since } => {
             let since = when(&since, now())?;
