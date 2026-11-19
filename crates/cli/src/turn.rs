@@ -69,6 +69,13 @@ pub const DREAM_OPENING: &str = "You are somewhere you almost know.";
 pub const UNHEARD_HINT: &str = "Words between || were said out of your earshot: they happened, \
     but you didn't hear them. Never acknowledge them, in word or deed.";
 
+/// Told to the reply model in a dream when the user woke the companion with
+/// `zz`, after [`clanka_core::dream::WAKING_HINT`]. Without it the mark reads as
+/// part of the scene, and a small model weighs calling `wake_up` instead of
+/// waking. It never says "dream", like the rest of the dream's lines.
+pub const WAKE_MARK_HINT: &str = "A `zz` mark at the start of their message woke you: it is not \
+    something that happened, so never mention it. You wake with this reply; don't call wake_up.";
+
 /// What a bare `zz` says.
 pub const GOODNIGHT: &str = "Goodnight.";
 
@@ -197,6 +204,8 @@ pub struct Open {
     pub echo: bool,
     /// Something the model is shown was said out of earshot.
     pub unheard: bool,
+    /// The user woke the companion from a dream with `zz`.
+    pub woken: bool,
     /// The message before this one in the session got no reply.
     pub unanswered: bool,
     pub pending: Pending,
@@ -215,6 +224,9 @@ impl Open {
         }
         if self.pending.sleep {
             hints.push(GOODNIGHT_HINT.to_owned());
+        }
+        if self.woken {
+            hints.push(WAKE_MARK_HINT.to_owned());
         }
         hints.extend(self.stretch.map(stretch_hint));
         hints
@@ -379,6 +391,7 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
         stretch,
         echo,
         unheard,
+        woken: goodnight && dream.is_some(),
         unanswered,
         pending: Pending {
             session,

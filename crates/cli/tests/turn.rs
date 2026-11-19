@@ -301,6 +301,7 @@ fn a_leading_zz_says_goodnight_and_wakes_a_dream() {
         "{pending:?}"
     );
     assert!(said.contains(clanka_core::dream::WAKING_HINT), "{said}");
+    assert!(said.ends_with(turn::WAKE_MARK_HINT), "{said}");
     assert!(!said.contains(turn::GOODNIGHT_HINT), "{said}");
 }
 
