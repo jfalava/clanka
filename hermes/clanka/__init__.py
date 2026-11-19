@@ -17,7 +17,9 @@ A general plugin on Hermes's public plugin API only:
   runs on ``ctx.llm``, the user's active model, so the companion's memory is
   written by the same model it chats with.
 - Tools ``recall_memory``, ``go_to_sleep`` and, in a dream, ``wake_up``. Sleep
-  and waking wait until the reply is recorded, then consolidate.
+  and waking wait until the reply is recorded, then consolidate, and post one
+  line to the chat saying they happened, in counts only (``ctx.post_message``:
+  not kept in Hermes's transcript, never shown to the model).
 - ``zz`` at the start of a message says goodnight for sure: the companion
   answers with a short goodnight and sleeps after it, tool call or not (in a
   dream, it wakes). ``/sleep [words]`` sends that message for the user, which
@@ -463,9 +465,15 @@ class _Plugin:
                     logger.exception("clanka: reflection on %s failed", turns)
             if sleep:
                 try:
-                    logger.info("clanka: %s", c.sleep())
+                    report = c.sleep()
+                    logger.info("clanka: %s", report)
+                    # Sleeping with nothing said since is a host's conversation
+                    # boundary, not something the user asked for.
+                    if not report.startswith("Already asleep"):
+                        self._post(report)
                 except Exception:
                     logger.exception("clanka: sleep failed")
+                    self._post("Sleep failed. The Hermes log says why.")
                 # The conversation is over: what clanka noted of it goes to the
                 # endpoint its owner named, if they named one. A send that
                 # fails costs nothing; its events go with the next.
@@ -477,6 +485,23 @@ class _Plugin:
                         logger.info("clanka: sent %d diagnostics events", sent)
                 except Exception as e:
                     logger.warning("clanka: diagnostics were not sent: %s", e)
+
+    def _post(self, line):
+        # Into the chat this turn or reset is for, through its adapter: Hermes
+        # keeps it out of the transcript, so the reply model never reads it.
+        # The line holds counts and fixed words only, never anything said or
+        # remembered: it shows in group chats, and a platform keeps it.
+        # Without post_message (an older Hermes), or with no chat to post to,
+        # the line stays in the log.
+        post = getattr(self._ctx, "post_message", None)
+        if post is None:
+            return
+        try:
+            posted = post(NOTICE + line)
+            if not getattr(posted, "ok", False):
+                logger.info("clanka: report not posted: %s", getattr(posted, "error", None))
+        except Exception:
+            logger.exception("clanka: posting the report failed")
 
     def recall_memory(self, args, **_):
         found = self.companion().recall(str(args.get("query", "")))
