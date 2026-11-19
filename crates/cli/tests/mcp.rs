@@ -155,6 +155,23 @@ async fn a_server_without_a_model_records_turns_and_cannot_sleep() {
         .await
         .unwrap();
     assert!(saved.starts_with("Saved. (No companion model"), "{saved}");
+    // A turn the host never ended is dropped by the next begin_turn, so a
+    // refusal sent as that turn's reply isn't saved as the answer to it.
+    call(
+        &client,
+        "begin_turn",
+        json!({ "message": "are you there?" }),
+    )
+    .await
+    .unwrap();
+    let refused = call(&client, "begin_turn", json!({ "message": "~~ A kitchen." }))
+        .await
+        .unwrap();
+    assert!(refused.starts_with("Not recorded."), "{refused}");
+    let ended = call(&client, "end_turn", json!({ "reply": refused }))
+        .await
+        .unwrap_err();
+    assert!(ended.contains("No turn is open"), "{ended}");
     let sleep = call(&client, "sleep", json!({})).await.unwrap_err();
     assert!(sleep.contains("no companion model"), "{sleep}");
     // A `zz` goodnight sleeps from end_turn, with the same refusal.

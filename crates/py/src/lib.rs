@@ -139,13 +139,14 @@ impl PyCompanion {
         first: bool,
     ) -> PyResult<(&'static str, String)> {
         py.detach(|| {
+            // A turn that never ended (the model failed, /stop) can't be ended
+            // now: Hermes calls end_turn for a blocked turn too, and would save
+            // its notice as the answer to it.
+            *lock(&self.pending) = None;
             let begun =
                 turn::begin(&mut lock(&self.chat), message, self.budget, first).map_err(err)?;
             Ok(match begun {
-                Begin::Doctor => {
-                    *lock(&self.pending) = None;
-                    ("doctor", String::new())
-                }
+                Begin::Doctor => ("doctor", String::new()),
                 Begin::Frozen => ("frozen", String::new()),
                 Begin::Awake => ("awake", turn::AWAKE.to_owned()),
                 Begin::Open { context, pending } => {

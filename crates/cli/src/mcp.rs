@@ -111,15 +111,15 @@ impl Server {
         );
         blocking(move || {
             let first = !seen.load(Ordering::Relaxed);
+            // A turn the host never ended can't be ended now: a refusal sent
+            // as this turn's reply would be saved as the answer to it.
+            *lock(&pending) = None;
             let begun = turn::begin(&mut lock(&chat), &message, budget, first)
                 .map_err(|e| e.to_string())?;
             Ok(match begun {
-                Begin::Doctor => {
-                    *lock(&pending) = None;
-                    "Doctor mode: memory is now frozen and this message was not recorded. \
-                     Reply only: \"Memory frozen.\" Do not call end_turn."
-                        .into()
-                }
+                Begin::Doctor => "Doctor mode: memory is now frozen and this message was not \
+                     recorded. Reply only: \"Memory frozen.\" Do not call end_turn."
+                    .into(),
                 Begin::Frozen => "Memory is frozen by the doctor, so nothing is recorded. Reply \
                      without memories and do not call end_turn."
                     .into(),
