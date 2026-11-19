@@ -76,11 +76,15 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
 
     let faint = write(
         &mut c,
-        MemoryType::Preference,
+        MemoryType::Episode,
         Level::Faint,
-        "Laura likes jazz",
+        "Laura likes jazz, like dad",
     );
-    let mut sister = MemoryDraft::new(MemoryType::UserFact, Level::Normal, "Laura is Sam's sister");
+    let mut sister = MemoryDraft::new(
+        MemoryType::PersonaNote,
+        Level::Normal,
+        "Laura is Sam's sister",
+    );
     sister.facts.insert("sister".into(), json!("Laura"));
     sister.source_turns = vec![said];
     let normal = c.write(Actor::Writer, &sister).unwrap();
@@ -95,6 +99,13 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         MemoryType::Episode,
         Level::Seared,
         "The day Laura left",
+    );
+    // What Sam told about themselves is their word: it came up, but never drifts.
+    let told = write(
+        &mut c,
+        MemoryType::UserFact,
+        Level::Normal,
+        "Sam plays in a concert band",
     );
     let unrecalled = write(
         &mut c,
@@ -117,7 +128,7 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         Level::Normal,
         "Laura wants Sam at her concert",
     );
-    c.mark_recalled(s, &[faint, normal, vivid, seared, tonight])
+    c.mark_recalled(s, &[faint, normal, vivid, seared, told, tonight])
         .unwrap();
     drop(c);
 
@@ -146,6 +157,20 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         call(
             "drift",
             json!({ "memory_id": seared, "interpretation": "Nothing happened" }),
+        ),
+        call(
+            "drift",
+            json!({ "memory_id": told, "interpretation": "Sam plays the drums" }),
+        ),
+        // A change to what Sam told about themselves is replaced, not drifted;
+        // anything else isn't sleep's to replace.
+        call(
+            "supersede",
+            json!({ "memory_id": told, "interpretation": "Sam left the concert band" }),
+        ),
+        call(
+            "supersede",
+            json!({ "memory_id": vivid, "interpretation": "Laura is fine now" }),
         ),
         call(
             "drift",
@@ -206,6 +231,14 @@ fn sleep_writes_the_night_and_drifts_only_what_came_up() {
         "Laura wants Sam at her concert"
     );
 
+    let replaced = c.memory(told).unwrap().superseded_by.unwrap();
+    let now = c.memory(replaced).unwrap();
+    assert_eq!(
+        (now.kind, now.interpretation.as_str()),
+        (MemoryType::UserFact, "Sam left the concert band")
+    );
+    assert_eq!(c.memory(vivid).unwrap().superseded_by, None);
+
     // Facts never drift; the vector follows the new interpretation.
     let m = c.memory(normal).unwrap();
     assert_eq!(
@@ -246,7 +279,7 @@ fn no_episode_means_no_sleep_and_a_retry_never_drifts_twice() {
     let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), time.clone());
     let id = write(
         &mut c,
-        MemoryType::Preference,
+        MemoryType::Episode,
         Level::Faint,
         "Laura likes jazz",
     );

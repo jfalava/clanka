@@ -160,7 +160,8 @@ impl Companion {
     /// with a seeded drift magnitude under the `drift` dial. A memory written
     /// this session came up only because it was just made; it hasn't had a
     /// night to blur, and offering it invites the model to rewrite it as the
-    /// whole evening.
+    /// whole evening. What the user told about themselves never blurs: it is
+    /// their word, not the companion's memory of it.
     pub(crate) fn drift_offers(
         &self,
         session: i64,
@@ -171,6 +172,7 @@ impl Companion {
             .prepare(
                 "SELECT id, level FROM memories
                  WHERE last_recalled_session = ?1 AND status = 'active' AND level != 'seared'
+                   AND type NOT IN ('user_fact', 'preference')
                    AND created_at < (SELECT started_at FROM sessions WHERE id = ?1)
                    AND NOT EXISTS (SELECT 1 FROM drift_events d WHERE d.memory_id = memories.id
                                    AND d.session_id = ?1)
@@ -230,7 +232,19 @@ impl Companion {
             None => "not set".into(),
         };
         let drifts = self.drift_listing(offered)?;
-        let mut sections = Vec::new();
+        let told: Vec<String> = self
+            .told()?
+            .iter()
+            .map(|m| crate::writer::listing(m, None))
+            .collect();
+        let mut sections = vec![format!(
+            "What they told you about themselves, kept on its own:\n{}",
+            if told.is_empty() {
+                "(nothing)".to_owned()
+            } else {
+                told.join("\n")
+            }
+        )];
         for section in [Section::AboutUser, Section::Relationship] {
             let content = self.section(section)?.unwrap_or_default();
             sections.push(format!(
@@ -305,10 +319,50 @@ impl Companion {
                 self.write_section(Actor::Sleep, section, &a.content)?;
                 Ok(format!("section {} updated", a.section))
             }
+            "supersede" => self.supersede_told(call, session),
             "settle_mood" => self.settle_mood_call(call),
             "drift" => self.drift_call(call, session, offered, drifted),
             other => Err(Error::Invalid(format!("there is no tool called {other:?}"))),
         }
+    }
+
+    /// Replaces something the user told about themselves that tonight
+    /// changed. Told facts never drift, so a change the reflection missed
+    /// would otherwise stay in view on every turn; sleep has the whole night
+    /// to catch it. Its facts are checked against tonight's words and those
+    /// of the memory it replaces, as a reflection's supersede is.
+    fn supersede_told(&mut self, call: &ToolCall, session: i64) -> Result<String> {
+        let a: SupersedeTold = args(call)?;
+        let old = self.memory(a.memory_id)?;
+        if !matches!(old.kind, MemoryType::UserFact | MemoryType::Preference) {
+            return Err(Error::Invalid(format!(
+                "memory {} is not something they told you about themselves",
+                old.id
+            )));
+        }
+        let said: Vec<(i64, String)> = self
+            .conn
+            .prepare(
+                "SELECT id, content FROM turns WHERE session_id = ?1 AND role = 'user' ORDER BY id",
+            )?
+            .query_map([session], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let turns: Vec<i64> = said.iter().map(|(id, _)| *id).collect();
+        let spoken: Vec<String> = said.iter().map(|(_, text)| heard(text)).collect();
+        let earlier = self.source_text(&old, false)?;
+        let replaced = Some((old.source_turns.as_slice(), earlier.as_str()));
+        let level = match a.memory.level.as_str() {
+            "" => old.level,
+            level => parse(Level::parse, level, "level")?,
+        };
+        let (draft, note) =
+            a.memory
+                .draft(old.kind, level, &turns, &spoken.join("\n"), replaced)?;
+        Ok(format!(
+            "memory {} replaces {}{note}",
+            self.supersede(Actor::Sleep, old.id, &draft)?,
+            old.id
+        ))
     }
 
     /// The memories offered to drift, as the model reads them.
@@ -421,8 +475,11 @@ fn instructions(name: &str) -> String {
          changed what you know about the user or about your relationship, call write_section \
          with the whole section rewritten in a few lines: what stays true of them, as facts and \
          what they have said about themselves, not your reading of them or what happened \
-         tonight. Unless the user said their own gender, call them by name or \
-         \"they\", never \"he\" or \"she\": the people they talk about don't tell you theirs.\n\n\
+         tonight; what they told you about themselves is kept on its own, so the section \
+         doesn't repeat it. If tonight changed one of those things, call supersede on that \
+         memory with how it is now, in their words. Unless the user told you their own gender or pronouns, now or \
+         before, call them by name or \"they\", never \"he\" or \"she\": the people they talk \
+         about don't tell you theirs.\n\n\
          The memories that came up tonight may shift as you sleep. For each one listed, call \
          drift with how you now remember it, changed by about its drift amount (0 is the same, \
          1 is quite different) and coloured by how tonight felt. Drift changes details, emphasis \
@@ -445,6 +502,13 @@ struct WriteEpisode {
 struct WriteSection {
     section: String,
     content: String,
+}
+
+#[derive(Deserialize)]
+struct SupersedeTold {
+    memory_id: i64,
+    #[serde(flatten)]
+    memory: crate::writer::MemoryArgs,
 }
 
 #[derive(Deserialize)]
@@ -487,6 +551,16 @@ pub(crate) fn tool_specs() -> Vec<ToolSpec> {
                 "section": { "type": "string", "enum": ["about_user", "relationship"] },
                 "content": { "type": "string" },
             }, "required": ["section", "content"] }),
+        ),
+        tool(
+            "supersede",
+            "Something they told you about themselves changed tonight: replace that memory with how it is now.",
+            json!({ "type": "object", "properties": {
+                "memory_id": { "type": "integer" },
+                "interpretation": { "type": "string", "maxLength": 300 },
+                "facts": { "type": "object", "additionalProperties": { "type": "string" },
+                    "description": "Names, dates and places, each copied exactly from what the user said." },
+            }, "required": ["memory_id", "interpretation"] }),
         ),
         mood_spec("How you are left feeling as you fall asleep. Once."),
         drift_spec("How you now remember one of tonight's memories."),

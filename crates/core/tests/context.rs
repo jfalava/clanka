@@ -87,14 +87,24 @@ fn parts_come_in_the_designed_order() {
         at("## Core values"),
         at("Has a sister Sam adores"),
         at("Close, a little guarded"),
+        at("Laura is Sam's older sister"),
         at("Sam came back early"),
         at("Ask about Laura gently"),
         at("Sam never said why Laura left"),
-        at("Laura is Sam's older sister"),
+        at("Laura and dad fought"),
     ];
     assert!(order.is_sorted(), "{order:?}\n{text}");
     // The hot thread is listed once, as a thread; the simmering one isn't a hot thread.
     assert_eq!(text.matches("Sam never said why Laura left").count(), 1);
+    // What the user told about themselves is shown once, as told, never as recalled.
+    assert_eq!(text.matches("Laura is Sam's older sister").count(), 1);
+    assert_eq!(
+        ctx.told
+            .iter()
+            .map(|m| m.interpretation.as_str())
+            .collect::<Vec<_>>(),
+        ["Laura is Sam's older sister", "Laura sends Sam songs"]
+    );
     assert!(ctx.memories.iter().all(|r| r.memory.id != hot));
     assert_eq!(
         ctx.hot_threads.iter().map(|m| m.id).collect::<Vec<_>>(),

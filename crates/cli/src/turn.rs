@@ -352,8 +352,9 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
         c.record_turn(session, Speaker::User, message)?
     };
     let recalled = context
-        .hot_threads
+        .told
         .iter()
+        .chain(&context.hot_threads)
         .chain(context.memories.iter().map(|r| &r.memory))
         .map(|m| m.id)
         .collect();

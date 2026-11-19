@@ -3,11 +3,12 @@
 //!
 //! 1. Persona with core values: always included, never truncated.
 //! 2. Editable soul sections.
-//! 3. Mood.
-//! 4. The last turn note.
-//! 5. Hot threads.
-//! 6. Recalled memories.
-//! 7. The current session's turns, newest first, with whatever budget is left.
+//! 3. What the user told the companion about themselves.
+//! 4. Mood.
+//! 5. The last turn note.
+//! 6. Hot threads.
+//! 7. Recalled memories.
+//! 8. The current session's turns, newest first, with whatever budget is left.
 //!
 //! Each part is included only if it fits in what earlier parts left over; a
 //! list stops at its first item that doesn't fit, so lower-ranked items go
@@ -24,6 +25,9 @@ use rusqlite::OptionalExtension;
 pub fn estimate_tokens(text: &str) -> usize {
     text.chars().count().div_ceil(3)
 }
+
+/// Most of what the user told about themselves shown on a turn.
+const TOLD_LIMIT: i64 = 12;
 
 const TIRED_HINT: &str = "You're getting tired. Your replies get shorter.";
 const SLEEPY_HINT: &str = "You're very tired. Ask to sleep soon, but don't force it.";
@@ -95,6 +99,9 @@ pub struct Context {
     /// each memory is shown with how long ago it happened.
     pub today: Option<i64>,
     pub turn_note: Option<String>,
+    /// What the user told the companion about themselves ([`Companion::told`]),
+    /// on every turn, whether or not this message brings it up.
+    pub told: Vec<Memory>,
     pub hot_threads: Vec<Memory>,
     pub memories: Vec<Recalled>,
     /// Session turns that fit, oldest first. Older ones are dropped first.
@@ -161,6 +168,15 @@ impl Companion {
             Some(m) if !dreaming => self.apply_time_away(m)?,
             _ => None,
         };
+        // A soul with a sense of time also knows how long ago something happened.
+        let today = self.today().filter(|_| !dreaming);
+        let mut told = Vec::new();
+        for memory in self.told()? {
+            if !fits(&render_memory(&memory, today)) {
+                break;
+            }
+            told.push(memory);
+        }
         let mood = mood.filter(|m| fits(&render_mood(m)));
         // The note is the writer's, for the next waking reply.
         let turn_note = self
@@ -169,8 +185,6 @@ impl Companion {
             .filter(|_| !dreaming)
             .filter(|n| fits(&render_note(n)));
 
-        // A soul with a sense of time also knows how long ago something happened.
-        let today = self.today().filter(|_| !dreaming);
         let mut hot_threads = Vec::new();
         for memory in self.hot_threads()? {
             if !fits(&render_memory(&memory, today)) {
@@ -180,7 +194,8 @@ impl Companion {
         }
         let mut memories = Vec::new();
         for recalled in self.recall(message, ranking)? {
-            if hot_threads.iter().any(|t| t.id == recalled.memory.id) {
+            let id = recalled.memory.id;
+            if hot_threads.iter().chain(&told).any(|t| t.id == id) {
                 continue;
             }
             if !fits(&render_memory(&recalled.memory, today)) {
@@ -225,6 +240,7 @@ impl Companion {
             sections,
             mood,
             turn_note,
+            told,
             hot_threads,
             omitted_turns: session.len() - turns.len(),
             memories,
@@ -277,6 +293,8 @@ impl Companion {
         }
         // Said on the dream's first turn; the host's history keeps saying it.
         ctx.dream = None;
+        ctx.told
+            .retain(|m| m.last_recalled_session != Some(session));
         ctx.hot_threads
             .retain(|m| m.last_recalled_session != Some(session));
         ctx.memories
@@ -339,6 +357,31 @@ impl Companion {
             hours,
             warmth_shift: mood.warmth - before,
         }))
+    }
+
+    /// What the user told the companion about themselves (user facts and
+    /// preferences, in their words), shown on every turn because recall would
+    /// bury them: who they are rarely matches what is being said. Most
+    /// important first, as this companion leveled them, then most recalled, so
+    /// what each soul cares about is what it keeps in view; at most
+    /// [`TOLD_LIMIT`].
+    pub(crate) fn told(&self) -> Result<Vec<Memory>> {
+        let ids: Vec<i64> = self
+            .conn
+            .prepare(
+                "SELECT id FROM memories
+                 WHERE type IN (?1, ?2) AND status = 'active' AND dreamt = 0
+                 ORDER BY CASE level WHEN 'seared' THEN 3 WHEN 'vivid' THEN 2
+                                     WHEN 'normal' THEN 1 ELSE 0 END DESC,
+                          recall_count DESC, id
+                 LIMIT ?3",
+            )?
+            .query_map(
+                rusqlite::params![MemoryType::UserFact, MemoryType::Preference, TOLD_LIMIT],
+                |r| r.get(0),
+            )?
+            .collect::<rusqlite::Result<_>>()?;
+        ids.into_iter().map(|id| self.memory(id)).collect()
     }
 
     /// Unresolved hot threads, oldest first: they must come up until closed.
@@ -416,6 +459,17 @@ impl Context {
         let mut out = vec![self.persona.clone()];
         out.extend(self.dream.clone());
         out.extend(self.sections.iter().map(|(s, c)| render_section(*s, c)));
+        if !self.told.is_empty() {
+            let told: Vec<String> = self
+                .told
+                .iter()
+                .map(|m| render_memory(m, self.today))
+                .collect();
+            out.push(format!(
+                "What the person you're talking to has told you about themselves:\n{}",
+                told.join("\n")
+            ));
+        }
         out.extend(self.mood.iter().map(render_mood));
         out.extend(self.turn_note.iter().map(|n| render_note(n)));
         if !self.hot_threads.is_empty() {

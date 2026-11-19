@@ -30,6 +30,9 @@ While it sleeps, the companion:
 Drift is how much a memory blurs. The `drift` trait sets the amount: 0 is a
 tape recorder. Faint memories shift the most, vivid ones only in detail, and
 seared ones never.
+[What you told it about yourself](/concepts/memory/#what-you-told-it-about-yourself)
+never drifts either; if the night changed one of those things, sleep replaces
+it with how it is now.
 
 Sleep needs the [`[model]`](/configuration/#model). If it fails before the
 episode is written, the session stays open and you can try again.
@@ -37,10 +40,10 @@ episode is written, the session stays open and you can try again.
 ## Getting tired
 
 Each turn's context has a budget (`--budget`, 6000 estimated tokens by
-default). The persona, the recalled memories and the mood come first; what is
-left is for the conversation so far. Once the conversation fills the
-`tired_at` share of that room the companion gets tired, and past the
-`sleep_at` share it asks to sleep. It asks, but never forces it.
+default). The persona, what you told it about yourself, the recalled memories
+and the mood come first; what is left is for the conversation so far. Once the
+conversation fills the `tired_at` share of that room the companion gets tired,
+and past the `sleep_at` share it asks to sleep. It asks, but never forces it.
 
 ## Dreams
 

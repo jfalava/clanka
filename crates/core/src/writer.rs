@@ -537,8 +537,18 @@ impl Companion {
             .map(|m| listing(m, today))
             .collect();
         out.push(format!("Open threads:\n{}", or_none(&threads.join("\n"))));
+        let told = self.told()?;
+        let listed: Vec<String> = told.iter().map(|m| listing(m, today)).collect();
+        out.push(format!(
+            "What they told you about themselves, already kept:\n{}",
+            or_none(&listed.join("\n"))
+        ));
         let recalled = self.recall(&format!("{said}\n{replied}"), self.ranking())?;
-        let memories: Vec<String> = recalled.iter().map(|r| listing(&r.memory, today)).collect();
+        let memories: Vec<String> = recalled
+            .iter()
+            .filter(|r| told.iter().all(|t| t.id != r.memory.id))
+            .map(|r| listing(&r.memory, today))
+            .collect();
         out.push(format!(
             "Memories this brings up, already kept (the same thing again is supersede or \
              raise_level, not remember):\n{}",
@@ -729,8 +739,14 @@ fn instructions(name: &str) -> String {
          the ones they said: don't guess at what is going on inside them, what it says about \
          them or what it meant. Don't retell what you replied; the memory keeps the exchange it \
          came from. \
-         Unless the user said their own gender, call them by name or \"they\", never \"he\" or \
-         \"she\": the people they talk about don't tell you theirs. \
+         Unless the user told you their own gender or pronouns, now or before, call them by name \
+         or \"they\", never \"he\" or \"she\": the people they talk about don't tell you theirs. \
+         user_fact and preference are what stays true of them, as they told you: who they are, \
+         how they look, what they do, like and dislike, the people in their life, never a \
+         guess. What happened to them today is not one; tonight's episode keeps it when you \
+         sleep. You see every user_fact and preference on every turn, most important first, \
+         so their level is how much each matters to you; their name, pronouns and birthday \
+         are at least vivid. \
          One memory from an exchange is the norm, a second only for a separate thing worth \
          keeping: a fact and how it felt are one memory, not two. A memory's level is how \
          deeply it's burned in. faint is the default, most of \
@@ -801,10 +817,10 @@ pub(crate) fn parse<T>(parse: fn(&str) -> Option<T>, value: &str, what: &str) ->
 
 /// Fields shared by every tool that writes a memory.
 #[derive(Deserialize)]
-struct MemoryArgs {
+pub(crate) struct MemoryArgs {
     interpretation: String,
     #[serde(default)]
-    level: String,
+    pub(crate) level: String,
     #[serde(default)]
     facts: Map<String, Value>,
     valence: Option<f64>,
@@ -824,7 +840,7 @@ impl MemoryArgs {
     /// their text. A fact carried over from it was said there, so it is kept,
     /// and the new memory then cites those turns as well, for the doctor to
     /// find the fact in.
-    fn draft(
+    pub(crate) fn draft(
         self,
         kind: MemoryType,
         level: Level,

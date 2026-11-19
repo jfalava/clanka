@@ -88,7 +88,7 @@ fn an_echo_sears_only_what_was_written_awake() {
     let faint = c
         .write(
             Actor::Writer,
-            &MemoryDraft::new(MemoryType::Preference, Level::Faint, "Laura likes jazz"),
+            &MemoryDraft::new(MemoryType::Episode, Level::Faint, "Laura likes jazz"),
         )
         .unwrap();
     let normal = c
