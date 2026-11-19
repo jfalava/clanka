@@ -312,7 +312,7 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
         },
         first,
         dream: is(|o| o.pending.dream),
-        goodnight: is(|o| o.pending.sleep),
+        goodnight: is(|o| o.pending.sleep || o.woken),
         echo: is(|o| o.echo),
         unheard: is(|o| o.unheard),
         unanswered: is(|o| o.unanswered),

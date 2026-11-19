@@ -213,6 +213,17 @@ fn a_wake_up_call_is_noted_and_never_contradicts_a_dream_that_is_ending() {
             json!([[false, false, true], 3]),
         ]
     );
+    // The `zz` that woke the dream is logged as a goodnight, which tells it
+    // from a dream that filled its session.
+    let begun: Vec<Value> = lines(&file)
+        .into_iter()
+        .filter(|line| line["event"] == "turn_begin")
+        .map(|line| json!([line["dream"], line["goodnight"], line["spent"]]))
+        .collect();
+    assert_eq!(
+        begun,
+        [json!([true, false, false]), json!([true, true, true])]
+    );
 }
 
 /// An open that fails is still about a companion, and one refused for a

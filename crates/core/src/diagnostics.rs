@@ -115,7 +115,9 @@ pub enum Event {
         /// The host conversation's first turn, which gets the whole context.
         first: bool,
         dream: bool,
-        /// The message said goodnight with `zz`.
+        /// The message said goodnight with `zz`. In a dream that wakes the
+        /// companion, which `spent` alone can't tell from a dream that filled
+        /// its session.
         goodnight: bool,
         echo: bool,
         /// Something in it was said out of earshot.
@@ -129,7 +131,7 @@ pub enum Event {
         message_chars: usize,
         /// Estimated tokens of the whole context, against the turn's budget.
         context_tokens: usize,
-        /// Memories recall brought up, before a replaying host's are left out.
+        /// Memories recall brought up, after a replaying host's are left out.
         memories: usize,
         hot_threads: usize,
         /// Session turns that no longer fit.
