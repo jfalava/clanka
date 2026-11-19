@@ -59,7 +59,8 @@ quits without recording anything. See
 
 ### `>>N`
 
-At the start of a message, asks for a reply of about N paragraphs.
+At the start of a message, asks for a reply of about N paragraphs. A space
+after `>>` is fine: `>> 3` is the same marker.
 
 ```text
 you> >>3 Tell me about the cello lesson.
@@ -69,7 +70,9 @@ you> >>3 Tell me about the cello lesson.
 
 As the first message after sleep, starts a
 [dream](/concepts/sleep-and-dreams/#dreams). What you write is what happens
-to the companion, as "you", and it lives it without knowing it dreams.
+to the companion, as "you", and it lives it without knowing it dreams. The
+space after `~~` is optional; only `~~text~~`, closed like strikethrough, is
+plain text.
 
 ```text
 you> ~~ You're standing in your mother's kitchen. It is too quiet.
@@ -77,7 +80,8 @@ you> ~~ You're standing in your mother's kitchen. It is too quiet.
 
 ### `<<`
 
-In a dream, shows the companion an echo of the past.
+In a dream, shows the companion an echo of the past. The space after `<<` is
+optional; only `<<text>>`, closed like typed guillemets, is plain text.
 
 ```text
 you> << >>3 Years ago, in this room, the judge reads the sentence aloud.

@@ -160,8 +160,9 @@ enum Command {
     /// dream, `<<` shows it an echo of the past. It wakes when it chooses to, when the dream
     /// fills the session, or on /sleep or `zz`; only fragments and its mood stay, and at most one
     /// thing an echo showed that you had also written while it was awake. Leaving mid-dream
-    /// keeps nothing of it. Anywhere in a waking message, text between || and || is said out
-    /// of the companion's earshot: it plays along without hearing it, and never keeps it.
+    /// keeps nothing of it. `>>`, `~~` and `<<` work with a space after them or without.
+    /// Anywhere in a waking message, text between || and || is said out of the companion's
+    /// earshot: it plays along without hearing it, and never keeps it.
     #[command(
         after_long_help = "Example:\n  clanka chat ~/.config/clanka/souls/<id>.md\n\n\
         A dream:\n  \

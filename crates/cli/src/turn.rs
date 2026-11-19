@@ -97,11 +97,17 @@ pub fn goodnight_marker(message: &str) -> (bool, &str) {
 }
 
 /// Splits a leading `~~` off a message: the companion falls asleep into a
-/// dream that starts with what follows. A bare `~~` drops it somewhere. `~~`
-/// glued to a word is Markdown strikethrough, not a marker.
+/// dream that starts with what follows, with a space after `~~` or without. A
+/// bare `~~` drops it somewhere. Glued to a word and closed later in the
+/// message it is Markdown strikethrough, and `~~~` is a code fence: neither is
+/// a marker.
 pub fn dream_marker(message: &str) -> (bool, &str) {
     match message.trim_start().strip_prefix("~~") {
-        Some(rest) if rest.is_empty() || rest.starts_with(char::is_whitespace) => {
+        Some(rest)
+            if rest.is_empty()
+                || rest.starts_with(char::is_whitespace)
+                || !rest.starts_with('~') && !rest.contains("~~") =>
+        {
             let rest = rest.trim();
             (true, if rest.is_empty() { DREAM_OPENING } else { rest })
         }
@@ -110,10 +116,16 @@ pub fn dream_marker(message: &str) -> (bool, &str) {
 }
 
 /// Splits a leading `<<` off a dream message: an echo, a scene from the past.
-/// It needs a scene after it; alone, or glued to a word, it is just text.
+/// It needs a scene after it, with a space after `<<` or without; alone it is
+/// just text, and so is a glued `<<` closed by a later `>>` (`<<Hola>>`, typed
+/// guillemets). A `>>N` right after it is still the length marker.
 pub fn echo_marker(message: &str) -> (bool, &str) {
     match message.trim_start().strip_prefix("<<") {
-        Some(rest) if rest.starts_with(char::is_whitespace) && !rest.trim().is_empty() => {
+        Some(rest)
+            if !rest.trim().is_empty()
+                && (rest.starts_with(char::is_whitespace)
+                    || rest.find(">>").is_none_or(|i| i == 0)) =>
+        {
             (true, rest.trim())
         }
         _ => (false, message),
@@ -126,12 +138,14 @@ pub const MAX_STRETCH: u32 = 10;
 /// Splits a leading `>>N` off a message: the user wants this one reply to set
 /// the length rule aside and run to about N paragraphs (an action scene, a
 /// story). Returns N and the message without the marker, which is what gets
-/// recorded and recalled on; a bare `>>N` means go on. Anything else, a `>>`
-/// mid-message included, is not a marker.
+/// recorded and recalled on; a bare `>>N` means go on, and `>> N` is the same
+/// marker. Anything else, a `>>` mid-message or one without a number included,
+/// is not a marker.
 pub fn stretch(message: &str) -> (Option<u32>, &str) {
     let Some(rest) = message.trim_start().strip_prefix(">>") else {
         return (None, message);
     };
+    let rest = rest.trim_start_matches([' ', '\t']);
     let text = rest.trim_start_matches(|c: char| c.is_ascii_digit());
     let n = rest[..rest.len() - text.len()].parse::<u32>();
     match n {

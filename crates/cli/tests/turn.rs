@@ -98,6 +98,9 @@ fn a_leading_stretch_marker_lifts_the_length_rule_for_one_reply() {
     let (quiet, pending) = begin(&mut c, " >>3 she ducks under the blade", false);
     assert_eq!(quiet, turn::stretch_hint(3));
     turn::end(&mut c, pending, "…").unwrap();
+    let (spaced, pending) = begin(&mut c, ">> 2 she parries", false);
+    assert_eq!(spaced, turn::stretch_hint(2));
+    turn::end(&mut c, pending, "…").unwrap();
 
     // Mid-message, or glued to a word, it is just text.
     let (plain, pending) = begin(&mut c, "a >>3 b", false);
@@ -125,6 +128,7 @@ fn a_leading_stretch_marker_lifts_the_length_rule_for_one_reply() {
         [
             "hi",
             "she ducks under the blade",
+            "she parries",
             "a >>3 b",
             ">>3rd try",
             "Go on."
@@ -173,10 +177,14 @@ fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(dir.path());
 
-    // Glued to a word it is strikethrough; `<<` awake is just text.
+    // Closed, it is strikethrough; `~~~` is a code fence; `<<` awake is just
+    // text.
     let (_, pending) = begin(&mut c, "~~not~~ a dream", true);
     assert!(!pending.dream);
     turn::end(&mut c, pending, "Ha.").unwrap();
+    let (_, pending) = begin(&mut c, "~~~\ncode\n~~~", false);
+    assert!(!pending.dream);
+    turn::end(&mut c, pending, "Neat.").unwrap();
     let (said, pending) = begin(&mut c, "<< years ago ||she lied||", false);
     assert!(!pending.dream);
     assert!(said.ends_with(turn::UNHEARD_HINT), "{said}");
@@ -199,11 +207,20 @@ fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
     let session = c.session_in_progress().unwrap().unwrap();
     c.end_session(session, clanka_core::model::SessionEnd::Doctor)
         .unwrap();
-    let (first, pending) = begin(&mut c, "~~ You're in a kitchen.", false);
+    // Glued to the dream's first words, `~~` still starts it.
+    let (first, pending) = begin(&mut c, "~~You're in a kitchen.", false);
     assert!(pending.dream && !pending.wake);
     assert!(first.contains("somewhere you know"), "{first}");
     assert!(!first.contains(turn::UNHEARD_HINT), "{first}");
     turn::end(&mut c, pending, "It smells of bread.").unwrap();
+
+    // Closed by `>>`, `<<` is typed guillemets; glued to a scene, an echo.
+    let (said, pending) = begin(&mut c, "<<Hola>>, she says.", false);
+    assert!(!said.contains(clanka_core::dream::ECHO_HINT), "{said}");
+    turn::end(&mut c, pending, "Hola.").unwrap();
+    let (echo, pending) = begin(&mut c, "<<Rain on the window.", false);
+    assert!(echo.contains(clanka_core::dream::ECHO_HINT), "{echo}");
+    turn::end(&mut c, pending, "I remember.").unwrap();
 
     let (echo, pending) = begin(&mut c, "<< >>3 The judge reads the sentence.", false);
     assert!(echo.contains(clanka_core::dream::ECHO_HINT), "{echo}");
@@ -223,6 +240,10 @@ fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
         [
             "You're in a kitchen.",
             "It smells of bread.",
+            "<<Hola>>, she says.",
+            "Hola.",
+            "Rain on the window.",
+            "I remember.",
             "The judge reads the sentence.",
             "No."
         ]
