@@ -150,8 +150,9 @@ enum Command {
     /// api_key_env, which names the environment variable holding the key). Type a message
     /// and press Enter; each reply is remembered in the background. Send /sleep to end the
     /// conversation and turn it into memories, or send the soul's doctor_token to freeze
-    /// the memory and quit without recording anything. Refuses to start if the persona
-    /// changed since its memories were written.
+    /// the memory and quit without recording anything. Send /triage to see the companion's
+    /// state and last diagnostics events, without any conversation text. Refuses to start
+    /// if the persona changed since its memories were written.
     ///
     /// Markers at the start of a message: `zz` says goodnight: the companion answers it
     /// and falls asleep, as on /sleep. `>>N` asks for a reply of about N paragraphs.
@@ -886,7 +887,12 @@ fn run(command: Command) -> Result<bool> {
                 );
             }
             let (chat, writer) = open_pair(&paths, &soul, &config)?;
-            let chatted = clanka::chat::run(chat, writer.expect("a model is configured"), budget);
+            let log = config
+                .diagnostics
+                .enabled
+                .then(|| clanka::diagnostics::Log::file(&paths));
+            let chatted =
+                clanka::chat::run(chat, writer.expect("a model is configured"), budget, log);
             send_quietly(&paths, &config);
             chatted
         }

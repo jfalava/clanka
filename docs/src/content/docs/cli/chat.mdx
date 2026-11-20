@@ -41,6 +41,29 @@ clanka chat --budget 4000 ~/.config/clanka/souls/<id>.md
 Ends the conversation and turns it into memories. See
 [Sleep](/concepts/sleep-and-dreams/#sleep).
 
+### `/triage`
+
+Prints what clanka did lately for this companion: its state now (in a
+conversation, dreaming, frozen or none open) and its last 15
+[diagnostics events](/cli/diagnostics/), such as which markers a message used,
+whether a `zz` ended a dream and how each pass over memory went. It holds no
+conversation text, only counts and fixed words, so you can paste it into a
+bug report. It isn't a turn: nothing is recorded and no model is called.
+Above, the `zz` ended the dream (`dream goodnight spent`) and the wake pass
+ran.
+
+```text
+you> /triage
+clanka 0.1.10 triage for Nova
+Now: no conversation open.
+Last 3 events, oldest first (UTC):
+21:03:25 turn_begin context_tokens=499 dream goodnight host=chat message_chars=10 ms=41 outcome=open spent
+21:03:31 turn_end host=chat ms=3 reply_chars=212
+21:03:58 memory_pass.wake host=chat ms=26810 ok=2 rounds=2
+```
+
+With diagnostics off (`[diagnostics] enabled = false`), it shows the state only.
+
 ### `zz`
 
 At the start of a message, says goodnight: the companion answers it, then

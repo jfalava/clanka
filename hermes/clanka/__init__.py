@@ -25,6 +25,8 @@ A general plugin on Hermes's public plugin API only:
   dream, it wakes). ``/sleep [words]`` sends that message for the user, which
   needs ``plugins.entries.clanka.allow_gateway_injection`` (``clanka hermes
   profile`` sets it).
+- ``/triage`` answers with the companion's state and its last diagnostics
+  events, counts and fixed words only; no turn, no model call.
 - ``on_session_reset`` (``/new``, ``/reset``, a session-reset policy plugin):
   the companion sleeps on whatever was said since it last slept, so a
   conversation the user walked away from still becomes a memory. Nothing
@@ -61,6 +63,10 @@ MAX_TOKENS = 2048
 # Added after a ``zz`` goodnight's context, last, so the model calls the tool
 # the user asked for. Sleep comes after the reply whether it does or not.
 GO_TO_SLEEP = "Call go_to_sleep first, then write that goodnight."
+
+# How long /triage waits for memory to open: a command answers at once or not
+# at all, and an open that waits on a keychain prompt can take minutes.
+TRIAGE_TIMEOUT = 5
 
 # Longest a turn waits for memory to open, in seconds. Hermes gives a hook
 # callback 30s, then drops it and lets the model answer with no memory, so the
@@ -148,6 +154,12 @@ def _why(error):
     return _WHY.get(kind) or (
         f"Memory is not working, so nothing was sent ({kind}). Hermes's log has the whole error."
     )
+
+
+def _no_triage(error):
+    # The kind only, as in _why: the error's text can name files on this machine.
+    kind = getattr(error, "code", "other")
+    return f"no triage: memory is not working ({kind}). Hermes's log has the whole error."
 
 
 def _text(content):
@@ -503,6 +515,24 @@ class _Plugin:
         except Exception:
             logger.exception("clanka: posting the report failed")
 
+    def triage_command(self, raw_args="", **_):
+        # Hermes shows what this returns as the command's answer: no turn is
+        # admitted and the model never reads it. It is clanka's own report,
+        # counts and fixed words only, so it is safe in a group chat and in a
+        # bug report.
+        try:
+            companion = self.companion(TRIAGE_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            return NOTICE + "memory has not opened yet, so there is nothing to show."
+        except Exception as e:
+            logger.exception("clanka: memory did not open for /triage")
+            return NOTICE + _no_triage(e)
+        try:
+            return companion.triage()
+        except Exception as e:
+            logger.exception("clanka: /triage failed")
+            return NOTICE + _no_triage(e)
+
     def recall_memory(self, args, **_):
         found = self.companion().recall(str(args.get("query", "")))
         return json.dumps({"memories": found or [], "note": "" if found else "Nothing comes to mind."})
@@ -579,6 +609,11 @@ def register(ctx):
         plugin.sleep_command,
         description="Say goodnight: the companion answers, then falls asleep (in a dream, it wakes)",
         args_hint="[your goodnight]",
+    )
+    ctx.register_command(
+        "triage",
+        plugin.triage_command,
+        description="What clanka did lately: the companion's state and last events, no chat text",
     )
     # The core's own wake_up, so every front end tells the model the same.
     description, parameters = _clanka.wake_up_tool()

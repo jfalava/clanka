@@ -1,7 +1,9 @@
 //! `clanka chat`: talk with a companion in the terminal. One model does both
 //! jobs: it writes each reply, then reflects on the exchange in the background
 //! as the writer. Lines in, replies out as they are written; `/sleep` ends the
-//! conversation, and so does a `zz` goodnight, after the companion's reply. Turns go through [`crate::turn`], like every other front end.
+//! conversation, and so does a `zz` goodnight, after the companion's reply;
+//! `/triage` prints [`crate::triage`]'s report. Turns go through
+//! [`crate::turn`], like every other front end.
 //!
 //! A message starting with `~~` after sleep is a dream. Its replies may call
 //! `wake_up`, so they arrive whole instead of as they are written; when the
@@ -16,6 +18,7 @@ use clanka_core::model::Speaker;
 use clanka_core::tics::Dashless;
 use clanka_core::{Companion, WakeReport, dream};
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -25,11 +28,13 @@ const TEMPERATURE: f32 = 0.8;
 /// Said after a reply failed. Not "say it again": that would record it twice.
 const KEPT: &str = "Your message was kept; go on and the next reply answers it too.";
 
-pub fn run(chat: Companion, writer: Companion, budget: usize) -> Result<()> {
+/// `log` is the diagnostics log `/triage` reads, or `None` when it is off.
+pub fn run(chat: Companion, writer: Companion, budget: usize, log: Option<PathBuf>) -> Result<()> {
     converse(
         chat,
         writer,
         budget,
+        log,
         std::io::stdin().lock(),
         std::io::stdout().lock(),
         // A note may come from a reflection while the reply's row is up.
@@ -41,10 +46,13 @@ pub fn run(chat: Companion, writer: Companion, budget: usize) -> Result<()> {
 /// [`run`] on any streams: lines come from `input`, replies go to `out`, the
 /// prompt and clanka's own notes go to `notes`, and `status` hears what the
 /// chat is doing: at rest, replying, a reply ready, and how it ended.
+// Each stream is its own argument so tests can hand in their own.
+#[allow(clippy::too_many_arguments)]
 pub fn converse(
     mut chat: Companion,
     writer: Companion,
     budget: usize,
+    log: Option<PathBuf>,
     input: impl BufRead,
     mut out: impl Write,
     notes: impl Write + Send + 'static,
@@ -79,6 +87,11 @@ pub fn converse(
         let message = line?;
         let message = message.trim();
         if message.is_empty() {
+            continue;
+        }
+        // What clanka did lately, from its own log: never a turn, never recorded.
+        if message == "/triage" {
+            notes.say(&crate::triage::report(&chat, log.as_deref())?);
             continue;
         }
         if message == "/sleep" {

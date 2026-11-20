@@ -8,5 +8,6 @@ pub mod llm;
 pub mod mcp;
 pub mod setup;
 pub mod status;
+pub mod triage;
 pub mod turn;
 pub mod ui;

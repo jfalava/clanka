@@ -283,6 +283,18 @@ impl PyCompanion {
         })
     }
 
+    /// The `/triage` report: the companion's state and its last diagnostics
+    /// events, with nothing said or remembered in it (see `clanka::triage`).
+    /// Reads, never writes, and calls no model.
+    fn triage(&self, py: Python<'_>) -> PyResult<String> {
+        py.detach(|| {
+            let paths = Paths::get().map_err(err)?;
+            let config = Config::load(&paths).map_err(err)?;
+            let log = config.diagnostics.enabled.then(|| Log::file(&paths));
+            clanka::triage::report(&lock(&self.chat), log.as_deref()).map_err(err)
+        })
+    }
+
     fn is_frozen(&self, py: Python<'_>) -> PyResult<bool> {
         py.detach(|| lock(&self.chat).is_frozen().map_err(err))
     }

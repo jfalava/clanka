@@ -73,6 +73,17 @@ lets a plugin send a message only with
 `clanka hermes profile` sets. On an older profile, run it again, or send `zz`
 yourself.
 
+## Triage
+
+`/triage` answers with what clanka did lately for the companion: its state
+now (in a conversation, dreaming, frozen or none open) and its last 15
+[diagnostics events](/cli/diagnostics/), such as the markers a message used,
+whether a `zz` ended a dream and how each pass over memory went. It holds only
+counts and fixed words, never what was said or remembered, so it is safe in a
+group chat and in a bug report. Hermes answers it without a turn: the
+companion never reads it, and nothing is recorded. See
+[`/triage`](/cli/chat/#triage) for an example.
+
 ## When a conversation ends
 
 The companion has one conversation at a time, and sleep is what ends it: it

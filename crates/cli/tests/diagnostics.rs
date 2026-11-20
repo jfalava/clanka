@@ -69,10 +69,24 @@ fn an_evening_is_counted_and_nothing_said_is_kept() {
     assert!(c.sleep(session).is_err());
 
     let log = std::fs::read_to_string(&file).unwrap();
-    let lower = log.to_lowercase();
-    for word in ["marisol", "reykjavik", "sister", "escape", "matters"] {
-        assert!(!lower.contains(word), "{word} is in the log:\n{log}");
+    // `/triage` shows the evening from the log, and no more of it than the log.
+    let triage = clanka::triage::report(&c, Some(&file)).unwrap();
+    for (text, what) in [(&log, "log"), (&triage, "triage")] {
+        let lower = text.to_lowercase();
+        for word in ["marisol", "reykjavik", "sister", "escape", "matters"] {
+            assert!(!lower.contains(word), "{word} is in the {what}:\n{text}");
+        }
     }
+    assert!(
+        triage.contains("Now: awake, in a conversation."),
+        "{triage}"
+    );
+    assert!(
+        triage.contains(" memory_pass.reflect ")
+            && triage.contains("refused=raise_level/not_found,unknown/invalid")
+            && triage.contains(" memory_pass.sleep error=llm"),
+        "{triage}"
+    );
     // Every line names the companion by the end of its ID, and nothing else.
     let id = c.id().simple().to_string();
     assert!(!log.contains(&id), "{log}");
@@ -223,6 +237,22 @@ fn a_wake_up_call_is_noted_and_never_contradicts_a_dream_that_is_ending() {
     assert_eq!(
         begun,
         [json!([true, false, false]), json!([true, true, true])]
+    );
+    // `/triage` tells that zz ended the dream: a dream's goodnight, spent.
+    let triage = clanka::triage::report(&c, Some(&file)).unwrap();
+    assert!(
+        triage.lines().any(|row| {
+            row.contains(" turn_begin ")
+                && [" dream", " goodnight", " spent"]
+                    .iter()
+                    .all(|flag| row.contains(flag))
+        }),
+        "{triage}"
+    );
+    assert!(
+        clanka::triage::report(&c, None).unwrap().ends_with(
+            "Diagnostics are off ([diagnostics] enabled = false), so there are no events."
+        ),
     );
 }
 

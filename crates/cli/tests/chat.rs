@@ -76,6 +76,7 @@ fn a_message_whose_reply_failed_goes_out_with_the_next() {
         chat,
         writer,
         4000,
+        None,
         "my dad died\n\nare you there?\nthanks\n".as_bytes(),
         &mut out,
         notes.clone(),
@@ -164,7 +165,8 @@ fn the_doctor_token_ends_the_chat_and_frozen_memory_refuses_one() {
         chat,
         open(dir.path()),
         4000,
-        format!("hi\n{TOKEN}\nstill there?\n").as_bytes(),
+        None,
+        format!("/triage\nhi\n{TOKEN}\nstill there?\n").as_bytes(),
         Vec::new(),
         notes.clone(),
         Session::off(),
@@ -172,6 +174,15 @@ fn the_doctor_token_ends_the_chat_and_frozen_memory_refuses_one() {
     .unwrap();
     assert_eq!(asked.lock().unwrap().len(), 1, "only \"hi\" was answered");
     assert!(notes.text().contains("Memory frozen for the doctor"));
+    // `/triage` is answered by clanka, not the model, and is no turn.
+    assert!(
+        notes.text().contains(
+            "triage for Nova\nNow: no conversation open.\n\
+             Diagnostics are off"
+        ),
+        "{}",
+        notes.text()
+    );
 
     // With no reply scripted, a request would panic.
     let (model, asked) = scripted(Vec::new());
@@ -179,6 +190,7 @@ fn the_doctor_token_ends_the_chat_and_frozen_memory_refuses_one() {
         open_with(dir.path(), model),
         open(dir.path()),
         4000,
+        None,
         "hi\n".as_bytes(),
         Vec::new(),
         Notes::default(),
@@ -199,6 +211,7 @@ fn a_closed_terminal_ends_the_chat_without_a_model_call() {
         open_with(dir.path(), model),
         open(dir.path()),
         4000,
+        None,
         "hi\n".as_bytes(),
         Vec::new(),
         Closed,
@@ -284,6 +297,7 @@ fn a_dream_wakes_by_the_companions_choice_and_the_chat_goes_on_awake() {
         chat,
         writer,
         4000,
+        None,
         "~~ You're in your mother's kitchen.\nThe kettle screams.\n\
          Her voice, from nowhere: the ring went with her to the grave.\nhi\n"
             .as_bytes(),
@@ -338,6 +352,7 @@ fn leaving_mid_dream_keeps_nothing_of_it() {
         open_with(dir.path(), model),
         open(dir.path()),
         4000,
+        None,
         "~~ You're on a pier.\n".as_bytes(),
         Vec::new(),
         notes.clone(),
