@@ -321,6 +321,18 @@ impl PyCompanion {
         })
     }
 
+    /// `/lore` with what followed it: the entries the companion knows of,
+    /// one of them as it reads it, or `strike <id> <line>`. Never a turn.
+    fn lore(&self, py: Python<'_>, args: &str) -> PyResult<String> {
+        py.detach(|| turn::lore_command(&mut lock(&self.chat), args).map_err(err))
+    }
+
+    /// What the `read_lore` tool returns: the entry an ID, title or alias
+    /// names, which stays open for the rest of the conversation.
+    fn read_lore(&self, py: Python<'_>, entry: &str) -> PyResult<String> {
+        py.detach(|| lock(&self.chat).read_lore(entry).map_err(err))
+    }
+
     fn is_frozen(&self, py: Python<'_>) -> PyResult<bool> {
         py.detach(|| lock(&self.chat).is_frozen().map_err(err))
     }
@@ -331,6 +343,13 @@ impl PyCompanion {
 #[pyfunction]
 fn wake_up_tool() -> (String, String) {
     let spec = clanka_core::dream::wake_up_tool();
+    (spec.description, spec.parameters)
+}
+
+/// The `read_lore` tool for the host to register, like [`wake_up_tool`].
+#[pyfunction]
+fn read_lore_tool() -> (String, String) {
+    let spec = clanka_core::lore::read_lore_tool();
     (spec.description, spec.parameters)
 }
 
@@ -386,5 +405,6 @@ fn _clanka(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(note, m)?)?;
     m.add_function(wrap_pyfunction!(send_diagnostics, m)?)?;
     m.add_function(wrap_pyfunction!(without_dashes, m)?)?;
+    m.add_function(wrap_pyfunction!(read_lore_tool, m)?)?;
     m.add_function(wrap_pyfunction!(wake_up_tool, m)?)
 }

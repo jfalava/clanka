@@ -177,14 +177,22 @@ impl Companion {
     /// Sleeps on every night, and wakes from every dream, that ended and
     /// waits for it, oldest first. Long-running (it calls the model). Stops at
     /// the first that fails; it waits for the next call, a few times at most.
+    ///
+    /// Lore rides behind it: lines a lock kept back are appended, a night
+    /// with an entry open gets its goodnight exchange reflected on for lore
+    /// first, and the keeper folds each entry the night added to once it has
+    /// grown (see [`crate::lore`]). None of that can fail the night.
     pub fn consolidate(&mut self) -> Result<Vec<Consolidated>> {
+        let _ = self.flush_lore();
         let mut done = Vec::new();
         for session in self.unconsolidated()? {
             done.push(if crate::dream::is_dream(&self.conn, session)? {
                 Consolidated::Woke(self.wake(session)?)
             } else {
+                let _ = self.reflect_goodnight(session);
                 Consolidated::Slept(self.sleep(session)?)
             });
+            let _ = self.keep_lore(session);
         }
         Ok(done)
     }

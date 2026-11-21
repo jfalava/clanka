@@ -35,6 +35,8 @@ pub struct Companion {
     /// The dream this handle started. A dream belongs to the handle that
     /// dreams it: another one that takes a turn finds it lost and drops it.
     pub(crate) dream: Option<i64>,
+    /// Where the lore lives; `None` leaves it out (see [`crate::lore`]).
+    pub(crate) lore: Option<crate::Lore>,
 }
 
 /// How the soul.md on disk relates to the one its memories were written under.
@@ -143,6 +145,7 @@ impl Companion {
             duplicate_similarity: DUPLICATE_SIMILARITY,
             session_tokens: SESSION_TOKENS,
             dream: None,
+            lore: None,
         })
     }
 
@@ -272,6 +275,14 @@ impl Companion {
         }
         let accepted = meta(&self.conn, "persona_hash")?;
         if accepted.as_deref() == Some(self.soul.hash.as_str()) {
+            // The same persona with other settings, such as its lore grants:
+            // taken up at once. A file caught mid-edit is read next time.
+            if let Ok(soul) = Soul::load(&self.soul_path)
+                && soul.traits.id == self.id()
+                && soul.hash == self.soul.hash
+            {
+                self.soul = soul;
+            }
             return Ok(());
         }
         let soul = Soul::load(&self.soul_path)?;

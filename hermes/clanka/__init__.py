@@ -31,6 +31,11 @@ A general plugin on Hermes's public plugin API only:
   profile`` sets it).
 - ``/triage`` answers with the companion's state and its last diagnostics
   events, counts and fixed words only; no turn, no model call.
+- ``/lore`` lists the lore entries the companion may read, ``/lore <id>``
+  shows one as the companion reads it (and opens it for the conversation),
+  and ``/lore strike <id> <line>`` hides a companion's line from every
+  reader. The ``read_lore`` tool lets the model open an entry itself; one
+  the user names opens on its own.
 - ``on_session_reset`` (``/new``, ``/reset``, a session-reset policy plugin):
   the companion sleeps on whatever was said since it last slept, so a
   conversation the user walked away from still becomes a memory. Nothing
@@ -531,6 +536,22 @@ class _Plugin:
             logger.exception("clanka: /triage failed")
             return NOTICE + _no_triage(e)
 
+    def lore_command(self, raw_args="", **_):
+        # Like /triage, never a turn: the user reads the lore, the model doesn't.
+        try:
+            return self.companion(TRIAGE_TIMEOUT).lore(raw_args or "")
+        except concurrent.futures.TimeoutError:
+            return NOTICE + "memory has not opened yet; try again in a moment."
+        except Exception as e:
+            logger.exception("clanka: /lore failed")
+            return NOTICE + f"lore: {e}"
+
+    def read_lore(self, args, **_):
+        try:
+            return json.dumps({"ok": True, "entry": self.companion().read_lore(str(args.get("entry", "")))})
+        except Exception as e:
+            return json.dumps({"ok": False, "note": str(e)})
+
     def recall_memory(self, args, **_):
         found = self.companion().recall(str(args.get("query", "")))
         return json.dumps({"memories": found or [], "note": "" if found else "Nothing comes to mind."})
@@ -612,6 +633,19 @@ def register(ctx):
         "triage",
         plugin.triage_command,
         description="What clanka did lately: the companion's state and last events, no chat text",
+    )
+    ctx.register_command(
+        "lore",
+        plugin.lore_command,
+        description="The world's lore: list entries, read one, or strike a companion's line",
+        args_hint="[<id> | strike <id> <line>]",
+    )
+    description, parameters = _clanka.read_lore_tool()
+    ctx.register_tool(
+        name="read_lore",
+        toolset="clanka",
+        schema={"name": "read_lore", "description": description, "parameters": json.loads(parameters)},
+        handler=plugin.read_lore,
     )
     # The core's own wake_up, so every front end tells the model the same.
     description, parameters = _clanka.wake_up_tool()

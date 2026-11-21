@@ -16,6 +16,7 @@ use std::process::ExitCode;
 mod debug;
 mod doctor;
 mod hermes;
+mod lore;
 mod probe;
 mod soul;
 mod transfer;
@@ -46,9 +47,10 @@ const HELP: Styles = Styles::styled()
         the companion through `clanka chat` or serve it to an MCP host with `clanka mcp`.",
     after_long_help = "Files (Linux):\n  \
         ~/.config/clanka/souls/<id>.md   each companion's soul.md\n  \
+        ~/.config/clanka/lore/           the world's lore (`clanka lore`)\n  \
         ~/.config/clanka/config.toml     the [model] chat and memory writing run on, and\n\
-        \x20                                  optional [recall], [embedding], [keys], [ui] and\n\
-        \x20                                  [diagnostics] settings\n  \
+        \x20                                  optional [recall], [embedding], [session], [lore],\n\
+        \x20                                  [keys], [ui] and [diagnostics] settings\n  \
         ~/.local/share/clanka/           the databases, the embedding model and the\n\
         \x20                                  diagnostics log\n\n\
         Environment:\n  \
@@ -151,7 +153,8 @@ enum Command {
     /// and press Enter; each reply is remembered in the background. Send /sleep to end the
     /// conversation and turn it into memories, or send the soul's doctor_token to freeze
     /// the memory and quit without recording anything. Send /triage to see the companion's
-    /// state and last diagnostics events, without any conversation text. Refuses to start
+    /// state and last diagnostics events, without any conversation text, and /lore to list or
+    /// read the lore it may read (`/lore <id>`, `/lore strike <id> <line>`). Refuses to start
     /// if the persona changed since its memories were written.
     ///
     /// Markers at the start of a message: `zz` says goodnight: the companion answers it
@@ -373,6 +376,28 @@ enum Command {
         #[command(subcommand)]
         command: DebugCommand,
     },
+    /// Write the world's lore and keep what companions add to it in check.
+    ///
+    /// Lore is shared reference for a story world: how magic works, the layout of a
+    /// house, a disease. Each entry is a Markdown file in the lore directory (`lore/`
+    /// beside `souls/`, or `[lore] dir` in config.toml) whose text is yours and is never
+    /// rewritten by clanka. A companion reads the entries its soul.md grants (`lore =
+    /// ["moonrot", "ashford/"]`, a trailing / for a whole directory); one opens when you
+    /// name it in a message, when the companion's model calls read_lore, or with `/lore
+    /// <id>` in chat and Hermes. Companions add lines beside your text in the entry's
+    /// ledger: what they did in the story, and notes they chose to share, each labelled by
+    /// how they know it, which clanka works out from your words. You strike what you don't
+    /// want; nothing else ever removes a line. With git installed, the lore directory is a
+    /// git repository and every change is a commit.
+    #[command(after_long_help = "Example:\n  \
+        clanka lore new moonrot --title \"The moonrot\"\n  \
+        clanka lore edit moonrot\n  \
+        clanka lore show moonrot\n  \
+        clanka lore strike moonrot 3fa9c2d1")]
+    Lore {
+        #[command(subcommand)]
+        command: lore::LoreCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -506,6 +531,7 @@ impl Command {
             } => "diagnostics token",
             Self::Diagnostics { .. } => "diagnostics",
             Self::Debug { .. } => "debug status",
+            Self::Lore { command } => command.name(),
         }
     }
 }
@@ -810,7 +836,14 @@ fn run(command: Command) -> Result<bool> {
         Command::Soul {
             command: SoulCommand::Lint { soul, json, strict },
         } => {
-            let report = LintReport::of(&Soul::load(&soul)?);
+            let soul_file = Soul::load(&soul)?;
+            let mut report = LintReport::of(&soul_file);
+            // An entry that isn't here may be on another machine: a warning.
+            if let Ok(ids) = Config::load(&paths).and_then(|c| Ok(c.lore(&paths).ids()?)) {
+                report
+                    .warnings
+                    .extend(lore::missing_grants(&soul_file, &ids));
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -857,6 +890,7 @@ fn run(command: Command) -> Result<bool> {
         Command::Import { dir } => transfer::import(&paths, &dir),
         Command::Recall { soul, query } => probe::recall(&paths, &soul, &query),
         Command::Eval { soul, cases } => return probe::eval(&paths, &soul, &cases),
+        Command::Lore { command } => return lore::run(&paths, command),
         Command::Embedding => {
             let embedding = Config::load(&paths)?.embedding.model;
             download_model(&paths, embedding)?;

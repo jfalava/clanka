@@ -1,0 +1,152 @@
+---
+title: Lore
+description: Shared world reference that companions read while they talk, and add to on their own.
+sidebar:
+  order: 4
+---
+
+Lore is reference for a story world: how magic works, the layout of a house
+or a dungeon, a disease thought incurable. You write it once and every
+companion you grant it to reads it. What a companion does in the story, and
+what it learns, it adds beside your text, so the next companion that reads
+the entry knows it too. One world, one timeline.
+
+## Entries
+
+An entry is a Markdown file in the lore directory: `lore/` beside `souls/`
+(`~/.config/clanka/lore/` on Linux), or [`[lore] dir`](/configuration/#lore).
+Its ID is its path without `.md`, in segments of a-z, 0-9 and `-`:
+`moonrot`, `ashford/manor`.
+
+```markdown
++++
+title = "The moonrot"
+aliases = ["rot", "the wasting"]
+opens = ["ashford/wells"]
+sealed = false
++++
+
+The moonrot is a wasting sickness of the river towns. It is thought incurable.
+```
+
+| Key       | Default | Effect                                                                                       |
+| --------- | ------- | -------------------------------------------------------------------------------------------- |
+| `title`   |         | Required. Naming it in a message opens the entry.                                            |
+| `aliases` | `[]`    | Other names that open it.                                                                    |
+| `opens`   | `[]`    | Entries a companion that read this one may read from then on, without a grant.               |
+| `sealed`  | `false` | Nothing a companion learns here is shared: no deeds, no released notes, only private notes. |
+
+The text is yours. clanka never rewrites it; [`clanka lore`](/cli/lore/)
+writes it only when you ask, and only after the frontmatter parses.
+
+## Who reads what
+
+A companion reads the entries its `soul.md` grants, in the frontmatter. A
+trailing `/` grants a whole directory:
+
+```toml
+lore = ["moonrot", "ashford/"]
+```
+
+A companion from a cyberpunk world with `lore = ["night-city/"]` never sees
+your entry on 1960s politics. A grant takes effect on the companion's next
+turn; nothing has to restart. [`clanka soul lint`](/cli/soul/#lint) refuses
+a malformed grant and warns about one that names no entry on this machine.
+
+## Reading
+
+Lore has its own allotment, [`[lore] tokens`](/configuration/#lore) (3,000
+estimated by default). It is apart from the memory budget and the
+conversation's allowance, so lore never tires a companion.
+
+On the first turn of a conversation the companion sees an index of the
+entries it may read. An entry opens when:
+
+- your message names its title or an alias,
+- the companion's model calls `read_lore` (MCP and Hermes), or
+- you send `/lore <id>` in `clanka chat` or Hermes.
+
+It stays open for the rest of the conversation. At most three are open; the
+one read longest ago closes first. An entry whose text alone doesn't fit the
+allotment doesn't open, and the companion is told.
+
+An open entry shows your text as how the world is, then the lines companions
+added, strongest first, then the companion's own private notes. The index
+marks an entry whose text, or whose lines from others, changed since the
+companion last read it.
+
+## What companions add
+
+After each exchange, while an entry is open, the companion's reflection may
+make up to two lore calls besides its memory calls:
+
+- **A deed**: something it did in the story that others would come to know.
+  It must quote at least three words of the exchange.
+- **A note**: something it now knows. Kept private, or released for every
+  reader.
+- **A retraction**: it withdraws or replaces a line of its own. The old line
+  stays on record.
+- **A stub**: an entry for a place or thing you named in play that has none,
+  titled in your exact words. One per conversation.
+
+The goodnight exchange gets the same chance before the night is slept on.
+Sleep itself does no lore work. Waking from a dream may keep notes, never
+deeds: nothing done in a dream happened.
+
+A line holding your name, or anything you told the companion about yourself,
+is refused: lore files are plaintext that other companions read.
+
+## How each line is labelled
+
+clanka works out how a companion knows something from your words, never
+from the model's say-so:
+
+| Label        | When                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| `narrated`   | A deed whose quote is your words: you said it happened.                                           |
+| `told`       | A note whose every name and number you said, or the entry already holds.                          |
+| `claimed`    | A deed whose quote is only the companion's reply: its word.                                       |
+| `worked_out` | A note with a name or number nobody said: its own conclusion.                                     |
+| `dreamt`     | A note from a dream.                                                                              |
+
+Lines show in that order, strongest first. With `dreams = "shared"` in a
+`soul.md`, its dreams are a place others visit: what you tell it there, in
+any voice, counts as `told`.
+
+When Kestrel cures the moonrot because you narrated it, the moonrot entry
+says so for every companion that reads it, labelled as seen.
+
+## The keeper
+
+Once an entry has more than 20 lines since its last digest, the keeper folds
+them into a short digest after the night is slept on. It writes without any
+companion's persona, cites the lines it folds, and may name only what your
+text or those lines name; a digest that invents a name is refused and
+nothing changes. It takes the weakest label among the lines it cites.
+
+When a deed makes a sentence of your text untrue ("It is thought
+incurable."), the digest quotes that sentence and readers see it as no
+longer so, until you rewrite the sentence yourself.
+
+## You have the last word
+
+[`clanka lore strike`](/cli/lore/#strike) hides a line from every reader;
+`--by` strikes everything one companion added since a time. Nothing else
+removes a line, and a struck line stays in the ledger with your strike after
+it. A companion's private notes go only with
+[`clanka lore forget`](/cli/lore/#forget).
+
+## Files and git
+
+Beside each entry, `<id>.ledger.jsonl` holds what companions added: one JSON
+line each, with its own ID, appended under a lock and never rewritten. Lines
+not yet appended wait in the companion's database, so a busy lock or a crash
+only delays them, and a frozen companion publishes nothing.
+
+Git is needed to keep the lore on record. `clanka lore new` makes the
+directory a git repository when git is installed, and from then on every
+line a companion adds is a commit under its name, of that ledger alone: your
+own uncommitted edits are never swept in. Without git everything still
+works, and [`clanka lore lint`](/cli/lore/#lint) says what is missing.
+Copy or clone the directory to move the lore to another machine;
+[`clanka export`](/cli/export/) reminds you.

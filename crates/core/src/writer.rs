@@ -11,6 +11,7 @@ use crate::actions;
 use crate::companion::ensure_writable;
 use crate::deps::{LlmMessage, LlmRequest, Role, ToolCall, ToolSpec};
 use crate::diagnostics::{self, Event, Pass, Refused};
+use crate::lore::{Heard, LORE_CALLS, LORE_TOOLS};
 use crate::memory::heard;
 use crate::model::{Actor, Level, MemoryType, Section, Speaker, Urgency};
 use crate::soul::Soul;
@@ -171,15 +172,40 @@ impl Companion {
             .reflection_prompt(&exchange, &said, &replied)
             .and_then(|prompt| {
                 let system = reflection_system(&self.soul);
-                let tools = tool_specs();
+                let mut tools = tool_specs();
+                let session = self.session_of(companion_turn)?;
+                let (prompt, lore) = match self.lore_tools(session, false)? {
+                    Some((lore, listed)) => {
+                        tools.extend(lore);
+                        (format!("{listed}\n\n{prompt}"), true)
+                    }
+                    None => (prompt, false),
+                };
+                let heard = Heard {
+                    session,
+                    user: &said,
+                    reply: &replied,
+                    dream: false,
+                };
+                let mut kept = (0, 0);
                 self.tool_loop(
                     Pass::Reflect,
                     system,
                     prompt,
                     tools,
-                    MAX_CALLS,
+                    MAX_CALLS + if lore { LORE_CALLS } else { 0 },
                     &[],
-                    |c, call| c.run_tool(call, &exchange, &spoken),
+                    |c, call| {
+                        if LORE_TOOLS.contains(&call.name.as_str()) {
+                            capped(&mut kept.1, LORE_CALLS, "lore", || {
+                                c.run_lore_tool(call, &heard)
+                            })
+                        } else {
+                            capped(&mut kept.0, MAX_CALLS, "memory", || {
+                                c.run_tool(call, &exchange, &spoken)
+                            })
+                        }
+                    },
                 )
             });
         self.diagnose_pass(
@@ -702,6 +728,107 @@ impl Companion {
             other => Err(Error::Invalid(format!("there is no tool called {other:?}"))),
         }
     }
+}
+
+impl Companion {
+    /// The session a turn belongs to.
+    pub(crate) fn session_of(&self, turn: i64) -> Result<i64> {
+        self.conn
+            .query_row("SELECT session_id FROM turns WHERE id = ?1", [turn], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .ok_or_else(|| Error::Invalid(format!("turn {turn} does not exist")))
+    }
+
+    /// The goodnight exchange of a night that had lore open gets a
+    /// reflection with the lore tools alone, before the night is slept on:
+    /// what was done or learned in it is the world's, and sleep does no lore
+    /// work. Once per night, whether it worked or not; no model call when no
+    /// entry was open. Returns the tool calls made.
+    pub(crate) fn reflect_goodnight(&mut self, session: i64) -> Result<Vec<ToolOutcome>> {
+        let Some((tools, listed)) = self.lore_tools(session, false)? else {
+            return Ok(Vec::new());
+        };
+        let last: Option<(i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT (SELECT max(id) FROM turns WHERE session_id = ?1 AND role = 'user'),
+                        (SELECT max(id) FROM turns WHERE session_id = ?1 AND role = 'companion')",
+                [session],
+                |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?)),
+            )
+            .map(|(u, c)| u.zip(c))?;
+        let Some((user_turn, companion_turn)) = last.filter(|(u, c)| u < c) else {
+            return Ok(Vec::new());
+        };
+        let Some(claimed) = self.claim_reflection(user_turn, companion_turn)? else {
+            return Ok(Vec::new());
+        };
+        let started = Instant::now();
+        let said = heard(&self.turn_text(user_turn, Speaker::User)?);
+        let replied = self.turn_text(companion_turn, Speaker::Companion)?;
+        let heard = Heard {
+            session,
+            user: &said,
+            reply: &replied,
+            dream: false,
+        };
+        let name = self.soul.traits.name.clone();
+        let prompt = format!(
+            "{listed}\n\nThe last exchange of the evening.\n\nWhat they said:\n{said}\n\nWhat \
+             you replied, your words:\n{replied}\n\nAdd to the lore only what this exchange \
+             earns; usually nothing."
+        );
+        let system = format!(
+            "{}\n\nYou are {name}. The evening is over; nobody sees this. Decide whether the last \
+             exchange added anything to the world's lore. Make every call in this one reply.",
+            self.soul.body.trim()
+        );
+        let result = self.tool_loop(
+            Pass::Reflect,
+            system,
+            prompt,
+            tools,
+            LORE_CALLS,
+            &[],
+            |c, call| c.run_lore_tool(call, &heard),
+        );
+        self.diagnose_pass(
+            Pass::Reflect,
+            started,
+            false,
+            result.as_ref().ok(),
+            result.as_ref().err(),
+        );
+        // Done either way: a full reflection made up for it later would keep
+        // memories sleep keeps already.
+        self.conn.execute(
+            "UPDATE reflections SET state = 'done', updated_at = ?2
+             WHERE companion_turn_id = ?1 AND updated_at = ?3",
+            params![companion_turn, self.deps.clock.now_ms(), claimed],
+        )?;
+        Ok(result?.calls)
+    }
+}
+
+/// Runs `run` unless `count` calls of its kind already worked, and counts it
+/// when it does: a pass's memory and lore calls each have their own cap.
+pub(crate) fn capped(
+    count: &mut usize,
+    cap: usize,
+    kind: &str,
+    run: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    if *count >= cap {
+        return Err(Error::Rule(
+            diagnostics::TOO_MANY_CALLS,
+            format!("not run; {cap} {kind} calls is the most one pass makes"),
+        ));
+    }
+    let done = run()?;
+    *count += 1;
+    Ok(done)
 }
 
 /// The persona and the reflection instructions: the stable part of every

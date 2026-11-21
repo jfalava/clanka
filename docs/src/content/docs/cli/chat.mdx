@@ -77,6 +77,18 @@ Last 3 events, oldest first (UTC):
 
 With diagnostics off (`[diagnostics] enabled = false`), it shows the state only.
 
+### `/lore`
+
+Lists the [lore](/concepts/lore/) entries the companion may read. `/lore <id>`
+prints one as the companion reads it (an ID, title or alias) and opens it for
+the rest of the conversation. `/lore strike <id> <line>` hides a companion's
+line from every reader, like [`clanka lore strike`](/cli/lore/#strike). None
+of them is a turn: nothing is recorded and no model is called.
+
+```text
+you> /lore moonrot
+```
+
 ### `zz`
 
 At the start of a message, says goodnight: the companion answers it, then

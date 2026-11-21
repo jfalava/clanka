@@ -92,6 +92,10 @@ pub struct Context {
     /// [`crate::dream::hint`]). Left out on later turns for a host that
     /// replays it ([`Companion::keep_new`]).
     pub dream: Option<String>,
+    /// The lore open in the conversation and an index of the rest, within
+    /// its own allotment ([`Companion::lore_context`]). Set by the front end,
+    /// which knows the session the turn is in.
+    pub lore: Option<String>,
     pub sections: Vec<(Section, String)>,
     /// The companion's mood, with any time-away shift already applied.
     pub mood: Option<Mood>,
@@ -249,6 +253,7 @@ impl Companion {
             allowance,
             dreaming,
             dream,
+            lore: None,
             time_away,
             today,
             persona,
@@ -480,6 +485,7 @@ impl Context {
     pub fn render(&self) -> String {
         let mut out = vec![self.persona.clone()];
         out.extend(self.dream.clone());
+        out.extend(self.lore.clone());
         out.extend(self.sections.iter().map(|(s, c)| render_section(*s, c)));
         if !self.told.is_empty() {
             let told: Vec<String> = self

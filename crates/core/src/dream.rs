@@ -20,11 +20,12 @@
 use crate::companion::ensure_writable;
 use crate::deps::{ToolCall, ToolSpec};
 use crate::diagnostics::Pass;
+use crate::lore::{Heard, LORE_CALLS, LORE_TOOLS};
 use crate::memory::{count_failed_pass, mark_consolidated, to_consolidate};
 use crate::model::{Actor, Level, MemoryType, Speaker, Urgency};
 use crate::sleep::{clip, drift_spec, mood_spec, newest_that_fit};
 use crate::soul::Soul;
-use crate::writer::{args, parse, said_verbatim};
+use crate::writer::{args, capped, parse, said_verbatim};
 use crate::{Companion, Error, MemoryDraft, Reflection, Result};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Deserialize;
@@ -366,21 +367,47 @@ impl Companion {
             self.close_night(session)?;
         }
         let offered = self.drift_offers(session, exaggerate(self.soul.traits.drift))?;
-        let prompt = self.wake_prompt(session, &offered)?;
+        let mut prompt = self.wake_prompt(session, &offered)?;
         let system = format!(
             "{}\n\n{}",
             self.soul.body.trim(),
             instructions(&self.soul.traits.name)
         );
+        let mut tools = tool_specs();
+        // What someone told it in the dream may reach the lore; deeds don't.
+        let said = self.dream_words(session)?;
+        if let Some((lore, listed)) = self.lore_tools(session, true)? {
+            tools.extend(lore);
+            prompt = format!(
+                "{prompt}\n\n{listed}\nWhat you learned in the dream about one of them you may \
+                 keep with lore_note; whatever it was, it stays marked as dreamt unless it was \
+                 told to you there."
+            );
+        }
+        let heard = Heard {
+            session,
+            user: &said,
+            reply: "",
+            dream: true,
+        };
         let mut waking = Waking::default();
+        let mut lore_calls = 0;
         let reflection = self.tool_loop(
             Pass::Wake,
             system,
             prompt,
-            tool_specs(),
+            tools,
             crate::actions::MAX_ACTIONS,
             &[],
-            |c, call| c.run_wake_tool(call, session, &offered, &mut waking),
+            |c, call| {
+                if LORE_TOOLS.contains(&call.name.as_str()) {
+                    capped(&mut lore_calls, LORE_CALLS, "lore", || {
+                        c.run_lore_tool(call, &heard)
+                    })
+                } else {
+                    c.run_wake_tool(call, session, &offered, &mut waking)
+                }
+            },
         )?;
         let rounds = reflection.rounds;
         *calls = Some(reflection);
@@ -397,6 +424,19 @@ impl Companion {
             drifted: waking.drifted,
             rounds,
         })
+    }
+
+    /// Everything the user wrote in a dream, in either voice: what a lore
+    /// note from it is checked against.
+    fn dream_words(&self, session: i64) -> Result<String> {
+        let said: Vec<String> = self
+            .conn
+            .prepare(
+                "SELECT content FROM turns WHERE session_id = ?1 AND role = 'user' ORDER BY id",
+            )?
+            .query_map([session], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(said.join("\n"))
     }
 
     fn wake_prompt(&self, session: i64, offered: &BTreeMap<i64, (u64, f64)>) -> Result<String> {

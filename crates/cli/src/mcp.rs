@@ -1,5 +1,5 @@
 //! `clanka mcp`: a stdio MCP server for trying a companion out in any MCP
-//! host. Five tools with one fixed order (begin_turn, reply, end_turn), so any
+//! host. Six tools, three with one fixed order (begin_turn, reply, end_turn), so any
 //! current model can follow it, plus the persona as an MCP prompt. The doctor
 //! is never a tool: the doctor token freezes memory and the CLI does the rest.
 //! A dream ends with the reply after a wake_up that woke the companion, or by
@@ -44,6 +44,12 @@ pub struct EndTurn {
 pub struct WakeUp {
     /// The words of what happened that wake you, copied exactly from what you were told: three or more.
     because: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadLore {
+    /// The entry's ID, title or alias, as the lore list in begin_turn names it.
+    entry: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -222,6 +228,17 @@ impl Server {
                 .join("\n"))
         })
         .await
+    }
+
+    #[tool(
+        description = "Optional. Open an entry of the world's lore you know of (begin_turn lists them) by its ID, title or alias, and read it. It stays open for the rest of the conversation. An entry the user names opens by itself."
+    )]
+    async fn read_lore(
+        &self,
+        Parameters(ReadLore { entry }): Parameters<ReadLore>,
+    ) -> Result<String, String> {
+        let chat = self.chat.clone();
+        blocking(move || lock(&chat).read_lore(&entry).map_err(|e| e.to_string())).await
     }
 
     #[tool(

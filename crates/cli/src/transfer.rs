@@ -83,6 +83,15 @@ pub fn export(paths: &Paths, soul_path: &Path, dir: &Path) -> Result<()> {
         soul.traits.name,
         dir.display()
     ));
+    if !soul.traits.lore.is_empty() {
+        let lore = Config::load(paths)?.lore(paths);
+        println!(
+            "Its lore ({}) is not in the export: copy {} too, or clone it if it is a git \
+             repository.",
+            soul.traits.lore.join(", "),
+            lore.dir.display()
+        );
+    }
     Ok(())
 }
 
@@ -192,5 +201,12 @@ pub fn import(paths: &Paths, dir: &Path) -> Result<()> {
         soul_path.display(),
         dir.display()
     ));
+    let lore = Config::load(paths)?.lore(paths);
+    for missing in crate::lore::missing_grants(&soul, &lore.ids()?) {
+        println!(
+            "Its {missing}: copy the lore from the other machine into {}.",
+            lore.dir.display()
+        );
+    }
     Ok(())
 }

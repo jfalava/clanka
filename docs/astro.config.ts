@@ -21,7 +21,12 @@ const nimbusConfig = defineNimbusConfig({
       "getting-started",
       {
         label: "Concepts",
-        items: ["concepts/souls", "concepts/memory", "concepts/sleep-and-dreams"],
+        items: [
+          "concepts/souls",
+          "concepts/memory",
+          "concepts/sleep-and-dreams",
+          "concepts/lore",
+        ],
       },
       {
         label: "Guides",
@@ -45,6 +50,7 @@ const nimbusConfig = defineNimbusConfig({
           "cli/mcp",
           "cli/hermes",
           "cli/memories",
+          "cli/lore",
           "cli/recall",
           "cli/eval",
           "cli/doctor",

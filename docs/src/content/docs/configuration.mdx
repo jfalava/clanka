@@ -16,6 +16,7 @@ On Linux:
 | -------------------------------- | ------------------------------------------------- |
 | `~/.config/clanka/config.toml`   | The settings on this page.                        |
 | `~/.config/clanka/souls/<id>.md` | Each companion's `soul.md`.                       |
+| `~/.config/clanka/lore/`         | The [lore](/concepts/lore/), unless `[lore] dir` says otherwise. |
 | `~/.config/clanka/keys/<id>.key` | Database keys, only with `[keys] store = "file"`. |
 | `~/.config/clanka/keys/diagnostics.token` | The [diagnostics upload token](/cli/diagnostics/#token), only with `[keys] store = "file"`. |
 | `~/.local/share/clanka/`         | The databases, the embedding model and the [diagnostics log](/cli/diagnostics/#the-log). |
@@ -182,6 +183,32 @@ for one companion. A model with a window under 128,000 tokens, or a
 conversation in Chinese or Japanese, needs less.
 
 - Default: `64000`
+
+## `[lore]`
+
+Where the [lore](/concepts/lore/) lives and how much of it a turn shows, for
+every companion on this machine. Which entries each one reads is its
+`soul.md`'s `lore` grants.
+
+```toml
+[lore]
+dir = "/srv/worlds/ashford"
+tokens = 6000
+```
+
+### `dir`
+
+The lore directory. A relative path is relative to the config directory.
+
+- Default: `lore/` beside `souls/` (`~/.config/clanka/lore`)
+
+### `tokens`
+
+Estimated tokens of lore a turn may show: the index and the open entries. It
+is apart from the memory budget and the conversation's allowance, so lore
+never tires a companion. An entry whose text alone is longer doesn't open.
+
+- Default: `3000`
 
 ## `[keys]`
 

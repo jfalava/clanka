@@ -22,6 +22,7 @@ tired_at = 0.7
 sleep_at = 0.9
 pushback_window = 20
 doctor_token = "…"
+lore = ["moonrot", "ashford/"]
 +++
 
 # Nova
@@ -58,6 +59,8 @@ The frontmatter holds the companion's ID, its name and its traits.
 | `sleep_at`        | 0 to 1 | `0.9`     | Share at which the companion asks to sleep.                                                                       |
 | `pushback_window` | turns  | `20`      | How many turns its pushback budget is counted over.                                                               |
 | `doctor_token`    | string | generated | Sent as a whole message, it freezes memory. Never shown to the model.                                             |
+| `lore`            | list   | `[]`      | The [lore](/concepts/lore/) entries it reads: IDs, and directories with a trailing `/`. Applies on its next turn. |
+| `dreams`          | `own` or `shared` | `own` | `shared`: its dreams are a place others visit, so what it is told there counts as told in the lore.     |
 
 Editing a trait is not a persona change. It applies the next time the
 companion opens, so restart anything that has the companion open.

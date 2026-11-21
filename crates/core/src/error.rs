@@ -69,6 +69,8 @@ pub enum Error {
     /// record, so a refusal can be told from another without the message.
     #[error("invalid write: {1}")]
     Rule(&'static str, String),
+    #[error("lore: {0}")]
+    Lore(String),
     #[error("key source: {0}")]
     Key(String),
     #[error("embedder: {0}")]

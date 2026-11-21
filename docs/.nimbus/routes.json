@@ -46,6 +46,9 @@
     "/cli/list/index.md",
     "/cli/list/index.mdx",
     "/cli/llms.txt",
+    "/cli/lore",
+    "/cli/lore/index.md",
+    "/cli/lore/index.mdx",
     "/cli/mcp",
     "/cli/mcp/index.md",
     "/cli/mcp/index.mdx",
@@ -65,6 +68,9 @@
     "/cli/upgrade/index.md",
     "/cli/upgrade/index.mdx",
     "/concepts/llms.txt",
+    "/concepts/lore",
+    "/concepts/lore/index.md",
+    "/concepts/lore/index.mdx",
     "/concepts/memory",
     "/concepts/memory/index.md",
     "/concepts/memory/index.mdx",
@@ -120,12 +126,14 @@
     "/og/cli/import.png",
     "/og/cli/init.png",
     "/og/cli/list.png",
+    "/og/cli/lore.png",
     "/og/cli/mcp.png",
     "/og/cli/memories.png",
     "/og/cli/recall.png",
     "/og/cli/soul.png",
     "/og/cli/tics.png",
     "/og/cli/upgrade.png",
+    "/og/concepts/lore.png",
     "/og/concepts/memory.png",
     "/og/concepts/sleep-and-dreams.png",
     "/og/concepts/souls.png",
@@ -147,5 +155,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-19T00:30:10.093Z"
+  "builtAt": "2026-11-21T21:20:53.562Z"
 }

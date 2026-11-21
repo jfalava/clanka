@@ -96,6 +96,15 @@ pub fn converse(
             notes.say(&crate::triage::report(&chat, log.as_deref())?);
             continue;
         }
+        if let Some(args) = message.strip_prefix("/lore")
+            && (args.is_empty() || args.starts_with(' '))
+        {
+            match turn::lore_command(&mut chat, args) {
+                Ok(text) => notes.say(&text),
+                Err(e) => notes.say(&format!("lore: {e}")),
+            }
+            continue;
+        }
         if message == "/sleep" {
             finish(&mut reflections);
             chat.drop_lost_dream()?;

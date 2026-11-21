@@ -84,6 +84,14 @@ group chat and in a bug report. Hermes answers it without a turn: the
 companion never reads it, and nothing is recorded. See
 [`/triage`](/cli/chat/#triage) for an example.
 
+## Lore
+
+A companion whose `soul.md` grants [lore](/concepts/lore/) reads it on
+Hermes as everywhere: an entry you name opens on its own, and the model can
+open one with its `read_lore` tool. `/lore` lists the entries, `/lore <id>`
+shows one as the companion reads it, and `/lore strike <id> <line>` hides a
+companion's line. Like `/triage`, none of them is a turn.
+
 ## When a conversation ends
 
 The companion has one conversation at a time, and a goodnight ends it: the

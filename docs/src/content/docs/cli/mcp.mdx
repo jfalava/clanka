@@ -9,8 +9,9 @@ clanka mcp [--budget <tokens>] [--session-tokens <tokens>] <soul>
 
 Serves one companion to an MCP host over stdio, for trying it out. The host
 does the talking and calls the tools: `begin_turn` before each reply,
-`end_turn` after it, `recall` to search memory on purpose, and `sleep` to
-end the conversation. The persona prompt tells the host's model how to use
+`end_turn` after it, `recall` to search memory on purpose, `read_lore` to
+open an entry of the [lore](/concepts/lore/), and `sleep` to end the
+conversation. The persona prompt tells the host's model how to use
 them.
 
 Memory is written by the [`[model]`](/configuration/#model) in

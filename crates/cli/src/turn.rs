@@ -385,6 +385,9 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
         Some(dream) => dream,
         None => c.open_session()?,
     };
+    // Lore is reference, not memory: a broken entry or an unreadable
+    // directory leaves it out of this turn instead of failing it.
+    context.lore = c.lore_context(session, message, first).unwrap_or(None);
     let unanswered = c.unanswered(session)?;
     let user_turn = if echo {
         c.record_echo(session, message)?
@@ -481,6 +484,51 @@ pub fn recall(c: &Companion, query: &str) -> Result<Vec<Recalled>> {
         error: found.as_ref().err().map(Error::code),
     });
     found
+}
+
+/// `/lore` in a front end that takes commands (chat, Hermes), with what
+/// followed it: nothing lists the entries the companion knows of, `<id>`
+/// opens one (an ID, title or alias) and shows it as the companion reads it,
+/// and `strike <id> <line>` hides a companion's line from every reader.
+/// Never a turn, never recorded. Returns what to show the user.
+pub fn lore_command(c: &mut Companion, args: &str) -> Result<String> {
+    c.refresh()?;
+    let lore = c
+        .lore()
+        .cloned()
+        .ok_or_else(|| Error::Lore("no lore is set up here".into()))?;
+    let words: Vec<&str> = args.split_whitespace().collect();
+    match words[..] {
+        [] => {
+            let entries = c.readable_lore()?;
+            if entries.is_empty() {
+                return Ok(format!(
+                    "{} knows of no lore. Grant entries with `lore = [...]` in its soul.md; \
+                     they live in {}.",
+                    c.soul().traits.name,
+                    lore.dir.display()
+                ));
+            }
+            Ok(entries
+                .iter()
+                .map(|e| {
+                    let stub = if e.stub { " (stub)" } else { "" };
+                    format!("{}: {}{stub}", e.id, e.front.title)
+                })
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
+        ["strike", id, line] => {
+            let struck = lore.strike(id, line, c.deps().clock.now_ms())?;
+            Ok(format!(
+                "Struck [{}] from {id}: {}",
+                struck.short(),
+                struck.text
+            ))
+        }
+        ["strike", ..] => Ok("Usage: /lore strike <id> <line>".into()),
+        _ => c.read_lore(args.trim()),
+    }
 }
 
 /// The turn's context without the persona (the host holds it) or the session's

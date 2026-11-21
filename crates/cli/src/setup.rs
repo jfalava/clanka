@@ -192,6 +192,49 @@ pub struct Config {
     pub diagnostics: DiagnosticsConfig,
     #[serde(default)]
     pub session: SessionConfig,
+    #[serde(default)]
+    pub lore: LoreConfig,
+}
+
+/// Where the lore lives and how much of it a turn shows, for every companion
+/// on this machine. Which entries each one reads is its soul's `lore` grants.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoreConfig {
+    /// The lore directory; `lore/` beside `souls/` unless set. A relative
+    /// path is relative to the config directory.
+    pub dir: Option<PathBuf>,
+    /// Estimated tokens of lore a turn may show, apart from the memory budget
+    /// and the conversation's allowance.
+    #[serde(default = "lore_tokens")]
+    pub tokens: usize,
+}
+
+impl Default for LoreConfig {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            tokens: lore_tokens(),
+        }
+    }
+}
+
+fn lore_tokens() -> usize {
+    clanka_core::lore::LORE_TOKENS
+}
+
+impl Config {
+    /// The lore as config.toml sets it up.
+    pub fn lore(&self, paths: &Paths) -> clanka_core::Lore {
+        let dir = match &self.lore.dir {
+            Some(dir) => paths.config.join(dir),
+            None => paths.config.join("lore"),
+        };
+        clanka_core::Lore {
+            dir,
+            tokens: self.lore.tokens,
+        }
+    }
 }
 
 /// The conversation's allowance, for every companion on this machine. A
@@ -694,10 +737,16 @@ fn open_as(
     // Plain messages, not core errors: a bad setting isn't a broken companion.
     let config_file = paths.config_file();
     let bad = |e: clanka_core::Error| anyhow::anyhow!("{}: {e}", config_file.display());
+    companion.set_lore(Some(config.lore(paths)));
     companion.set_ranking(config.recall).map_err(bad)?;
     companion
         .set_session_tokens(config.session.tokens)
         .map_err(bad)?;
+    if config.lore.tokens == 0 {
+        return Err(bad(clanka_core::Error::Invalid(
+            "[lore] tokens is 0; lore needs some room".into(),
+        )));
+    }
     if let Some(similarity) = config.embedding.duplicate_similarity {
         companion
             .set_duplicate_similarity(similarity)

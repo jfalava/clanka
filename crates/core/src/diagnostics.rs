@@ -39,6 +39,8 @@ pub enum Pass {
     Wake,
     /// The doctor's, on memories it names.
     Reinterpret,
+    /// The lore keeper's digest of an entry, after a night.
+    Keeper,
 }
 
 /// Prose tics in one reply, by kind (see [`crate::tics`]).
@@ -234,7 +236,7 @@ pub const PLUGIN_EVENTS: [&str; 4] = [
 
 /// Every tool a pass offers the model. A model can call anything, so a call's
 /// name goes into an event only as one of these.
-const TOOLS: [&str; 15] = [
+const TOOLS: [&str; 21] = [
     "remember",
     "supersede",
     "raise_level",
@@ -250,6 +252,12 @@ const TOOLS: [&str; 15] = [
     "keep_fragment",
     "sear",
     "reinterpret",
+    "lore_note",
+    "lore_deed",
+    "lore_retract",
+    "lore_stub",
+    "digest",
+    "read_lore",
 ];
 
 /// The tool a model called, as the word an event may hold.
@@ -302,6 +310,7 @@ impl Error {
             Error::Seared(_) => "seared",
             Error::Invalid(_) => "invalid",
             Error::Rule(rule, _) => rule,
+            Error::Lore(_) => "lore",
             Error::Key(_) => "key",
             Error::Embedder(_) => "embedder",
             Error::Llm(_) => "llm",
@@ -321,6 +330,8 @@ mod tests {
             crate::sleep::tool_specs(),
             crate::dream::tool_specs(),
             crate::doctor::tool_specs(),
+            crate::lore::lore_tool_specs(),
+            vec![crate::lore::digest_spec(), crate::lore::read_lore_tool()],
         ];
         for spec in offered.iter().flatten() {
             assert_eq!(tool(&spec.name), spec.name);

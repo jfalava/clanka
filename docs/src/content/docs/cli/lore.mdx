@@ -1,0 +1,134 @@
+---
+title: lore
+description: Write the world's lore and keep what companions add to it in check.
+---
+
+```sh
+clanka lore <subcommand>
+```
+
+Lore is shared reference for a story world: how magic works, the layout of a
+house, a disease. Each entry is a Markdown file in the lore directory
+(`lore/` beside `souls/`, or [`[lore] dir`](/configuration/#lore)) whose text
+is yours and is never rewritten by clanka. A companion reads the entries its
+`soul.md` grants (`lore = ["moonrot", "ashford/"]`, a trailing `/` for a
+whole directory). See [Lore](/concepts/lore/).
+
+Companions add lines beside your text in the entry's ledger: what they did in
+the story, and notes they chose to share, each labelled by how they know it,
+which clanka works out from your words. You strike what you don't want;
+nothing else ever removes a line. With git installed, the lore directory is a
+git repository and every change is a commit.
+
+```sh
+clanka lore new moonrot --title "The moonrot"
+clanka lore edit moonrot
+clanka lore show moonrot
+clanka lore strike moonrot 3fa9c2d1
+```
+
+## new
+
+```sh
+clanka lore new <id> [--title <title>]
+```
+
+Starts an entry: a file with its frontmatter, to fill in with `edit`. The ID
+is the entry's path under the lore directory without `.md`: segments of a-z,
+0-9 and `-`, separated by `/`, such as `moonrot` or `ashford/manor`. The
+title is the ID's last segment unless given; a stub a companion made keeps
+its title. Makes the directory a git repository when git is installed and it
+isn't one yet.
+
+## edit
+
+```sh
+clanka lore edit <id>
+```
+
+Opens the entry in `$VISUAL` or `$EDITOR`. It is written back only when its
+frontmatter parses; otherwise the entry is unchanged and your edit is kept in
+a temporary file, whose path is printed.
+
+## set
+
+```sh
+clanka lore set <id> --file <file>
+```
+
+Replaces the entry's whole file with another, or standard input with `-`.
+
+```sh
+pbpaste | clanka lore set moonrot --file -
+```
+
+## list
+
+```sh
+clanka lore list
+```
+
+Every entry: its title, how many lines companions added since its last
+digest, and whether it is a stub or sealed.
+
+## show
+
+```sh
+clanka lore show <id>
+```
+
+The entry and every line standing in its ledger, with the IDs `strike`
+takes.
+
+## lint
+
+```sh
+clanka lore lint
+```
+
+Checks every entry, every ledger and every soul's grants. An entry that
+doesn't parse, a file whose name is no entry ID and an unreadable ledger line
+are errors; a grant or an `opens` that names no entry, and a lore directory
+that isn't a git repository, are warnings. Exits non-zero on an error.
+
+## notes
+
+```sh
+clanka lore notes <soul> [id]
+```
+
+A companion's notes on the lore, private and released, newest first, with
+the number `forget` takes.
+
+## forget
+
+```sh
+clanka lore forget <soul> <note>
+```
+
+Deletes one of a companion's notes, the only way a note goes. A note it
+released stays in the entry's ledger; strike that line too.
+
+## strike
+
+```sh
+clanka lore strike <id> <line>
+clanka lore strike --by <soul> --since <when>
+```
+
+Hides a companion's line from every reader: one line, or with `--by`
+everything one companion added since a time (`45m`, `6h`, `2d` ago, or a UTC
+time). The line stays in the ledger, with your strike after it. `/lore
+strike <id> <line>` does the same from `clanka chat` and Hermes.
+
+## redigest
+
+```sh
+clanka lore redigest <soul> <id>
+```
+
+Folds an entry's lines into a new digest now, on a companion's
+[model](/configuration/#model). The keeper does this on its own after a
+night once an entry has more than 20 lines since its last digest. The digest
+is written in no companion's voice and checked like the keeper's: every name
+and number in it must be in the entry or a line it cites.

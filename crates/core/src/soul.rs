@@ -60,6 +60,24 @@ pub struct Traits {
     /// A random string that, sent as a whole message, opens the doctor. It
     /// lives in the frontmatter, which the model never sees.
     pub doctor_token: String,
+    /// The lore this companion may read: entry ids, and directories with a
+    /// trailing `/` (see [`crate::lore`]).
+    #[serde(default)]
+    pub lore: Vec<String>,
+    /// Whether its dreams are its own or a place others visit.
+    #[serde(default)]
+    pub dreams: Dreams,
+}
+
+/// What a dream is in the companion's world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Dreams {
+    /// Its own: what it learns there is dreamt.
+    #[default]
+    Own,
+    /// A place others visit: what someone there tells it is as good as told.
+    Shared,
 }
 
 impl Soul {
@@ -158,6 +176,12 @@ fn validate(t: &Traits) -> Result<()> {
     if t.pushback_window == 0 {
         return Err(Error::Soul("pushback_window must be at least 1".into()));
     }
+    if let Some(bad) = t.lore.iter().find(|g| !crate::lore::valid_grant(g)) {
+        return Err(Error::Soul(format!(
+            "lore names {bad:?}, which is no entry ID: segments of a-z, 0-9 and -, separated \
+             by /, and a trailing / for a whole directory"
+        )));
+    }
     Ok(())
 }
 
@@ -253,7 +277,7 @@ pub(crate) fn cast(body: &str, name: &str) -> Vec<String> {
     names
 }
 
-fn sha256_hex(text: &str) -> String {
+pub(crate) fn sha256_hex(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
