@@ -79,13 +79,17 @@ pub const WAKE_MARK_HINT: &str = "A `zz` mark at the start of their message woke
 /// What a bare `zz` says.
 pub const GOODNIGHT: &str = "Goodnight.";
 
-/// Told to the reply model when the user said goodnight with `zz`.
-pub const GOODNIGHT_HINT: &str = "They are going to bed: this reply is your goodnight, short and \
-    in character, and you fall asleep after it. A `zz` mark at the start of their message said \
-    so: it is not something they said, so never mention it.";
+/// Told to the reply model when the user said goodnight with `zz`. What follows
+/// the mark can be a story beat rather than a goodnight, so the reply answers
+/// that and ends where it ends: told "this reply is your goodnight", a model
+/// played the beat and then left the scene to go to bed.
+pub const GOODNIGHT_HINT: &str = "Their message ends the conversation: answer it short, in \
+    character and in the moment, as its last beat, and you fall asleep after this reply. Say \
+    goodnight or speak of bed only if their message does. A `zz` mark at the start of their \
+    message ended it: it is not something they said, so never mention it.";
 
-/// Splits a leading `zz` off a message: the user is going to bed, and what
-/// follows is their goodnight. A bare `zz` says [`GOODNIGHT`]. Any case, since
+/// Splits a leading `zz` off a message: the conversation ends with this
+/// exchange, and what follows is the user's last message. A bare `zz` says [`GOODNIGHT`]. Any case, since
 /// phone keyboards capitalize it; glued to a word (`zzz`, `zzzap`) it is just
 /// text.
 pub fn goodnight_marker(message: &str) -> (bool, &str) {

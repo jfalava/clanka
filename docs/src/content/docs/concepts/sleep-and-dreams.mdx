@@ -11,13 +11,15 @@ Sleep ends a conversation. In `clanka chat` you send `/sleep`; on Hermes or
 an MCP host the model calls its sleep tool when you say goodnight.
 
 A message that starts with `zz` says goodnight for certain: the companion
-answers with a short goodnight in character and falls asleep after it, on
-every front end, whether the model calls its tool or not. What follows the
-`zz` is your goodnight; on its own it says "Goodnight.". Any case counts, so a
+answers it and falls asleep after its reply, on every front end, whether the
+model calls its tool or not. What follows the `zz` is your last message, a
+goodnight or the last beat of a scene, and the reply answers it in the moment
+rather than turning to bed; on its own it says "Goodnight.". Any case counts, so a
 phone's capital `Zz` works. On Hermes, `/sleep` sends that message for you.
 
 ```text
 you> zz night, see you tomorrow
+you> zz The moment you take the ring, the room goes dark.
 ```
 
 While it sleeps, the companion:

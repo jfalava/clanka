@@ -21,8 +21,8 @@ A general plugin on Hermes's public plugin API only:
   line to the chat saying they happened, in counts only (``ctx.post_message``:
   not kept in Hermes's transcript, never shown to the model).
 - ``zz`` at the start of a message says goodnight for sure: the companion
-  answers with a short goodnight and sleeps after it, tool call or not (in a
-  dream, it wakes). ``/sleep [words]`` sends that message for the user, which
+  answers what follows it as the conversation's last beat and sleeps after it,
+  tool call or not (in a dream, it wakes). ``/sleep [words]`` sends that message for the user, which
   needs ``plugins.entries.clanka.allow_gateway_injection`` (``clanka hermes
   profile`` sets it).
 - ``/triage`` answers with the companion's state and its last diagnostics
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 MAX_TOKENS = 2048
 # Added after a ``zz`` goodnight's context, last, so the model calls the tool
 # the user asked for. Sleep comes after the reply whether it does or not.
-GO_TO_SLEEP = "Call go_to_sleep first, then write that goodnight."
+GO_TO_SLEEP = "Call go_to_sleep first, then write that last reply."
 
 # How long /triage waits for memory to open: a command answers at once or not
 # at all, and an open that waits on a keychain prompt can take minutes.
@@ -560,7 +560,7 @@ class _Plugin:
         self._sleep_requested = True
         # Nothing a model could narrate back as its goodnight ("Sleeping now."):
         # the result names no action, only whose words the reply is.
-        return json.dumps({"ok": True, "note": "Your reply is the goodnight, in your own words."})
+        return json.dumps({"ok": True, "note": "Your reply is the last of this conversation, in your own words."})
 
 
 def register(ctx):
