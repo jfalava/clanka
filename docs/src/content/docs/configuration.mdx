@@ -163,6 +163,26 @@ The weight per level, in the order faint, normal, vivid, seared.
 
 - Default: `[0.8, 1.0, 1.15, 1.3]`
 
+## `[session]`
+
+The conversation's allowance, for every companion on this machine. See
+[Getting tired](/concepts/sleep-and-dreams/#getting-tired).
+
+```toml
+[session]
+tokens = 128000
+```
+
+### `tokens`
+
+Estimated tokens of conversation (one per 3 characters) before the companion
+tires; a dream ends when it fills them. Sleep and waking read this much of the
+night. `--session-tokens` and a Hermes profile's `session_tokens` win over it
+for one companion. A model with a window under 128,000 tokens, or a
+conversation in Chinese or Japanese, needs less.
+
+- Default: `64000`
+
 ## `[keys]`
 
 Where a new companion's database key is put, and the

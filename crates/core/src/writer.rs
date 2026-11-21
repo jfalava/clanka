@@ -178,6 +178,7 @@ impl Companion {
                     prompt,
                     tools,
                     MAX_CALLS,
+                    &[],
                     |c, call| c.run_tool(call, &exchange, &spoken),
                 )
             });
@@ -299,7 +300,10 @@ impl Companion {
     /// call through `run`. One round is the norm: the model is asked for every
     /// call at once and hears back only when one failed, so it can fix it.
     /// Calls past `max_calls` are refused without running and end the loop:
-    /// a model that over-calls isn't asked to fix anything.
+    /// a model that over-calls isn't asked to fix anything. A refused call to
+    /// one of the `optional` tools is not worth another round: what it would
+    /// have changed stays as it was.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn tool_loop(
         &mut self,
         pass: Pass,
@@ -307,6 +311,7 @@ impl Companion {
         prompt: String,
         tools: Vec<ToolSpec>,
         max_calls: usize,
+        optional: &[&str],
         mut run: impl FnMut(&mut Self, &ToolCall) -> Result<String>,
     ) -> Result<Reflection> {
         // A text-only model gets the tools in the system prompt and answers in JSON.
@@ -426,7 +431,7 @@ impl Companion {
                         code: Some(e.code()),
                     },
                 };
-                failed |= !outcome.ok;
+                failed |= !outcome.ok && !optional.contains(&call.name.as_str());
                 if json {
                     results.push(format!("- {}: {}", call.name, outcome.result));
                 } else {

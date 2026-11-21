@@ -38,6 +38,9 @@ A general plugin on Hermes's public plugin API only:
   awake. ``plugins.entries.clanka.settings.sleep_on_leave: false`` makes
   leaving keep it awake too, for a script that sends each message as a
   one-shot (``hermes/bench.sh``); ``/new`` still puts it to sleep.
+- ``plugins.entries.clanka.settings.session_tokens`` sets how much
+  conversation this companion holds before it tires, in estimated tokens;
+  it wins over ``[session] tokens`` in clanka's config.toml.
 
 The companion is the soul.md named by ``plugins.entries.clanka.settings.soul``
 in the profile's config.yaml (``$CLANKA_SOUL`` as a fallback). Put its persona in
@@ -246,6 +249,18 @@ class _Plugin:
         # .env doesn't reach a plugin's os.environ.
         return self._ctx.get_config("soul") or os.environ.get("CLANKA_SOUL")
 
+    def _session_tokens(self):
+        """This profile's conversation allowance, which wins over ``[session]
+        tokens`` in clanka's config.toml; ``None`` when the profile sets none."""
+        tokens = self._ctx.get_config("session_tokens")
+        if tokens in (None, ""):
+            return None
+        try:
+            return int(tokens)
+        except (TypeError, ValueError):
+            logger.warning("clanka: session_tokens %r is not a number; ignored", tokens)
+            return None
+
     def _note(self, what):
         """Notes what the core can't see in clanka's diagnostics log (``clanka
         diagnostics``), for this companion: one of a few fixed words, never
@@ -261,7 +276,9 @@ class _Plugin:
         try:
             from . import _clanka
 
-            opening.set_result(_clanka.Companion(soul, self._model))
+            opening.set_result(
+                _clanka.Companion(soul, self._model, session_tokens=self._session_tokens())
+            )
         except BaseException as e:
             opening.set_exception(e)
 

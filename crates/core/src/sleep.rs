@@ -4,6 +4,11 @@
 //!
 //! Sleep can be retried: if it fails before the episode is written, the session
 //! stays open, escalation won't repeat, and a memory drifts at most once a session.
+//!
+//! Sleep reads as much of the night as the conversation's allowance
+//! ([`Companion::session_tokens`]). When the model call fails before anything
+//! ran, it tries once more with half of that: a prompt too large for the model
+//! then costs one extra call instead of every retry.
 
 use crate::companion::ensure_writable;
 use crate::context::estimate_tokens;
@@ -29,11 +34,14 @@ const MIN_DRIFT: f64 = 0.05;
 /// so the ask is a number and this is the check behind it.
 const EPISODE_WORDS: usize = 55;
 
-/// Estimated tokens of the night's conversation the sleep prompt carries. A
-/// session on a host with its own history can outgrow the model's window, and
-/// a prompt that doesn't fit fails every retry, so the session never ends.
-/// The reflections already kept what the earliest turns earned.
-pub const TRANSCRIPT_TOKENS: usize = 24_000;
+/// Most memories offered to drift in one night: the ones that would shift
+/// most. Each drift is one action, and a long night brings up more memories
+/// than one reply can hold alongside the episode, the mood and the sections.
+pub const MAX_DRIFTS: usize = 8;
+
+/// Most memories kept during the night that the sleep prompt lists, newest
+/// first. A long night keeps hundreds, and the list would crowd out the night.
+pub const KEPT_LIMIT: usize = 40;
 
 /// Longest single turn quoted, in characters: one pasted document must not
 /// push the rest of the night out.
@@ -74,7 +82,6 @@ impl Companion {
         let escalated = self.escalate_threads()?;
         let offered = self.drift_offers(session, self.soul.traits.drift)?;
 
-        let prompt = self.sleep_prompt(session, &offered)?;
         let system = format!(
             "{}\n\n{}",
             self.soul.body.trim(),
@@ -82,16 +89,28 @@ impl Companion {
         );
         let mut episode = None;
         let mut drifted = Vec::new();
-        // A night makes as many calls as it has memories to drift; only the
-        // reply's own cap applies.
-        let reflection = self.tool_loop(
-            Pass::Sleep,
-            system,
-            prompt,
-            tool_specs(),
-            crate::actions::MAX_ACTIONS,
-            |c, call| c.run_sleep_tool(call, session, &offered, &mut episode, &mut drifted),
-        )?;
+        let mut night = self.session_tokens;
+        let reflection = loop {
+            let prompt = self.sleep_prompt(session, &offered, night)?;
+            let mut ran = false;
+            // A section that is refused stays as it was: not worth a round.
+            let tried = self.tool_loop(
+                Pass::Sleep,
+                system.clone(),
+                prompt,
+                tool_specs(),
+                crate::actions::MAX_ACTIONS,
+                &["write_section"],
+                |c, call| {
+                    ran = true;
+                    c.run_sleep_tool(call, session, &offered, &mut episode, &mut drifted)
+                },
+            );
+            match tried {
+                Err(Error::Llm(_)) if !ran && night == self.session_tokens => night /= 2,
+                other => break other?,
+            }
+        };
         let rounds = reflection.rounds;
         *calls = Some(reflection);
         let episode = episode.ok_or_else(|| {
@@ -162,6 +181,7 @@ impl Companion {
     /// night to blur, and offering it invites the model to rewrite it as the
     /// whole evening. What the user told about themselves never blurs: it is
     /// their word, not the companion's memory of it.
+    /// At most [`MAX_DRIFTS`], the ones that would shift most.
     pub(crate) fn drift_offers(
         &self,
         session: i64,
@@ -180,18 +200,26 @@ impl Companion {
             )?
             .query_map([session], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?;
-        let mut offers = BTreeMap::new();
+        let mut offers = Vec::new();
         for (id, level) in candidates {
             let seed = self.deps.rng.next_seed();
             let magnitude = unit(seed) * drift * DRIFT_CAP[level as usize];
             if magnitude >= MIN_DRIFT {
-                offers.insert(id, (seed, magnitude));
+                offers.push((id, (seed, magnitude)));
             }
         }
-        Ok(offers)
+        offers.sort_by(|a, b| b.1.1.total_cmp(&a.1.1).then(a.0.cmp(&b.0)));
+        offers.truncate(MAX_DRIFTS);
+        Ok(offers.into_iter().collect())
     }
 
-    fn sleep_prompt(&self, session: i64, offered: &BTreeMap<i64, (u64, f64)>) -> Result<String> {
+    /// The night's prompt, with the newest `night` estimated tokens of it.
+    fn sleep_prompt(
+        &self,
+        session: i64,
+        offered: &BTreeMap<i64, (u64, f64)>,
+        night: usize,
+    ) -> Result<String> {
         let user = self.user_name()?.unwrap_or_else(|| "user".into());
         let turns: Vec<String> = self
             .conn
@@ -205,9 +233,10 @@ impl Companion {
                 Ok(format!("({who}) {}", clip(&heard(&content))))
             })?
             .collect::<rusqlite::Result<_>>()?;
-        let turns = newest_that_fit(turns, TRANSCRIPT_TOKENS);
-        // What the evening's reflections kept, so the episode doesn't keep it again.
-        let kept: Vec<String> = self
+        let turns = newest_that_fit(turns, night);
+        // What the evening's reflections kept, so the episode doesn't keep it
+        // again: the newest, as many as the list holds.
+        let ids: Vec<i64> = self
             .conn
             .prepare(
                 "SELECT id FROM memories WHERE status = 'active'
@@ -215,10 +244,15 @@ impl Companion {
                  ORDER BY id",
             )?
             .query_map([session], |r| r.get::<_, i64>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .map(|id| self.memory(id).map(|m| crate::writer::listing(&m, None)))
+            .collect::<rusqlite::Result<_>>()?;
+        let earlier = ids.len().saturating_sub(KEPT_LIMIT);
+        let mut kept: Vec<String> = ids[earlier..]
+            .iter()
+            .map(|&id| self.memory(id).map(|m| crate::writer::listing(&m, None)))
             .collect::<Result<_>>()?;
+        if earlier > 0 {
+            kept.insert(0, format!("({earlier} kept earlier tonight are left out)"));
+        }
         let kept = if kept.is_empty() {
             "(nothing)".to_owned()
         } else {
@@ -311,10 +345,13 @@ impl Companion {
                 if section == Section::AboutUser
                     && let Some(name) = self.borrowed_from_cast(&a.content)?
                 {
-                    return Err(Error::Invalid(format!(
-                        "about_user names {name}, who is in your life, not the user's; keep the \
-                         section to what is true of them"
-                    )));
+                    return Err(Error::Rule(
+                        "section_names_cast",
+                        format!(
+                            "about_user names {name}, who is in your life, not the user's; keep \
+                             the section to what is true of them"
+                        ),
+                    ));
                 }
                 self.write_section(Actor::Sleep, section, &a.content)?;
                 Ok(format!("section {} updated", a.section))
@@ -465,6 +502,7 @@ fn unit(seed: u64) -> f64 {
 }
 
 fn instructions(name: &str) -> String {
+    let limit = crate::state::SECTION_MAX_CHARS;
     format!(
         "You are {name}, falling asleep after tonight's conversation. Nobody sees this.\n\n\
          Call write_episode once with tonight, in first person, in under 45 words: what you \
@@ -473,7 +511,7 @@ fn instructions(name: &str) -> String {
          about them. Call settle_mood once with \
          how you are left feeling. If tonight \
          changed what you know about the user or about your relationship, call write_section \
-         with the whole section rewritten in a few lines: what stays true of them, as facts and \
+         with the whole section rewritten in a few lines, under {limit} characters: what stays true of them, as facts and \
          what they have said about themselves, not your reading of them or what happened \
          tonight; what they told you about themselves is kept on its own, so the section \
          doesn't repeat it. If tonight changed one of those things, call supersede on that \
@@ -546,10 +584,10 @@ pub(crate) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool(
             "write_section",
-            "Rewrite what you know about the user (about_user) or about your relationship, when tonight changed it. Replaces the whole section.",
+            "Rewrite what you know about the user (about_user) or about your relationship, when tonight changed it. Replaces the whole section. A few lines, under 2000 characters.",
             json!({ "type": "object", "properties": {
                 "section": { "type": "string", "enum": ["about_user", "relationship"] },
-                "content": { "type": "string" },
+                "content": { "type": "string", "maxLength": crate::state::SECTION_MAX_CHARS },
             }, "required": ["section", "content"] }),
         ),
         tool(

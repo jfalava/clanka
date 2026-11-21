@@ -3,7 +3,7 @@ mod common;
 use clanka_core::deps::{LlmRequest, LlmResponse, ToolCall};
 use clanka_core::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
 use clanka_core::{Companion, Error, MemoryDraft, Mood, Ranking};
-use common::{clock, count, fixture, open_full, raw, soul_text};
+use common::{clock, count, fixture, open_fallible, open_full, open_text_only, raw, soul_text};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -479,8 +479,8 @@ fn about_user_never_borrows_from_the_companions_own_life() {
     c.record_turn(s, Speaker::Companion, "No way.").unwrap();
     let report = c.sleep(s).unwrap();
     assert_eq!(
-        report.rounds, 2,
-        "the refusal was heard and the night went on"
+        report.rounds, 1,
+        "a refused section stays as it was and costs no second round"
     );
     assert_eq!(c.section(Section::AboutUser).unwrap(), None);
     assert_eq!(
@@ -551,6 +551,8 @@ fn a_long_night_is_told_from_its_latest_turns() {
     let prompts: Arc<Mutex<Vec<String>>> = Arc::default();
     let night = vec![episode("We talked until the birds started.")];
     let mut c = open_full(&f, sleeper(vec![night], prompts.clone()), clock());
+    // Sleep reads as much of the night as the conversation's allowance.
+    c.set_session_tokens(24_000).unwrap();
     let session = c.open_session().unwrap();
     let filler = "word ".repeat(600); // 3000 characters, about 1000 tokens
     for i in 0..40 {
@@ -570,11 +572,108 @@ fn a_long_night_is_told_from_its_latest_turns() {
         prompt.contains("turns before this are left out"),
         "{prompt}"
     );
-    // 42 000 tokens of turns went in; what is left fits the budget and its framing.
+    // 42 000 tokens of turns went in; what is left fits the allowance and its framing.
     let tokens = clanka_core::context::estimate_tokens(&prompt);
-    assert!(
-        tokens <= clanka_core::sleep::TRANSCRIPT_TOKENS + 500,
-        "{tokens}"
-    );
+    assert!(tokens <= 24_000 + 500, "{tokens}");
     assert!(prompt.contains("xxx […]") && !prompt.contains(&"x".repeat(7000)));
+}
+
+/// A long night brings up more memories than one reply can drift alongside
+/// the episode, the mood and the sections. Sleep offers the ones that would
+/// shift most, and a text-only reply past the limit still ends the night: the
+/// first actions run and the rest are refused, instead of the whole reply.
+#[test]
+fn a_long_night_offers_a_few_drifts_and_a_long_reply_still_sleeps() {
+    let f = fixture();
+    let time = clock();
+    let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), time.clone());
+    // The test embedder tells texts apart only by their keywords, so ten
+    // distinct memories are five keyword sets in two types.
+    let sets = ["laura", "concert", "dad", "laura concert", "concert dad"];
+    let ids: Vec<i64> = [MemoryType::Episode, MemoryType::PersonaNote]
+        .into_iter()
+        .flat_map(|kind| sets.map(move |set| (kind, set)))
+        .map(|(kind, set)| write(&mut c, kind, Level::Faint, &format!("Old {set} night")))
+        .collect();
+    time.fetch_add(HOUR, Ordering::SeqCst);
+    let s = c.open_session().unwrap();
+    c.record_turn(s, Speaker::User, "So many concerts").unwrap();
+    c.record_turn(s, Speaker::Companion, "Too many.").unwrap();
+    c.mark_recalled(s, &ids).unwrap();
+    drop(c);
+
+    let prompts: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = prompts.clone();
+    let mut actions = vec![json!({ "tool": "write_episode",
+        "arguments": { "interpretation": "A long night of old songs." } })];
+    actions.extend((0..25).map(|_| {
+        json!({ "tool": "settle_mood", "arguments":
+            { "valence": 0.2, "energy": -0.4, "warmth": 0.5, "cause": "Tired of concerts" } })
+    }));
+    let reply = json!({ "actions": actions }).to_string();
+    let mut c = open_text_only(&f, move |r: &LlmRequest| {
+        seen.lock().unwrap().push(r.messages[0].content.clone());
+        LlmResponse {
+            text: if r.messages.len() == 1 {
+                reply.clone()
+            } else {
+                String::new()
+            },
+            tool_calls: Vec::new(),
+        }
+    });
+    let report = c.sleep(s).unwrap();
+    assert_eq!(report.rounds, 1, "the calls past the limit end the pass");
+    assert_eq!(c.memory(report.episode).unwrap().kind, MemoryType::Episode);
+    assert_ne!(c.open_session().unwrap(), s, "the night ended");
+    let prompt = prompts.lock().unwrap()[0].clone();
+    let offered = ids
+        .iter()
+        .filter(|id| prompt.contains(&format!("#{id} [")))
+        .count();
+    assert_eq!(offered, clanka_core::sleep::MAX_DRIFTS);
+}
+
+/// A night too large for the model fails its call; sleep tries once more
+/// with half of it instead of failing every retry.
+#[test]
+fn a_failed_call_is_tried_once_more_with_half_the_night() {
+    let f = fixture();
+    let prompts: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = prompts.clone();
+    let mut c = open_fallible(&f, move |r: &LlmRequest| {
+        let mut seen = seen.lock().unwrap();
+        if r.messages.len() > 1 {
+            return Ok(LlmResponse::default());
+        }
+        seen.push(r.messages[0].content.clone());
+        if seen.len() == 1 {
+            return Err(Error::Llm("context length exceeded".into()));
+        }
+        Ok(LlmResponse {
+            text: String::new(),
+            tool_calls: vec![episode("A long talk.")],
+        })
+    });
+    c.set_session_tokens(4_000).unwrap();
+    let s = c.open_session().unwrap();
+    for i in 0..10 {
+        c.record_turn(
+            s,
+            Speaker::User,
+            &format!("turn {i} {}", "word ".repeat(300)),
+        )
+        .unwrap();
+    }
+    c.sleep(s).unwrap();
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    let tokens = |p: &str| clanka_core::context::estimate_tokens(p);
+    assert!(
+        tokens(&prompts[0]) > 3_000 && tokens(&prompts[1]) < 2_500,
+        "{} then {}",
+        tokens(&prompts[0]),
+        tokens(&prompts[1])
+    );
+    assert!(prompts[1].contains("turn 9 ") && !prompts[1].contains("turn 5 "));
 }

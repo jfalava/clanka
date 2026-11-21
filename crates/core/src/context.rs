@@ -8,11 +8,13 @@
 //! 5. The last turn note.
 //! 6. Hot threads.
 //! 7. Recalled memories.
-//! 8. The current session's turns, newest first, with whatever budget is left.
+//! 8. The current session's turns, newest first, within the conversation's
+//!    own allowance ([`Companion::session_tokens`]).
 //!
-//! Each part is included only if it fits in what earlier parts left over; a
-//! list stops at its first item that doesn't fit, so lower-ranked items go
-//! first. Hosts that keep their own history (Hermes) take the parts they need
+//! Parts 1–7 share the memory budget. Each is included only if it fits in what
+//! earlier parts left over; a list stops at its first item that doesn't fit, so
+//! lower-ranked items go first. The conversation is measured against its own
+//! allowance, so a companion with more memories doesn't tire sooner. Hosts that keep their own history (Hermes) take the parts they need
 //! from [`Context`] instead of [`Context::render`].
 
 use crate::companion::meta;
@@ -70,8 +72,8 @@ pub struct Turn {
     pub content: String,
 }
 
-/// How tired the companion is, from how much of the session-turn budget the current
-/// session already fills. The soul's `tired_at` and `sleep_at` set the steps.
+/// How tired the companion is, from how much of the conversation's allowance the
+/// current session already fills. The soul's `tired_at` and `sleep_at` set the steps.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Fatigue {
     Rested,
@@ -106,19 +108,25 @@ pub struct Context {
     pub memories: Vec<Recalled>,
     /// Session turns that fit, oldest first. Older ones are dropped first.
     pub turns: Vec<Turn>,
-    /// Session turns left out for lack of budget.
+    /// Session turns left out: past the conversation's allowance.
     pub omitted_turns: usize,
     pub fatigue: Fatigue,
     /// Fatigue as it was for the previous exchange of this session, so a host
     /// that replays its history ([`Companion::keep_new`]) shows each step
     /// (tired, then sleepy) once instead of on every turn after it.
     pub fatigue_before: Fatigue,
-    /// The session fills its whole budget. A dream ends with this reply.
+    /// The session fills its whole allowance. A dream ends with this reply.
     pub spent: bool,
+    /// Estimated tokens of the whole conversation so far, the left-out turns
+    /// included.
+    pub conversation_tokens: usize,
+    /// The conversation's allowance it was measured against.
+    pub allowance: usize,
     /// At the pushback limit: the companion should let the next opinion clash go.
     pub let_go: bool,
-    /// Estimated tokens of everything included, the current message and the
-    /// [`hints_reserve`].
+    /// Estimated tokens of the memory parts, the persona, the current message
+    /// and the [`hints_reserve`]: what the memory budget holds. The session's
+    /// turns are measured against the allowance instead.
     pub tokens: usize,
 }
 
@@ -133,8 +141,8 @@ impl Companion {
     }
 
     /// The context for answering `message`, your current message (not yet
-    /// recorded), within `budget` estimated tokens. Leave room for the reply
-    /// when choosing the budget.
+    /// recorded): memory within `budget` estimated tokens, and the session's
+    /// turns within the conversation's allowance ([`Companion::session_tokens`]).
     pub fn assemble(&self, message: &str, budget: usize, ranking: &Ranking) -> Result<Context> {
         if meta(&self.conn, "persona_hash")?.as_deref() != Some(self.soul.hash.as_str()) {
             return Err(Error::PersonaUnresolved);
@@ -204,13 +212,18 @@ impl Companion {
             memories.push(recalled);
         }
 
-        // Everything above is fixed for this turn; the session gets the rest.
-        let session_budget = left.total.saturating_sub(left.used);
+        // The conversation has an allowance of its own: however much memory a
+        // companion has gathered, it doesn't shorten the conversation.
+        let allowance = self.session_tokens;
         let session = self.session_turns()?;
         let session_tokens: usize = session.iter().map(|t| estimate_tokens(&t.content)).sum();
+        let mut said = Budget {
+            total: allowance,
+            used: 0,
+        };
         let mut turns = Vec::new();
         for turn in session.iter().rev() {
-            if !left.take(&turn.content) {
+            if !said.take(&turn.content) {
                 break;
             }
             turns.push(turn.clone());
@@ -218,20 +231,22 @@ impl Companion {
         turns.reverse();
 
         let traits = &self.soul.traits;
-        let now = fatigue(traits, session_tokens, session_budget);
+        let now = fatigue(traits, session_tokens, allowance);
         // The previous exchange saw the session up to your last message.
         let last_user = session.iter().rposition(|t| t.speaker == Speaker::User);
         let before: usize = session[..last_user.unwrap_or(0)]
             .iter()
             .map(|t| estimate_tokens(&t.content))
             .sum();
-        let fatigue_before = fatigue(traits, before, session_budget);
+        let fatigue_before = fatigue(traits, before, allowance);
 
         let (pushbacks, limit) = self.pushback_pressure()?;
         Ok(Context {
             // Nothing is kept of a dream as it happens, pushbacks included.
             let_go: !dreaming && pushbacks >= limit,
-            spent: session_budget == 0 || session_tokens >= session_budget,
+            spent: session_tokens >= allowance,
+            conversation_tokens: session_tokens,
+            allowance,
             dreaming,
             dream,
             time_away,
@@ -418,14 +433,21 @@ impl Companion {
     }
 }
 
-/// How tired `session_tokens` of conversation make the companion, out of the
-/// `session_budget` the fixed parts left it.
-fn fatigue(traits: &crate::soul::Traits, session_tokens: usize, session_budget: usize) -> Fatigue {
-    let fill = if session_budget == 0 {
-        f64::INFINITY
-    } else {
-        session_tokens as f64 / session_budget as f64
-    };
+impl Fatigue {
+    /// The step as a word diagnostics may record.
+    pub fn word(self) -> &'static str {
+        match self {
+            Fatigue::Rested => "rested",
+            Fatigue::Tired(_) => "tired",
+            Fatigue::Sleepy => "sleepy",
+        }
+    }
+}
+
+/// How tired `session_tokens` of conversation make the companion, out of its
+/// `allowance`.
+pub fn fatigue(traits: &crate::soul::Traits, session_tokens: usize, allowance: usize) -> Fatigue {
+    let fill = session_tokens as f64 / allowance.max(1) as f64;
     if fill >= traits.sleep_at {
         Fatigue::Sleepy
     } else if fill >= traits.tired_at {

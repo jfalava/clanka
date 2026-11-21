@@ -4,7 +4,7 @@ description: Talk with a companion in the terminal, on its configured model.
 ---
 
 ```sh
-clanka chat [--budget <tokens>] <soul>
+clanka chat [--budget <tokens>] [--session-tokens <tokens>] <soul>
 ```
 
 Needs a [`[model]`](/configuration/#model) section in `config.toml`. Type a
@@ -32,6 +32,19 @@ Estimated tokens the memory context may use per turn.
 
 ```sh
 clanka chat --budget 4000 ~/.config/clanka/souls/<id>.md
+```
+
+### `--session-tokens <tokens>`
+
+Estimated tokens of conversation before the companion tires, for this
+companion. Sleep reads this much of the night. Wins over
+[`[session] tokens`](/configuration/#session). See
+[Getting tired](/concepts/sleep-and-dreams/#getting-tired).
+
+- Default: `[session] tokens`, or `64000`
+
+```sh
+clanka chat --session-tokens 128000 ~/.config/clanka/souls/<id>.md
 ```
 
 ## In the conversation

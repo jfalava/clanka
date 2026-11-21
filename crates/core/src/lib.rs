@@ -22,7 +22,7 @@ pub mod state;
 pub mod tics;
 pub mod writer;
 
-pub use companion::{Companion, PersonaStatus};
+pub use companion::{Companion, PersonaStatus, SESSION_TOKENS};
 pub use context::{Context, Fatigue, TimeAway, Turn};
 pub use deps::Deps;
 pub use doctor::DeleteAll;

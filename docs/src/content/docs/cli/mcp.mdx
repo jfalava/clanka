@@ -4,7 +4,7 @@ description: Serve a companion to an MCP host over stdio.
 ---
 
 ```sh
-clanka mcp [--budget <tokens>] <soul>
+clanka mcp [--budget <tokens>] [--session-tokens <tokens>] <soul>
 ```
 
 Serves one companion to an MCP host over stdio, for trying it out. The host
@@ -35,4 +35,17 @@ Estimated tokens the memory context may use per turn.
 
 ```sh
 clanka mcp --budget 4000 ~/.config/clanka/souls/<id>.md
+```
+
+### `--session-tokens <tokens>`
+
+Estimated tokens of conversation before the companion tires, for this
+companion. Sleep reads this much of the night. Wins over
+[`[session] tokens`](/configuration/#session). See
+[Getting tired](/concepts/sleep-and-dreams/#getting-tired).
+
+- Default: `[session] tokens`, or `64000`
+
+```sh
+clanka mcp --session-tokens 128000 ~/.config/clanka/souls/<id>.md
 ```

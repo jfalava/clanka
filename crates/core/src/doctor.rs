@@ -353,6 +353,7 @@ impl Companion {
             listed.join("\n\n"),
             tool_specs(),
             crate::actions::MAX_ACTIONS,
+            &[],
             |c, call| c.run_reinterpret(call, &allowed, &mut done),
         );
         self.diagnose_pass(

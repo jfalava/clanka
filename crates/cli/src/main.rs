@@ -176,6 +176,8 @@ enum Command {
         /// Estimated tokens the memory context may use per turn.
         #[arg(long, default_value_t = 6000)]
         budget: usize,
+        #[arg(long, help = SESSION_TOKENS_HELP)]
+        session_tokens: Option<usize>,
     },
     /// Serve a companion to an MCP host over stdio, for trying it out.
     ///
@@ -193,6 +195,8 @@ enum Command {
         /// Estimated tokens the memory context may use per turn.
         #[arg(long, default_value_t = 6000)]
         budget: usize,
+        #[arg(long, help = SESSION_TOKENS_HELP)]
+        session_tokens: Option<usize>,
     },
     /// List the companions set up on this machine.
     ///
@@ -457,6 +461,9 @@ enum DebugCommand {
 }
 
 const SOUL_HELP: &str = "The companion's soul.md, as printed by `clanka init`";
+
+const SESSION_TOKENS_HELP: &str = "Estimated tokens of conversation before the companion \
+    tires, for this companion; wins over [session] tokens in config.toml (default 64000)";
 
 impl Command {
     /// The command as diagnostics name it.
@@ -878,7 +885,11 @@ fn run(command: Command) -> Result<bool> {
             command: HermesCommand::Refresh { no_restart },
         } => hermes::refresh(!no_restart),
         Command::Upgrade { no_restart } => upgrade::run(!no_restart),
-        Command::Chat { soul, budget } => {
+        Command::Chat {
+            soul,
+            budget,
+            session_tokens,
+        } => {
             let config = Config::load(&paths)?;
             if config.model.is_none() {
                 bail!(
@@ -886,7 +897,7 @@ fn run(command: Command) -> Result<bool> {
                     paths.config_file().display()
                 );
             }
-            let (chat, writer) = open_pair(&paths, &soul, &config)?;
+            let (chat, writer) = open_pair(&paths, &soul, &config, session_tokens)?;
             let log = config
                 .diagnostics
                 .enabled
@@ -896,7 +907,11 @@ fn run(command: Command) -> Result<bool> {
             send_quietly(&paths, &config);
             chatted
         }
-        Command::Mcp { soul, budget } => {
+        Command::Mcp {
+            soul,
+            budget,
+            session_tokens,
+        } => {
             let config = Config::load(&paths)?;
             match &config.model {
                 // stdout is the MCP channel; notes go to stderr.
@@ -911,7 +926,7 @@ fn run(command: Command) -> Result<bool> {
                     paths.config_file().display()
                 ),
             }
-            let (chat, writer) = open_pair(&paths, &soul, &config)?;
+            let (chat, writer) = open_pair(&paths, &soul, &config, session_tokens)?;
             let served = clanka::mcp::serve(chat, writer, budget);
             send_quietly(&paths, &config);
             served
@@ -956,18 +971,25 @@ fn run(command: Command) -> Result<bool> {
 /// Two handles to one companion on the same model: one for the hot path and
 /// one for reflection and sleep, so a slow reflection never blocks a turn.
 /// The second is `None` without a model.
+/// `session_tokens`, the front end's own allowance, wins over config.toml's.
 fn open_pair(
     paths: &Paths,
     soul: &Path,
     config: &Config,
+    session_tokens: Option<usize>,
 ) -> Result<(clanka_core::Companion, Option<clanka_core::Companion>)> {
     let embedder = SharedEmbedder::load(paths)?;
     let model = setup::llm(config.model.as_ref());
-    let chat = setup::open_to_talk(paths, soul, embedder.clone(), model)?;
-    let writer = match &config.model {
+    let mut chat = setup::open_to_talk(paths, soul, embedder.clone(), model)?;
+    let mut writer = match &config.model {
         Some(m) => Some(setup::open(paths, soul, embedder, Some(m))?),
         None => None,
     };
+    if let Some(tokens) = session_tokens {
+        for c in std::iter::once(&mut chat).chain(writer.as_mut()) {
+            c.set_session_tokens(tokens).context("--session-tokens")?;
+        }
+    }
     Ok((chat, writer))
 }
 

@@ -136,6 +136,20 @@ If a conversation stays open anyway,
 [`clanka doctor end-session`](/cli/doctor/#end-session) closes it without
 sleeping on it.
 
+How long a conversation runs before the companion tires is its
+[allowance](/concepts/sleep-and-dreams/#getting-tired).
+`plugins.entries.clanka.settings.session_tokens` in the profile's
+`config.yaml` sets it for this companion, over `[session] tokens` in
+clanka's `config.toml`:
+
+```yaml
+plugins:
+  entries:
+    clanka:
+      settings:
+        session_tokens: 128000
+```
+
 ## Let Nightshade write the soul
 
 Nightshade is a Hermes agent that interviews you about the companion you

@@ -22,7 +22,7 @@ use crate::deps::{ToolCall, ToolSpec};
 use crate::diagnostics::Pass;
 use crate::memory::ensure_open;
 use crate::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Urgency};
-use crate::sleep::{TRANSCRIPT_TOKENS, clip, drift_spec, mood_spec, newest_that_fit};
+use crate::sleep::{clip, drift_spec, mood_spec, newest_that_fit};
 use crate::soul::Soul;
 use crate::writer::{args, parse, said_verbatim};
 use crate::{Companion, Error, MemoryDraft, Reflection, Result};
@@ -292,9 +292,22 @@ impl Companion {
     /// and its turns never count as evidence. Not gated by the doctor's
     /// freeze: a freeze must not keep a dream open. Returns the dream dropped.
     pub fn drop_dream(&mut self) -> Result<Option<i64>> {
+        self.drop_open_dream("dropped")
+    }
+
+    fn drop_open_dream(&mut self, why: &'static str) -> Result<Option<i64>> {
         let Some(dream) = self.dreaming()? else {
             return Ok(None);
         };
+        let turns: i64 = self.conn.query_row(
+            "SELECT count(*) FROM turns WHERE session_id = ?1",
+            [dream],
+            |r| r.get(0),
+        )?;
+        self.diagnose(&crate::diagnostics::Event::DreamDropped {
+            why,
+            turns: turns as usize,
+        });
         let now = self.deps.clock.now_ms();
         self.conn.execute(
             "UPDATE sessions SET ended_at = ?1 WHERE id = ?2 AND ended_at IS NULL",
@@ -310,7 +323,7 @@ impl Companion {
     /// dreaming it exited or died. Every front end calls this before a turn.
     pub fn drop_lost_dream(&mut self) -> Result<Option<i64>> {
         match self.dreaming()? {
-            Some(dream) if self.dream != Some(dream) => self.drop_dream(),
+            Some(dream) if self.dream != Some(dream) => self.drop_open_dream("lost"),
             _ => Ok(None),
         }
     }
@@ -352,6 +365,7 @@ impl Companion {
             prompt,
             tool_specs(),
             crate::actions::MAX_ACTIONS,
+            &[],
             |c, call| c.run_wake_tool(call, session, &offered, &mut waking),
         )?;
         let rounds = reflection.rounds;
@@ -387,7 +401,7 @@ impl Companion {
                 Ok(format!("({who}) {}", clip(&r.get::<_, String>(2)?)))
             })?
             .collect::<rusqlite::Result<_>>()?;
-        let turns = newest_that_fit(turns, TRANSCRIPT_TOKENS);
+        let turns = newest_that_fit(turns, self.session_tokens);
         let mood = match self.mood()? {
             Some(m) => format!(
                 "valence {:+.1}, energy {:+.1}, warmth {:+.1}. Why: {}",

@@ -140,10 +140,13 @@ impl Companion {
     pub fn write_section(&mut self, actor: Actor, section: Section, content: &str) -> Result<()> {
         let chars = content.chars().count();
         if chars > SECTION_MAX_CHARS {
-            return Err(Error::Invalid(format!(
-                "section {} is {chars} characters; the limit is {SECTION_MAX_CHARS}",
-                section.as_str()
-            )));
+            return Err(Error::Rule(
+                "section_too_long",
+                format!(
+                    "section {} is {chars} characters; the limit is {SECTION_MAX_CHARS}",
+                    section.as_str()
+                ),
+            ));
         }
         let now = self.deps.clock.now_ms();
         let tx = self

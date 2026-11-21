@@ -67,6 +67,10 @@ pub enum Error {
     Seared(i64),
     #[error("invalid write: {0}")]
     Invalid(String),
+    /// A write refused by a named rule. The rule is a word diagnostics may
+    /// record, so a refusal can be told from another without the message.
+    #[error("invalid write: {1}")]
+    Rule(&'static str, String),
     #[error("key source: {0}")]
     Key(String),
     #[error("embedder: {0}")]

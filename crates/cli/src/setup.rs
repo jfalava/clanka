@@ -190,6 +190,32 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub diagnostics: DiagnosticsConfig,
+    #[serde(default)]
+    pub session: SessionConfig,
+}
+
+/// The conversation's allowance, for every companion on this machine. A
+/// front end's own setting (`--session-tokens`, the Hermes profile's
+/// `session_tokens`) wins over it for one companion.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionConfig {
+    /// Estimated tokens of conversation before the companion is too tired to
+    /// go on (one per 3 characters). Sleep reads this much of the night.
+    #[serde(default = "session_tokens")]
+    pub tokens: usize,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            tokens: session_tokens(),
+        }
+    }
+}
+
+fn session_tokens() -> usize {
+    clanka_core::SESSION_TOKENS
 }
 
 #[derive(Debug, Deserialize)]
@@ -669,6 +695,9 @@ fn open_as(
     let config_file = paths.config_file();
     let bad = |e: clanka_core::Error| anyhow::anyhow!("{}: {e}", config_file.display());
     companion.set_ranking(config.recall).map_err(bad)?;
+    companion
+        .set_session_tokens(config.session.tokens)
+        .map_err(bad)?;
     if let Some(similarity) = config.embedding.duplicate_similarity {
         companion
             .set_duplicate_similarity(similarity)
@@ -746,6 +775,9 @@ mod tests {
         assert_eq!(config.ui.glyphs, crate::ui::GlyphSetting::Unicode);
         assert!(config.diagnostics.enabled);
         assert!(config.diagnostics.upload.is_none());
+        assert_eq!(config.session.tokens, clanka_core::SESSION_TOKENS);
+        let long: Config = toml::from_str("[session]\ntokens = 128000\n").unwrap();
+        assert_eq!(long.session.tokens, 128_000);
         let upload = "[diagnostics.upload]\nurl = \"https://example.com/v1/events\"\n";
         let sending: Config = toml::from_str(upload).unwrap();
         let url = sending.diagnostics.upload.unwrap().url;

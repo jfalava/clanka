@@ -36,16 +36,36 @@ seared ones never.
 never drifts either; if the night changed one of those things, sleep replaces
 it with how it is now.
 
-Sleep needs the [`[model]`](/configuration/#model). If it fails before the
-episode is written, the session stays open and you can try again.
+Sleep reads as much of the night as the conversation's
+[allowance](#getting-tired). It offers at most 8 memories to drift, the ones
+that would shift most. A section it can't write (too long, or naming someone
+from the companion's own life as yours) stays as it was; sleep doesn't spend
+another round on it.
+
+Sleep needs the [`[model]`](/configuration/#model). If its model call fails,
+it tries once more with half the night. If it still fails before the episode
+is written, the session stays open and you can try again.
 
 ## Getting tired
 
-Each turn's context has a budget (`--budget`, 6000 estimated tokens by
-default). The persona, what you told it about yourself, the recalled memories
-and the mood come first; what is left is for the conversation so far. Once the
-conversation fills the `tired_at` share of that room the companion gets tired,
-and past the `sleep_at` share it asks to sleep. It asks, but never forces it.
+The conversation has an allowance of its own: 64,000 estimated tokens by
+default, one token per 3 characters. Once the conversation fills the
+`tired_at` share of it the companion gets tired, and past the `sleep_at`
+share it asks to sleep. It asks, but never forces it. A dream ends when it
+fills the whole allowance.
+
+Memory has a separate budget (`--budget`, 6000 estimated tokens per turn), so
+a companion with many memories doesn't tire sooner than a new one.
+
+Set the allowance for every companion with
+[`[session] tokens`](/configuration/#session), or for one with
+`--session-tokens` on [`clanka chat`](/cli/chat/) and [`clanka mcp`](/cli/mcp/)
+or `session_tokens` in a [Hermes profile](/guides/hermes/). At the default and
+a turn of about 200 tokens each way, the companion tires after about 220
+exchanges; at 128,000, about 450. On a host that keeps its own history, such
+as Hermes, every turn resends the conversation so far, so a long night costs
+more per turn as it grows. A model with a window under 128,000 tokens needs a
+lower allowance.
 
 ## Dreams
 

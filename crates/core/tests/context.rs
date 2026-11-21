@@ -148,39 +148,54 @@ fn shrinking_the_budget_drops_the_least_important_first() {
             prefix(&memories, &all_memories),
             "budget {budget}: memories {memories:?}"
         );
-        assert!(
-            all_turns.ends_with(&turns),
-            "budget {budget}: kept {turns:?}, not the newest"
-        );
-        assert_eq!(ctx.omitted_turns, all_turns.len() - turns.len());
+        // The memory budget never cuts the conversation: it has its own allowance.
+        assert_eq!(turns, all_turns, "budget {budget}");
     }
 
-    // Just short of everything: only the oldest turn goes.
-    let ctx = assemble(&c, full.tokens - 1);
-    assert_eq!(ctx.omitted_turns, 1);
-    assert_eq!(ctx.memories.len(), full.memories.len());
+    // A smaller allowance drops the oldest turns first, and no memory.
+    let session: usize = full.turns.iter().map(|t| estimate_tokens(&t.content)).sum();
+    for allowance in (1..=session).rev() {
+        c.set_session_tokens(allowance).unwrap();
+        let ctx = assemble(&c, full.tokens);
+        let (memories, turns) = ids(&ctx);
+        assert_eq!(memories, all_memories, "allowance {allowance}");
+        assert!(
+            all_turns.ends_with(&turns),
+            "allowance {allowance}: kept {turns:?}, not the newest"
+        );
+        assert_eq!(ctx.omitted_turns, all_turns.len() - turns.len());
+        let kept: usize = ctx.turns.iter().map(|t| estimate_tokens(&t.content)).sum();
+        assert!(kept <= allowance, "{kept} over an allowance of {allowance}");
+    }
+    c.set_session_tokens(session - 1).unwrap();
+    assert_eq!(assemble(&c, full.tokens).omitted_turns, 1);
 }
 
 #[test]
-fn the_companion_tires_as_the_session_fills_its_share() {
+fn the_companion_tires_as_the_session_fills_its_allowance() {
     let f = fixture(); // tired_at = 0.7, sleep_at = 0.9
     let mut c = open(&f, "k").unwrap();
     let (turns, _) = furnished(&mut c);
     let session: usize = turns.iter().map(|t| estimate_tokens(t)).sum();
-    let fixed = assemble(&c, 100_000).tokens - session;
-    let at = |fill: f64| assemble(&c, fixed + (session as f64 / fill).round() as usize).fatigue;
+    let mut at = |fill: f64, budget: usize| {
+        c.set_session_tokens((session as f64 / fill).round() as usize)
+            .unwrap();
+        assemble(&c, budget)
+    };
 
-    assert_eq!(at(0.6), Fatigue::Rested);
-    match at(0.8) {
+    assert_eq!(at(0.6, 100_000).fatigue, Fatigue::Rested);
+    match at(0.8, 100_000).fatigue {
         Fatigue::Tired(level) => assert!((level - 0.5).abs() < 0.1, "{level}"),
         other => panic!("{other:?}"),
     }
-    assert_eq!(at(0.95), Fatigue::Sleepy);
-    assert!(
-        assemble(&c, fixed + session / 2)
-            .render()
-            .contains("Ask to sleep")
-    );
+    assert_eq!(at(0.95, 100_000).fatigue, Fatigue::Sleepy);
+    assert!(at(2.0, 100_000).render().contains("Ask to sleep"));
+    // However much memory takes of the budget, the conversation tires the
+    // same: an old companion with many memories doesn't ask to sleep sooner.
+    for budget in [200, 1_000, 100_000] {
+        assert_eq!(at(0.6, budget).fatigue, Fatigue::Rested, "budget {budget}");
+        assert_eq!(at(0.95, budget).fatigue, Fatigue::Sleepy, "budget {budget}");
+    }
 }
 
 #[test]
@@ -204,9 +219,9 @@ fn a_replaying_host_hears_each_step_of_tiredness_once() {
         .iter()
         .map(|t| estimate_tokens(t))
         .sum::<usize>() as f64;
-    let fixed = assemble(&c, 100_000).tokens - session as usize;
-    let kept = |session_budget: f64| {
-        let mut ctx = assemble(&c, fixed + session_budget.round() as usize);
+    let mut kept = |allowance: f64| {
+        c.set_session_tokens(allowance.round() as usize).unwrap();
+        let mut ctx = assemble(&c, 100_000);
         let now = ctx.fatigue;
         c.keep_new(&mut ctx).unwrap();
         (now, ctx.fatigue)

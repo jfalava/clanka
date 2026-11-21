@@ -9,6 +9,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// The conversation's default allowance, in estimated tokens: about 48,000
+/// real tokens of English, which fits a model with a 128,000-token window.
+pub const SESSION_TOKENS: usize = 64_000;
+
 /// One companion: its soul.md and its database file `<data_dir>/<id>.db`.
 ///
 /// Several processes may hold a handle to the same companion at once, so any
@@ -25,6 +29,9 @@ pub struct Companion {
     persona: PersonaStatus,
     ranking: Ranking,
     pub(crate) duplicate_similarity: f32,
+    /// Estimated tokens of conversation a session holds before the companion
+    /// is too tired to go on; also how much of the night sleep and waking read.
+    pub(crate) session_tokens: usize,
     /// The dream this handle started. A dream belongs to the handle that
     /// dreams it: another one that takes a turn finds it lost and drops it.
     pub(crate) dream: Option<i64>,
@@ -134,6 +141,7 @@ impl Companion {
             persona,
             ranking: Ranking::default(),
             duplicate_similarity: DUPLICATE_SIMILARITY,
+            session_tokens: SESSION_TOKENS,
             dream: None,
         })
     }
@@ -174,6 +182,24 @@ impl Companion {
             )));
         }
         self.duplicate_similarity = similarity;
+        Ok(())
+    }
+
+    /// The conversation's allowance: [`SESSION_TOKENS`] unless set.
+    pub fn session_tokens(&self) -> usize {
+        self.session_tokens
+    }
+
+    /// Sets the conversation's allowance, in estimated tokens. It is separate
+    /// from the memory budget a turn is assembled in: tiredness, the end of a
+    /// dream and how much of the night sleep reads are measured against it.
+    pub fn set_session_tokens(&mut self, tokens: usize) -> Result<()> {
+        if tokens == 0 {
+            return Err(Error::Invalid(
+                "session tokens is 0; a conversation needs some room".into(),
+            ));
+        }
+        self.session_tokens = tokens;
         Ok(())
     }
 

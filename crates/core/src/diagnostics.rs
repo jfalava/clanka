@@ -129,14 +129,21 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         stretch: Option<u32>,
         message_chars: usize,
-        /// Estimated tokens of the whole context, against the turn's budget.
+        /// Estimated tokens of the memory context, against the turn's budget.
         context_tokens: usize,
+        /// Estimated tokens of the conversation so far, against `allowance`.
+        conversation_tokens: usize,
+        /// The conversation's allowance on this handle.
+        allowance: usize,
+        /// `rested`, `tired` or `sleepy`: the step of tiredness the
+        /// conversation has reached.
+        fatigue: &'static str,
         /// Memories recall brought up, after a replaying host's are left out.
         memories: usize,
         hot_threads: usize,
         /// Session turns that no longer fit.
         omitted_turns: usize,
-        /// The session fills its budget.
+        /// The session fills its allowance.
         spent: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<&'static str>,
@@ -200,6 +207,14 @@ pub enum Event {
         reply_chars: usize,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<&'static str>,
+    },
+    /// An open dream ended with nothing kept, because it never woke.
+    DreamDropped {
+        /// `lost` when another handle found it (the front end that dreamt it
+        /// exited or died), `dropped` when its own front end dropped it.
+        why: &'static str,
+        /// Turns the dream had.
+        turns: usize,
     },
     /// Something a host plugin saw that the core can't: see [`PLUGIN_EVENTS`].
     Plugin { what: &'static str },
@@ -287,6 +302,7 @@ impl Error {
             Error::LevelDown { .. } => "level_down",
             Error::Seared(_) => "seared",
             Error::Invalid(_) => "invalid",
+            Error::Rule(rule, _) => rule,
             Error::Key(_) => "key",
             Error::Embedder(_) => "embedder",
             Error::Llm(_) => "llm",

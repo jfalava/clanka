@@ -95,7 +95,10 @@ fn sections_are_versioned_and_capped_in_characters() {
     c.write_section(Actor::Writer, Section::Relationship, &full)
         .unwrap();
     let over = c.write_section(Actor::Writer, Section::Relationship, &format!("{full}!"));
-    assert!(matches!(over, Err(Error::Invalid(_))), "{over:?}");
+    assert!(
+        matches!(over, Err(Error::Rule("section_too_long", _))),
+        "{over:?}"
+    );
     assert_eq!(c.section(Section::Relationship).unwrap(), Some(full));
     assert_eq!(
         count(

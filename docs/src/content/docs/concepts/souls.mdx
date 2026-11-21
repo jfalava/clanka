@@ -54,7 +54,7 @@ The frontmatter holds the companion's ID, its name and its traits.
 | `time_sense`      | bool   | `true`    | Time away shifts its warmth: warmer after a good parting, cooler after a bad one.                                 |
 | `recall_window`   | 1 to 5 | `2`       | How many of the user's recent messages are used to search memory.                                                 |
 | `drift`           | 0 to 1 | `0.3`     | How much memories blur while it sleeps. 0 is a tape recorder.                                                     |
-| `tired_at`        | 0 to 1 | `0.7`     | Share of the per-turn budget the conversation may fill before the companion gets tired. Must be below `sleep_at`. |
+| `tired_at`        | 0 to 1 | `0.7`     | Share of the conversation's [allowance](/concepts/sleep-and-dreams/#getting-tired) it may fill before the companion gets tired. Must be below `sleep_at`. |
 | `sleep_at`        | 0 to 1 | `0.9`     | Share at which the companion asks to sleep.                                                                       |
 | `pushback_window` | turns  | `20`      | How many turns its pushback budget is counted over.                                                               |
 | `doctor_token`    | string | generated | Sent as a whole message, it freezes memory. Never shown to the model.                                             |

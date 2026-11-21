@@ -323,6 +323,16 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
         stretch: open.and_then(|o| o.stretch),
         message_chars: count(|o| o.message.chars().count()),
         context_tokens: count(|o| o.context.tokens),
+        conversation_tokens: count(|o| o.context.conversation_tokens),
+        allowance: c.session_tokens(),
+        fatigue: open.map_or("rested", |o| {
+            clanka_core::context::fatigue(
+                &c.soul().traits,
+                o.context.conversation_tokens,
+                o.context.allowance,
+            )
+            .word()
+        }),
         memories: count(|o| o.context.memories.len()),
         hot_threads: count(|o| o.context.hot_threads.len()),
         omitted_turns: count(|o| o.context.omitted_turns),

@@ -98,18 +98,30 @@ struct PyCompanion {
 #[pymethods]
 impl PyCompanion {
     #[new]
-    #[pyo3(signature = (soul, model, budget = 6000))]
-    fn new(py: Python<'_>, soul: PathBuf, model: Py<PyAny>, budget: usize) -> PyResult<Self> {
+    /// `session_tokens`, the profile's own conversation allowance, wins over
+    /// `[session] tokens` in config.toml.
+    #[pyo3(signature = (soul, model, budget = 6000, session_tokens = None))]
+    fn new(
+        py: Python<'_>,
+        soul: PathBuf,
+        model: Py<PyAny>,
+        budget: usize,
+        session_tokens: Option<usize>,
+    ) -> PyResult<Self> {
         // Both handles call the same host model.
         let models = [HostModel(model.clone_ref(py)), HostModel(model)];
         py.detach(|| {
             let paths = Paths::get().map_err(err)?;
             let embedder = SharedEmbedder::load(&paths).map_err(err)?;
             let [for_chat, for_writer] = models;
-            let chat = setup::open_to_talk(&paths, &soul, embedder.clone(), Box::new(for_chat))
+            let mut chat = setup::open_to_talk(&paths, &soul, embedder.clone(), Box::new(for_chat))
                 .map_err(err)?;
-            let writer =
+            let mut writer =
                 setup::open_with(&paths, &soul, embedder, Box::new(for_writer)).map_err(err)?;
+            if let Some(tokens) = session_tokens {
+                chat.set_session_tokens(tokens).map_err(err)?;
+                writer.set_session_tokens(tokens).map_err(err)?;
+            }
             Ok(Self {
                 name: chat.soul().traits.name.clone(),
                 persona: chat.soul().persona(),

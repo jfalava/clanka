@@ -14,8 +14,10 @@ use crate::deps::{ToolCall, ToolSpec};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-/// Most actions one reply may carry. More is a malformed reply, not a batch.
-pub const MAX_ACTIONS: usize = 16;
+/// Most actions a pass over a whole night runs from one reply (sleep, waking,
+/// the doctor). A reply with more still runs: the first ones run and the rest
+/// are refused, since refusing it whole would lose the night.
+pub const MAX_ACTIONS: usize = 24;
 
 #[derive(Deserialize)]
 struct Reply {
@@ -141,12 +143,6 @@ pub fn parse(text: &str, tools: &[ToolSpec]) -> Result<Vec<ToolCall>, String> {
     }
     let text = without_thinking(text);
     let reply = find_reply(&text)?;
-    if reply.actions.len() > MAX_ACTIONS {
-        return Err(format!(
-            "{} actions; at most {MAX_ACTIONS} per reply",
-            reply.actions.len()
-        ));
-    }
     reply
         .actions
         .into_iter()
@@ -422,11 +418,12 @@ mod tests {
             .unwrap_err()
             .contains("delete_all")
         );
+        // A long reply is parsed whole; the pass runs what fits.
         let many = format!(
             r#"{{"actions": [{}]}}"#,
             vec![r#"{"tool": "leave_note", "arguments": {}}"#; MAX_ACTIONS + 1].join(",")
         );
-        assert!(parse(&many, &tools()).is_err());
+        assert_eq!(parse(&many, &tools()).unwrap().len(), MAX_ACTIONS + 1);
     }
 
     #[test]
