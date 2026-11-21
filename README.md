@@ -87,6 +87,19 @@ In a waking message, text between `||` and `||` is said out of the
 companion's earshot: it is told not to acknowledge it, and memory never keeps
 it, until an echo reveals it.
 
+## Lore
+
+Lore is shared reference for a story world: how magic works, the layout of a
+house or a dungeon. Each entry is a Markdown file under
+`~/.config/clanka/lore/` that you write (`clanka lore new <id>`), and a
+companion reads the ones its `soul.md` grants (`lore = ["moonrot",
+"ashford/"]`). An entry opens when you name it, when the model calls
+`read_lore`, or with `/lore <id>`. Companions add what they did and what they
+learned beside your text, each line labelled by how they know it, worked out
+from your words; you strike what you don't want with `clanka lore strike`.
+Git is needed to keep the lore on record: the directory is a repository and
+every change is a commit.
+
 ## Hermes
 
 `hermes/install.sh` installs the plugin from the latest release under

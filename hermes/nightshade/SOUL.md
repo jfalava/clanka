@@ -103,7 +103,7 @@ line, then ask for the go-ahead before writing anything.
    `doctor_token` line, which is a secret and stays in the file, and ask what
    to change. Iterate until they say it is right. Lint again after every edit.
 5. `@CLANKA@ hermes profile <profile> <path>` makes the Hermes profile: the
-   companion, clanka's two tools and nothing else. It takes a minute; it sets
+   companion, clanka's tools and nothing else. It takes a minute; it sets
    the profile's config one key at a time. Run it again after any later edit
    to the body (the companion refuses to open until
    `@CLANKA@ soul continue|update|fork <path>` settles the change; `continue`

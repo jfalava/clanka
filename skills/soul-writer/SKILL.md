@@ -171,9 +171,11 @@ user, which belongs in the companion's memory, not its soul.
 | `time_sense` | bool | time away shifts its warmth: warmer after a good parting, cooler after a bad one |
 | `recall_window` | 1–5 | how many of the user's recent messages are used to search memory |
 | `drift` | 0–1 | how much memories blur while it sleeps; 0 is a tape recorder |
-| `tired_at`, `sleep_at` | 0–1, tired < sleep | share of the per-turn budget the conversation may fill before it gets tired, then asks to sleep |
+| `tired_at`, `sleep_at` | 0–1, tired < sleep | share of the conversation's allowance (`[session] tokens`, 64000 by default) it may fill before it gets tired, then asks to sleep |
 | `pushback_window` | turns | how many turns its pushback budget is counted over |
 | `doctor_token` | string | sent as a whole message, freezes memory; never shown to the model |
+| `lore` | list | the lore entries it reads (`clanka lore`): IDs, and directories with a trailing `/`; leave it out for none |
+| `dreams` | `own` or `shared` | `shared` when its world treats dreams as a place others visit; `own` unless set |
 
 Editing traits never changes the persona; editing the body does, and the
 companion refuses to open until `continue`, `update` or `fork` settles it.

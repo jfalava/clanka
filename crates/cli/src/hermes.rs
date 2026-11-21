@@ -351,7 +351,7 @@ fn without_clanka(toolsets: Option<&serde_json::Value>) -> Vec<&'static str> {
         .collect()
 }
 
-/// Makes a Hermes profile that is one companion and nothing else: clanka's two
+/// Makes a Hermes profile that is one companion and nothing else: clanka's
 /// tools are the only toolset on every platform, plus any you added to a
 /// platform's list after the first run; Hermes's own memory, user
 /// profile, coding brief, toolchain probe and agent-style guidance are off; the

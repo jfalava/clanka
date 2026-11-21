@@ -540,7 +540,7 @@ impl Command {
 enum HermesCommand {
     /// Make a Hermes profile that is one companion and nothing else.
     ///
-    /// clanka's two tools are the only toolset on every platform, listed directly rather
+    /// clanka's tools are the only toolset on every platform, listed directly rather
     /// than behind Hermes's tool-search bridge; Hermes's own memory, user profile, coding
     /// brief, toolchain probe and agent-style guidance are off; the terminal and Telegram
     /// notes are a line each; clanka may send messages, so /sleep can say goodnight for
