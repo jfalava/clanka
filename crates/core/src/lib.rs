@@ -28,7 +28,7 @@ pub use deps::Deps;
 pub use doctor::DeleteAll;
 pub use dream::WakeReport;
 pub use error::{Error, Result};
-pub use memory::{Deleted, Memory, MemoryDraft};
+pub use memory::{Consolidated, Deleted, Memory, MemoryDraft};
 pub use recall::{Ranking, Recalled};
 pub use sleep::SleepReport;
 pub use state::{Mood, SectionVersion};

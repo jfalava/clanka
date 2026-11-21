@@ -5,9 +5,11 @@
 //! `/triage` prints [`crate::triage`]'s report. Turns go through
 //! [`crate::turn`], like every other front end.
 //!
-//! A message starting with `~~` after sleep is a dream. Its replies may call
-//! `wake_up`, so they arrive whole instead of as they are written; when the
-//! companion wakes, the chat goes on awake. Leaving mid-dream drops it.
+//! A message starting with `~~` is a dream; sent mid-conversation, it ends the
+//! conversation first, which is slept on behind the dream. A dream's replies
+//! may call `wake_up`, so they arrive whole instead of as they are written;
+//! when the companion wakes, the chat goes on awake while what stays of the
+//! dream is decided. Leaving mid-dream drops it.
 
 use crate::status::{Outcome, Session, State};
 use crate::turn::{self, Opened};
@@ -16,7 +18,7 @@ use anyhow::{Result, bail};
 use clanka_core::deps::{Llm, LlmMessage, LlmRequest, LlmResponse, Role};
 use clanka_core::model::Speaker;
 use clanka_core::tics::Dashless;
-use clanka_core::{Companion, WakeReport, dream};
+use clanka_core::{Companion, Consolidated, WakeReport, dream};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -98,18 +100,10 @@ pub fn converse(
             finish(&mut reflections);
             chat.drop_lost_dream()?;
             // In a dream, sleep is waking up.
-            if let Some(dream) = chat.dreaming()? {
-                outcome = match wake(&writer, dream, &notes, &name, &status) {
-                    Ok(woke) => {
-                        status.summary(&woke);
-                        Outcome::Done
-                    }
-                    Err(why) => Outcome::Error(why),
-                };
-                break;
+            if let Some(night) = chat.dreaming()?.or(chat.session_in_progress()?) {
+                chat.close_night(night)?;
             }
-            fall_asleep(&mut chat, &writer, &notes, &name, &status)?;
-            outcome = Outcome::Done;
+            outcome = settle_now(&writer, &notes, &name, &status);
             break;
         }
 
@@ -119,13 +113,6 @@ pub fn converse(
                 break;
             }
             Opened::Frozen => bail!("memory is frozen by the doctor; unfreeze it before chatting"),
-            Opened::Awake => {
-                notes.say(&format!(
-                    "clanka: {name} is awake in this conversation. Send /sleep, then start \
-                     the dream with ~~ in a new chat."
-                ));
-                continue;
-            }
             Opened::Open(open) => *open,
         };
         status.phase(&format!("{name} is replying"));
@@ -227,33 +214,37 @@ pub fn converse(
                 continue;
             }
         };
-        let (dreaming, session, wakes, sleep) = (
+        let (dreaming, sleep, consolidates) = (
             open.pending.dream,
-            open.pending.session,
-            open.pending.wake,
             open.pending.sleep,
+            open.pending.consolidates(),
         );
         let (user_turn, companion_turn) = turn::end(&mut chat, open.pending, &reply)?;
         status.report(State::Done, &format!("{name} replied"), None);
         // A `zz` goodnight: sleep reads the whole conversation, this exchange
-        // included, so it is not reflected on.
+        // included, so it is not reflected on. The chat ends with the night.
         if sleep {
             finish(&mut reflections);
-            fall_asleep(&mut chat, &writer, &notes, &name, &status)?;
-            outcome = Outcome::Done;
+            outcome = settle_now(&writer, &notes, &name, &status);
             break;
+        }
+        // The companion woke, or `~~` ended the conversation before the
+        // dream: what stays is decided behind the chat, which goes on.
+        if consolidates {
+            let (writer, notes, reflecting, name) = (
+                writer.clone(),
+                notes.clone(),
+                reflecting.clone(),
+                name.clone(),
+            );
+            reflecting.begin(&format!("{name} is settling the night"));
+            reflections.push(std::thread::spawn(move || {
+                let failed = settle(&writer, &notes, &name).err();
+                reflecting.end(failed);
+            }));
         }
         // Nothing of a dream is kept as it happens: it is decided on waking.
         if dreaming {
-            if wakes {
-                finish(&mut reflections);
-                match wake(&writer, session, &notes, &name, &status) {
-                    Ok(woke) => status.report(State::Done, &format!("{name} woke"), Some(&woke)),
-                    Err(why) => {
-                        status.report(State::Error, &format!("{name} couldn't wake"), Some(&why));
-                    }
-                }
-            }
             continue;
         }
         // Same model, separate call, off the hot path.
@@ -320,49 +311,50 @@ fn speak(
     reply
 }
 
-/// Wakes the companion from `dream`, says what stayed and returns it. A wake
-/// that fails leaves the dream open: /sleep tries again, and leaving drops it.
-fn wake(
+/// Consolidates what ended while the chat ends with it, and says so.
+fn settle_now(writer: &Mutex<Companion>, notes: &Notes, name: &str, status: &Session) -> Outcome {
+    status.phase(&format!("{name} is falling asleep"));
+    match settle(writer, notes, name) {
+        Ok(said) => {
+            status.summary(&said);
+            Outcome::Done
+        }
+        Err(why) => Outcome::Error(why),
+    }
+}
+
+/// Sleeps on every night and wakes from every dream that ended
+/// ([`Companion::consolidate`]), and says what each left.
+fn settle(
     writer: &Mutex<Companion>,
-    dream: i64,
     notes: &Notes,
     name: &str,
-    status: &Session,
 ) -> std::result::Result<String, String> {
-    status.phase(&format!("{name} is waking"));
-    match lock(writer).wake(dream) {
-        Ok(report) => {
-            let woke = woke(name, &report);
-            notes.say(&woke);
-            Ok(woke)
+    match lock(writer).consolidate() {
+        Ok(done) => {
+            let said: Vec<String> = done
+                .iter()
+                .map(|c| match c {
+                    Consolidated::Slept(report) => format!(
+                        "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
+                        report.drifted.len(),
+                        report.escalated.len()
+                    ),
+                    Consolidated::Woke(report) => woke(name, report),
+                })
+                .collect();
+            for line in &said {
+                notes.say(line);
+            }
+            Ok(said.join(" "))
         }
         Err(e) => {
-            let why = format!("{name} couldn't wake: {e}. Send /sleep to try again.");
+            let why =
+                format!("{name} couldn't settle the night: {e}. It is tried again next time.");
             notes.say(&format!("clanka: {why}"));
             Err(why)
         }
     }
-}
-
-/// Ends the conversation and consolidates it, and says what sleep did.
-fn fall_asleep(
-    chat: &mut Companion,
-    writer: &Mutex<Companion>,
-    notes: &Notes,
-    name: &str,
-    status: &Session,
-) -> Result<()> {
-    status.phase(&format!("{name} is falling asleep"));
-    let session = chat.open_session()?;
-    let report = lock(writer).sleep(session)?;
-    let asleep = format!(
-        "{name} is asleep: {} memories shifted, {} unresolved things weigh more.",
-        report.drifted.len(),
-        report.escalated.len()
-    );
-    notes.say(&asleep);
-    status.summary(&asleep);
-    Ok(())
 }
 
 /// What waking left, in a line.

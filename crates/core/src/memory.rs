@@ -149,25 +149,55 @@ impl Companion {
         Ok(())
     }
 
-    /// Appends to the immutable transcript.
-    pub fn record_turn(&mut self, session: i64, speaker: Speaker, content: &str) -> Result<i64> {
-        self.insert_turn(session, speaker, content, false, None)
+    /// Ends the conversation or the dream at once, for sleep or waking to
+    /// consolidate behind it ([`Companion::consolidate`]): the next message
+    /// starts a new conversation whether or not that pass has run. Not gated
+    /// by the freeze, like [`Companion::end_session`].
+    pub fn close_night(&mut self, session: i64) -> Result<()> {
+        self.end_session(session, SessionEnd::Sleep)?;
+        if self.dream == Some(session) {
+            self.dream = None;
+        }
+        Ok(())
     }
 
-    /// Appends the companion's reply to `user_turn`. A message sent while the
-    /// companion was falling asleep lands in the session after the night's
-    /// prompt was written, and sleep ends the session before the reply
-    /// comes; that reply is still kept, in the slept session, so the exchange
-    /// is reflected on like any other. Only the reply to the session's last
-    /// turn, and only after sleep: a dropped dream keeps nothing.
-    pub fn record_reply(&mut self, session: i64, user_turn: i64, content: &str) -> Result<i64> {
-        self.insert_turn(session, Speaker::Companion, content, false, Some(user_turn))
+    /// Nights and dreams that ended and wait for sleep or waking, oldest
+    /// first; one whose pass failed [`CONSOLIDATION_ATTEMPTS`] times is left.
+    pub fn unconsolidated(&self) -> Result<Vec<i64>> {
+        Ok(self
+            .conn
+            .prepare(
+                "SELECT id FROM sessions WHERE ended_by = 'sleep' AND consolidated_at IS NULL
+                   AND consolidation_attempts < ?1 ORDER BY id",
+            )?
+            .query_map([CONSOLIDATION_ATTEMPTS], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Sleeps on every night, and wakes from every dream, that ended and
+    /// waits for it, oldest first. Long-running (it calls the model). Stops at
+    /// the first that fails; it waits for the next call, a few times at most.
+    pub fn consolidate(&mut self) -> Result<Vec<Consolidated>> {
+        let mut done = Vec::new();
+        for session in self.unconsolidated()? {
+            done.push(if crate::dream::is_dream(&self.conn, session)? {
+                Consolidated::Woke(self.wake(session)?)
+            } else {
+                Consolidated::Slept(self.sleep(session)?)
+            });
+        }
+        Ok(done)
+    }
+
+    /// Appends to the immutable transcript.
+    pub fn record_turn(&mut self, session: i64, speaker: Speaker, content: &str) -> Result<i64> {
+        self.insert_turn(session, speaker, content, false)
     }
 
     /// Appends a message of the user's to a dream as an echo: a scene from the
     /// past. Only what an echo showed can survive the dream.
     pub fn record_echo(&mut self, session: i64, content: &str) -> Result<i64> {
-        self.insert_turn(session, Speaker::User, content, true, None)
+        self.insert_turn(session, Speaker::User, content, true)
     }
 
     /// Whether the session's last message is the user's: the reply to it
@@ -190,18 +220,13 @@ impl Companion {
         speaker: Speaker,
         content: &str,
         echo: bool,
-        answers: Option<i64>,
     ) -> Result<i64> {
         let now = self.deps.clock.now_ms();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_writable(&tx, &self.soul.hash)?;
-        match (ensure_open(&tx, session), answers) {
-            (Err(Error::SessionClosed(_)), Some(user_turn))
-                if answers_last_after_sleep(&tx, session, user_turn)? => {}
-            (open, _) => open?,
-        }
+        ensure_open(&tx, session)?;
         if echo && !crate::dream::is_dream(&tx, session)? {
             return Err(Error::Invalid(format!(
                 "session {session} is no dream; echoes happen only in dreams"
@@ -712,19 +737,57 @@ pub(crate) fn ensure_open(conn: &Connection, session: i64) -> Result<()> {
     }
 }
 
-/// Whether `session` ended in sleep and its last turn is `user_turn`, the
-/// user's: a reply to it may still be recorded ([`Companion::record_reply`]).
-fn answers_last_after_sleep(conn: &Connection, session: i64, user_turn: i64) -> Result<bool> {
-    Ok(conn
+/// What one pass of [`Companion::consolidate`] made of a night or a dream.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Consolidated {
+    Slept(crate::SleepReport),
+    Woke(crate::WakeReport),
+}
+
+/// Most failed passes over one night before it is left unconsolidated.
+pub const CONSOLIDATION_ATTEMPTS: i64 = 3;
+
+/// For sleep or waking: whether `session` is still open (`true`) or closed
+/// and waiting for its pass (`false`). One already consolidated, dropped or
+/// ended by the doctor is refused.
+pub(crate) fn to_consolidate(conn: &Connection, session: i64) -> Result<bool> {
+    if ensure_open(conn, session).is_ok() {
+        return Ok(true);
+    }
+    let waiting: Option<bool> = conn
         .query_row(
-            "SELECT 1 FROM sessions s WHERE s.id = ?1 AND s.ended_by = 'sleep'
-             AND (SELECT id FROM turns WHERE session_id = s.id ORDER BY id DESC LIMIT 1) = ?2
-             AND (SELECT role FROM turns WHERE id = ?2) = 'user'",
-            [session, user_turn],
-            |_| Ok(()),
+            "SELECT ended_by = 'sleep' AND consolidated_at IS NULL FROM sessions WHERE id = ?1",
+            [session],
+            |r| r.get(0),
         )
-        .optional()?
-        .is_some())
+        .optional()?;
+    match waiting {
+        None => Err(Error::Invalid(format!("session {session} does not exist"))),
+        Some(false) => Err(Error::SessionClosed(session)),
+        Some(true) => Ok(false),
+    }
+}
+
+/// Counts a failed pass over `session` when the model failed it: past
+/// [`CONSOLIDATION_ATTEMPTS`] the night is left. Anything else (a freeze, a
+/// database error) isn't the night's fault and doesn't count.
+pub(crate) fn count_failed_pass(conn: &Connection, session: i64, error: &Error) {
+    if matches!(error, Error::Llm(_)) {
+        let _ = conn.execute(
+            "UPDATE sessions SET consolidation_attempts = consolidation_attempts + 1
+             WHERE id = ?1 AND ended_by = 'sleep' AND consolidated_at IS NULL",
+            [session],
+        );
+    }
+}
+
+/// Marks `session` consolidated: its night is slept on, or its dream woken from.
+pub(crate) fn mark_consolidated(conn: &Connection, session: i64, now: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE sessions SET consolidated_at = ?1 WHERE id = ?2",
+        params![now, session],
+    )?;
+    Ok(())
 }
 
 /// `replaces` is left out of the duplicate check: a supersede is meant to be similar.

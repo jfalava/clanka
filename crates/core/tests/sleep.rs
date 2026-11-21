@@ -300,8 +300,12 @@ fn no_episode_means_no_sleep_and_a_retry_never_drifts_twice() {
         time.clone(),
     );
     assert!(matches!(c.sleep(s), Err(Error::Llm(_))));
-    let record = c.record_turn(s, Speaker::User, "still awake?");
-    assert!(record.is_ok(), "the session stays open: {record:?}");
+    // The night is over all the same; it waits for another pass.
+    assert!(matches!(
+        c.record_turn(s, Speaker::User, "still awake?"),
+        Err(Error::SessionClosed(_))
+    ));
+    assert_eq!(c.unconsolidated().unwrap(), [s]);
     drop(c);
 
     let mut c = open_full(
@@ -312,8 +316,12 @@ fn no_episode_means_no_sleep_and_a_retry_never_drifts_twice() {
         ),
         time,
     );
-    let report = c.sleep(s).unwrap();
+    let done = c.consolidate().unwrap();
+    let [clanka_core::Consolidated::Slept(report)] = done.as_slice() else {
+        panic!("{done:?}");
+    };
     assert!(report.drifted.is_empty(), "already drifted this session");
+    assert!(c.unconsolidated().unwrap().is_empty());
     assert_eq!(
         count(&raw(c.db_path(), "k"), "SELECT count(*) FROM drift_events"),
         1

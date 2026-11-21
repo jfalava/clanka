@@ -16,10 +16,14 @@ A general plugin on Hermes's public plugin API only:
   included, then reflects on the exchange on a background thread. Reflection
   runs on ``ctx.llm``, the user's active model, so the companion's memory is
   written by the same model it chats with.
-- Tools ``recall_memory``, ``go_to_sleep`` and, in a dream, ``wake_up``. Sleep
-  and waking wait until the reply is recorded, then consolidate, and post one
-  line to the chat saying they happened, in counts only (``ctx.post_message``:
-  not kept in Hermes's transcript, never shown to the model).
+- Tools ``recall_memory``, ``go_to_sleep`` and, in a dream, ``wake_up``. The
+  night (or the dream) ends as the reply is recorded, so the next message
+  starts a new conversation at once; sleep or waking consolidates it behind,
+  on a background thread, and posts one line to the chat saying it happened,
+  in counts only (``ctx.post_message``: not kept in Hermes's transcript, never
+  shown to the model).
+- ``~~`` mid-conversation ends the conversation and starts the dream; the
+  conversation is slept on behind it.
 - ``zz`` at the start of a message says goodnight for sure: the companion
   answers what follows it as the conversation's last beat and sleeps after it,
   tool call or not (in a dream, it wakes). ``/sleep [words]`` sends that message for the user, which
@@ -57,7 +61,6 @@ import logging
 import os
 import re
 import threading
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -213,12 +216,6 @@ class _Plugin:
         # Reflections and sleep run one at a time, in order, off the turn thread.
         self._work_lock = threading.Lock()
         self._sleep_requested = False
-        # Sleeps started and not finished. A turn waits for them (within its
-        # OPEN_TIMEOUT), so a message sent as the companion falls asleep, such
-        # as the one an idle reset fires on, opens the next conversation
-        # instead of landing in the night being slept.
-        self._sleeps = 0
-        self._asleep = threading.Condition()
         # The Hermes chat the companion's last turn came from: the one its
         # open conversation is in.
         self._live_chat = None
@@ -331,13 +328,8 @@ class _Plugin:
         # model nothing, though Hermes no longer calls this its first turn.
         notices = _notices(conversation_history)
         first = bool(is_first_turn) or (bool(notices) and all(notices))
-        deadline = time.monotonic() + OPEN_TIMEOUT
-        with self._asleep:
-            if not self._asleep.wait_for(lambda: self._sleeps == 0, timeout=OPEN_TIMEOUT):
-                # The message is still kept, in the night being slept.
-                logger.warning("clanka: still asleep after %ds; the turn goes on", OPEN_TIMEOUT)
         try:
-            companion = self.companion(max(1, deadline - time.monotonic()))
+            companion = self.companion(OPEN_TIMEOUT)
             kind, context = companion.begin_turn(
                 _heard(user_message, conversation_history), first
             )
@@ -354,8 +346,6 @@ class _Plugin:
             return _block(_why(e))
         if kind == "doctor":
             return _block("Memory frozen.")
-        if kind == "awake":
-            return _block(context)
         if kind == "frozen":
             return _block(
                 "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
@@ -384,48 +374,37 @@ class _Plugin:
         opening = self._opening
         if opening is None or not opening.done() or opening.exception() is not None:
             return
-        ended = opening.result().end_turn(_said(conversation_history, assistant_response))
-        sleep, self._sleep_requested = self._sleep_requested, False
-        turns = None
+        companion = opening.result()
+        ended = companion.end_turn(_said(conversation_history, assistant_response))
+        asked, self._sleep_requested = self._sleep_requested, False
+        turns, consolidate = None, False
         if ended is not None:
-            user, companion, wakes = ended
-            turns = (user, companion)
-            # The dream ends with this reply (wake_up woke the companion, or
-            # the dream filled the session). In a dream, sleep wakes the
-            # companion; reflect does nothing there.
-            sleep = sleep or wakes
-        if turns is None and not sleep:
+            user, reply, consolidate = ended
+            turns = (user, reply)
+        # The model called go_to_sleep without a `zz`: the night ends here,
+        # at once, so the next message starts a new conversation. In a dream
+        # this wakes the companion.
+        if asked and not consolidate:
+            try:
+                consolidate = companion.close()
+            except Exception:
+                logger.exception("clanka: ending the night failed")
+        if turns is None and not consolidate:
             return
-        if sleep:
-            self._off_thread(self._after_turn, turns, sleep, name="clanka-sleep", sleep=True)
-        else:
-            self._off_thread(self._after_turn, turns, sleep, name="clanka-reflect")
+        name = "clanka-sleep" if consolidate else "clanka-reflect"
+        self._off_thread(self._after_turn, turns, consolidate, name=name)
 
-    def _off_thread(self, target, *args, name, sleep=False):
+    def _off_thread(self, target, *args, name):
         # A copied context keeps Hermes's live model selection for ctx.llm.
         run = contextvars.copy_context().run
-        if sleep:
-            # Counted before the thread starts, so the next turn already waits.
-            with self._asleep:
-                self._sleeps += 1
-
-        def work():
-            try:
-                run(target, *args)
-            finally:
-                if sleep:
-                    with self._asleep:
-                        self._sleeps -= 1
-                        self._asleep.notify_all()
-
-        threading.Thread(target=work, name=name).start()
+        threading.Thread(target=run, args=(target, *args), name=name).start()
 
     def on_session_reset(self, reason="", **_):
         # Off the hook thread: Hermes gives a hook callback 30s, and sleep is
         # a model call plus a pass over memory. The work lock keeps it after
         # the reflection on the last exchange.
         logger.info("clanka: session reset (%s): sleeping", reason or "unknown")
-        self._off_thread(self._reset, name="clanka-sleep", sleep=True)
+        self._off_thread(self._reset, name="clanka-sleep")
 
     def on_session_finalize(self, session_id=None, platform="", reason="", **_):
         # The conversation is over without a /new: quitting the CLI, closing
@@ -455,24 +434,28 @@ class _Plugin:
 
     def _reset(self):
         # A dream the conversation ended before the companion woke from is
-        # dropped: nothing of it is kept.
-        with self._work_lock:
-            try:
-                if self.companion().drop_dream():
-                    logger.info("clanka: the conversation ended mid-dream: the dream is dropped")
-                    return
-            except Exception:
-                logger.exception("clanka: dropping the dream failed")
+        # dropped: nothing of it is kept. A night with nothing said since the
+        # companion last slept is no night; the host's boundary costs nothing.
+        try:
+            c = self.companion()
+            if c.drop_dream():
+                logger.info("clanka: the conversation ended mid-dream: the dream is dropped")
                 return
-        self._after_turn(None, True)
+            closed = c.close()
+        except Exception:
+            logger.exception("clanka: ending the conversation failed")
+            return
+        if closed:
+            self._after_turn(None, True)
 
-    def _after_turn(self, turns, sleep):
+    def _after_turn(self, turns, consolidate):
         with self._work_lock:
             c = self.companion()
-            # When the companion asked to sleep, sleep sees the whole conversation,
-            # this exchange included, and writes the night from it: a separate
-            # reflection on the goodbye would only retell it.
-            if turns is not None and not sleep:
+            # When the night ended, sleep sees the whole conversation, this
+            # exchange included, and writes the night from it: a separate
+            # reflection on the goodbye would only retell it. A dream's turns
+            # are never reflected on.
+            if turns is not None and not consolidate:
                 try:
                     ok, refused, left_out, caught_up = c.reflect(*turns)
                     if caught_up:
@@ -492,17 +475,15 @@ class _Plugin:
                         logger.warning("clanka: facts left out: %s", " | ".join(left_out))
                 except Exception:
                     logger.exception("clanka: reflection on %s failed", turns)
-            if sleep:
+            if consolidate:
+                # Every night and dream that ended and waits, this one last.
                 try:
-                    report = c.sleep()
-                    logger.info("clanka: %s", report)
-                    # Sleeping with nothing said since is a host's conversation
-                    # boundary, not something the user asked for.
-                    if not report.startswith("Already asleep"):
-                        self._post(report)
+                    for line in c.consolidate():
+                        logger.info("clanka: %s", line)
+                        self._post(line)
                 except Exception:
                     logger.exception("clanka: sleep failed")
-                    self._post("Sleep failed. The Hermes log says why.")
+                    self._post("Sleep failed; it is tried again after the next night.")
                 # The conversation is over: what clanka noted of it goes to the
                 # endpoint its owner named, if they named one. A send that
                 # fails costs nothing; its events go with the next.

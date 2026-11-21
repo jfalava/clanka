@@ -2,8 +2,11 @@
 //! asks the companion, in its own voice, to write the night's episode, settle its mood and let
 //! the memories that came up tonight drift. Then the session ends.
 //!
-//! Sleep can be retried: if it fails before the episode is written, the session
-//! stays open, escalation won't repeat, and a memory drifts at most once a session.
+//! The night ends before sleep runs ([`Companion::close_night`]), so nobody
+//! waits on it; sleep closes a night still open itself. It can be retried: if
+//! it fails before the episode is written, the night waits for another pass
+//! ([`Companion::consolidate`]), escalation won't repeat, and a memory drifts
+//! at most once a session.
 //!
 //! Sleep reads as much of the night as the conversation's allowance
 //! ([`Companion::session_tokens`]). When the model call fails before anything
@@ -14,8 +17,8 @@ use crate::companion::ensure_writable;
 use crate::context::estimate_tokens;
 use crate::deps::{ToolCall, ToolSpec};
 use crate::diagnostics::Pass;
-use crate::memory::{ensure_open, heard};
-use crate::model::{Actor, Level, MemoryType, Section, SessionEnd, Speaker};
+use crate::memory::{count_failed_pass, heard, mark_consolidated, to_consolidate};
+use crate::model::{Actor, Level, MemoryType, Section, Speaker};
 use crate::writer::{args, parse};
 use crate::{Companion, Error, MemoryDraft, Mood, Reflection, Result};
 use serde::Deserialize;
@@ -64,6 +67,9 @@ impl Companion {
         let mut calls = None;
         let report = self.sleep_on(session, &mut calls);
         let error = report.as_ref().err();
+        if let Some(e) = error {
+            count_failed_pass(&self.conn, session, e);
+        }
         self.diagnose_pass(Pass::Sleep, started, false, calls.as_ref(), error);
         report
     }
@@ -73,11 +79,14 @@ impl Companion {
     fn sleep_on(&mut self, session: i64, calls: &mut Option<Reflection>) -> Result<SleepReport> {
         self.refresh()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
-        ensure_open(&self.conn, session)?;
+        let open = to_consolidate(&self.conn, session)?;
         if crate::dream::is_dream(&self.conn, session)? {
             return Err(Error::Invalid(format!(
                 "session {session} is a dream; it ends by waking, not by sleep"
             )));
+        }
+        if open {
+            self.close_night(session)?;
         }
         let escalated = self.escalate_threads()?;
         let offered = self.drift_offers(session, self.soul.traits.drift)?;
@@ -114,9 +123,9 @@ impl Companion {
         let rounds = reflection.rounds;
         *calls = Some(reflection);
         let episode = episode.ok_or_else(|| {
-            Error::Llm("sleep ended without an episode; the session stays open".into())
+            Error::Llm("sleep ended without an episode; the night waits for another try".into())
         })?;
-        self.end_session(session, SessionEnd::Sleep)?;
+        mark_consolidated(&self.conn, session, self.deps.clock.now_ms())?;
         Ok(SleepReport {
             episode,
             escalated,

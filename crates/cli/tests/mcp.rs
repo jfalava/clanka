@@ -155,8 +155,23 @@ async fn a_server_without_a_model_records_turns_and_cannot_sleep() {
         .await
         .unwrap();
     assert!(saved.starts_with("Saved. (No companion model"), "{saved}");
-    // A turn the host never ended is dropped by the next begin_turn, so a
-    // refusal sent as that turn's reply isn't saved as the answer to it.
+    let sleep = call(&client, "sleep", json!({})).await.unwrap_err();
+    assert!(sleep.contains("no companion model"), "{sleep}");
+    // A `zz` goodnight ends the night with end_turn; without a model it
+    // waits to be slept on, and the next message is a new conversation.
+    let begun = call(&client, "begin_turn", json!({ "message": "zz" }))
+        .await
+        .unwrap();
+    assert!(begun.ends_with(clanka::turn::GOODNIGHT_HINT), "{begun}");
+    let ended = call(&client, "end_turn", json!({ "reply": "Night." }))
+        .await
+        .unwrap();
+    assert!(ended.contains("waits to become a memory"), "{ended}");
+    let c = open(dir.path());
+    assert_eq!(c.session_in_progress().unwrap(), None);
+    assert_eq!(c.unconsolidated().unwrap().len(), 1);
+    // A turn the host never ended is dropped by the next begin_turn, and
+    // `~~` mid-conversation ends it and starts a dream.
     call(
         &client,
         "begin_turn",
@@ -164,26 +179,12 @@ async fn a_server_without_a_model_records_turns_and_cannot_sleep() {
     )
     .await
     .unwrap();
-    let refused = call(&client, "begin_turn", json!({ "message": "~~ A kitchen." }))
+    let dream = call(&client, "begin_turn", json!({ "message": "~~ A kitchen." }))
         .await
         .unwrap();
-    assert!(refused.starts_with("Not recorded."), "{refused}");
-    let ended = call(&client, "end_turn", json!({ "reply": refused }))
-        .await
-        .unwrap_err();
-    assert!(ended.contains("No turn is open"), "{ended}");
-    let sleep = call(&client, "sleep", json!({})).await.unwrap_err();
-    assert!(sleep.contains("no companion model"), "{sleep}");
-    // A `zz` goodnight sleeps from end_turn, with the same refusal.
-    let begun = call(&client, "begin_turn", json!({ "message": "zz" }))
-        .await
-        .unwrap();
-    assert!(begun.ends_with(clanka::turn::GOODNIGHT_HINT), "{begun}");
-    let sleep = call(&client, "end_turn", json!({ "reply": "Night." }))
-        .await
-        .unwrap_err();
-    assert!(sleep.contains("no companion model"), "{sleep}");
-    assert!(open(dir.path()).session_in_progress().unwrap().is_some());
+    assert!(dream.contains("somewhere you know"), "{dream}");
+    assert!(open(dir.path()).dreaming().unwrap().is_some());
+    assert_eq!(open(dir.path()).unconsolidated().unwrap().len(), 2);
 
     let persona = client
         .get_prompt(GetPromptRequestParams::new("persona"))
@@ -250,9 +251,21 @@ async fn a_dream_wakes_with_the_reply_after_a_wake_up_that_quotes_it() {
     )
     .await;
     assert_eq!(answer, clanka_core::dream::WAKING);
-    assert!(ended.starts_with("You woke:"), "{ended}");
+    assert!(ended.starts_with("Saved. You woke"), "{ended}");
     let c = open(dir.path());
-    assert_eq!(c.dreaming().unwrap(), None);
+    assert_eq!(
+        c.dreaming().unwrap(),
+        None,
+        "the dream ended with the reply"
+    );
+    // What stays of it is decided behind, on the writer.
+    for _ in 0..200 {
+        if c.unconsolidated().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(c.unconsolidated().unwrap().is_empty());
     assert_eq!(c.mood().unwrap().unwrap().cause, "a bell under the water");
 
     let refused = call(

@@ -156,7 +156,7 @@ enum Command {
     ///
     /// Markers at the start of a message: `zz` says goodnight: the companion answers it
     /// and falls asleep, as on /sleep. `>>N` asks for a reply of about N paragraphs.
-    /// `~~`, as the first message after sleep, starts a dream: what you write is what
+    /// `~~` starts a dream, ending the conversation first if one is going on: what you write is what
     /// happens to the companion, as "you", and it lives it without knowing it dreams. In a
     /// dream, `<<` shows it an echo of the past. It wakes when it chooses to, when the dream
     /// fills the session, or on /sleep or `zz`; only fragments and its mood stay, and at most one

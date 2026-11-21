@@ -38,7 +38,12 @@ pub fn report(c: &Companion, log: Option<&Path>) -> clanka_core::Result<String> 
     } else {
         "no conversation open"
     };
-    let _ = writeln!(out, "Now: {state}.");
+    let waiting = c.unconsolidated()?.len();
+    let _ = match waiting {
+        0 => writeln!(out, "Now: {state}."),
+        1 => writeln!(out, "Now: {state}; 1 night waits to be slept on."),
+        n => writeln!(out, "Now: {state}; {n} nights wait to be slept on."),
+    };
     let Some(log) = log else {
         out.push_str(
             "Diagnostics are off ([diagnostics] enabled = false), so there are no events.",

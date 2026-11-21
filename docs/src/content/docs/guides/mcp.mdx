@@ -39,7 +39,7 @@ The host's model follows one fixed order on every user message:
 | `begin_turn` | First, before the reply      | Records the message and returns the companion's memories, mood and notes for this turn.                     |
 | `end_turn`   | Last, after the reply        | Saves the reply so the exchange can be remembered. After a `zz` goodnight, it also sleeps.                  |
 | `recall`     | Optional                     | Searches long-term memory on purpose. `begin_turn` already brings up what is relevant.                      |
-| `sleep`      | When the user says goodnight | Ends the conversation and turns it into memories. Takes a while.                                            |
+| `sleep`      | When the user says goodnight | Ends the conversation at once; it becomes memories in the background.                                       |
 | `wake_up`    | In a dream                   | Asks to wake from a [dream](/concepts/sleep-and-dreams/#dreams), quoting the words that wake the companion. |
 
 The doctor is never a tool. The [doctor token](/concepts/souls/#the-doctor-token)

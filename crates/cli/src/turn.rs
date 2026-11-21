@@ -9,7 +9,7 @@
 //! Markers at the start of a message, parsed here so every front end reads
 //! them the same, in this order: `zz` says goodnight (the companion sleeps
 //! after this reply, or wakes from a dream), `~~` falls asleep into a dream
-//! (only as the first message after sleep), `<<` shows the dreaming companion
+//! (ending the conversation first, if one is going on), `<<` shows the dreaming companion
 //! an echo of the past, `>>N` asks for a reply of about N paragraphs.
 //! Anywhere in a waking message, text between a pair of `||` is said out of
 //! earshot.
@@ -35,9 +35,21 @@ pub struct Pending {
     /// companion's `wake_up` woke it. The front end wakes the companion once
     /// the reply is recorded.
     pub wake: bool,
-    /// The user said goodnight with `zz`: the front end puts the companion to
-    /// sleep once the reply is recorded, with no reflection on it first.
+    /// The user said goodnight with `zz`: the night ends with this reply,
+    /// with no reflection on it, and the front end consolidates it behind.
     pub sleep: bool,
+    /// `~~` ended the conversation going on to start this dream: its night
+    /// waits for the front end to consolidate it.
+    pub closed: Option<i64>,
+}
+
+impl Pending {
+    /// [`end`] leaves a night or a dream for the writer to consolidate
+    /// ([`Companion::consolidate`]): a goodnight, a waking, or a dream that
+    /// ended the conversation before it.
+    pub fn consolidates(&self) -> bool {
+        self.sleep || self.wake || self.closed.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,18 +59,10 @@ pub enum Begin {
     Doctor,
     /// Memory is frozen by the doctor: nothing is recorded or recalled.
     Frozen,
-    /// The message asked for a dream (`~~`) while the companion is awake in a
-    /// conversation. Nothing was recorded; the host should not pass the
-    /// message to the model, and can show [`AWAKE`].
-    Awake,
     /// The turn is recorded; `context` is the memory to give the model, empty
     /// when nothing is new since the last turn.
     Open { context: String, pending: Pending },
 }
-
-/// Why a `~~` was refused.
-pub const AWAKE: &str = "Still awake in this conversation: a dream starts with ~~ only as the \
-    first message after sleep.";
 
 /// What a bare `~~` puts in the dream: somewhere to be.
 pub const DREAM_OPENING: &str = "You are somewhere you almost know.";
@@ -192,8 +196,6 @@ pub enum Opened {
     Doctor,
     /// See [`Begin::Frozen`].
     Frozen,
-    /// See [`Begin::Awake`].
-    Awake,
     Open(Box<Open>),
 }
 
@@ -310,7 +312,6 @@ pub fn open(c: &mut Companion, message: &str, budget: usize, first: bool) -> Res
         outcome: match &opened {
             Ok(Opened::Doctor) => "doctor",
             Ok(Opened::Frozen) => "frozen",
-            Ok(Opened::Awake) => "awake",
             Ok(Opened::Open(_)) => "open",
             Err(_) => "error",
         },
@@ -354,14 +355,13 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
     c.drop_lost_dream()?;
     let (goodnight, message) = goodnight_marker(message);
     let (asleep, message) = dream_marker(message);
-    let dream = match c.dreaming()? {
-        Some(dream) => Some(dream),
-        None if asleep => match c.start_dream() {
-            Ok(dream) => Some(dream),
-            Err(Error::Awake) => return Ok(Opened::Awake),
-            Err(e) => return Err(e),
-        },
-        None => None,
+    let (dream, closed) = match c.dreaming()? {
+        Some(dream) => (Some(dream), None),
+        None if asleep => {
+            let (dream, closed) = c.start_dream()?;
+            (Some(dream), closed)
+        }
+        None => (None, None),
     };
     let (echo, message) = match dream {
         Some(_) => echo_marker(message),
@@ -414,6 +414,7 @@ fn open_turn(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
             dream: dream.is_some(),
             wake,
             sleep: goodnight && dream.is_none(),
+            closed,
         },
     })))
 }
@@ -424,7 +425,6 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
     let open = match open(c, message, budget, first)? {
         Opened::Doctor => return Ok(Begin::Doctor),
         Opened::Frozen => return Ok(Begin::Frozen),
-        Opened::Awake => return Ok(Begin::Awake),
         Opened::Open(open) => *open,
     };
     // Added after `keep_new`, so even a turn with nothing new carries them.
@@ -443,14 +443,20 @@ pub fn begin(c: &mut Companion, message: &str, budget: usize, first: bool) -> Re
 }
 
 /// Records the reply, without its em dashes, and marks what was recalled.
-/// Returns the (user, companion) turn IDs to reflect on.
+/// A goodnight or a waking ends the night or the dream with it, so the next
+/// message starts a new conversation at once; the front end consolidates it
+/// behind ([`Pending::consolidates`]). Returns the (user, companion) turn IDs
+/// to reflect on.
 pub fn end(c: &mut Companion, pending: Pending, reply: &str) -> Result<(i64, i64)> {
     let started = Instant::now();
     let said = clanka_core::tics::without_dashes(reply);
     let ended = c
-        .record_reply(pending.session, pending.user_turn, &said)
+        .record_turn(pending.session, Speaker::Companion, &said)
         .and_then(|turn| {
             c.mark_recalled(pending.session, &pending.recalled)?;
+            if pending.sleep || pending.wake {
+                c.close_night(pending.session)?;
+            }
             Ok((pending.user_turn, turn))
         });
     c.diagnose(&Event::TurnEnd {

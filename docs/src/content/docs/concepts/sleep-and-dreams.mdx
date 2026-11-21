@@ -42,9 +42,14 @@ that would shift most. A section it can't write (too long, or naming someone
 from the companion's own life as yours) stays as it was; sleep doesn't spend
 another round on it.
 
+The conversation ends with the companion's goodnight, before sleep runs, so
+your next message starts a new conversation at once; sleep writes the night
+behind it. Waking from a dream works the same way.
+
 Sleep needs the [`[model]`](/configuration/#model). If its model call fails,
 it tries once more with half the night. If it still fails before the episode
-is written, the session stays open and you can try again.
+is written, the night waits and is slept on after the next one, up to three
+tries.
 
 ## Getting tired
 
@@ -69,8 +74,9 @@ lower allowance.
 
 ## Dreams
 
-After the companion has slept, a message that starts with `~~` sends it into
-a dream. What you write there is what happens to it, as "you". It lives the
+A message that starts with `~~` sends the companion into a dream. Sent in the
+middle of a conversation, it ends the conversation first, as a goodnight
+would, and the night is slept on behind the dream. What you write there is what happens to it, as "you". It lives the
 dream in first person without knowing it is dreaming, with its temperament
 louder and its life hazy.
 

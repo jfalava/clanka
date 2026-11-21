@@ -168,12 +168,12 @@ fn an_opened_turn_carries_the_history_before_the_message() {
     assert_eq!(second.pending.user_turn, 3);
 }
 
-/// `~~` falls asleep into a dream only once the conversation is over; `<<` is
+/// `~~` falls asleep into a dream, ending the conversation first; `<<` is
 /// an echo only in a dream; text between `||` is out of earshot only awake.
 /// Each marker reaches the model as this reply's hint, and memory never sees
 /// the marker itself.
 #[test]
-fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
+fn dream_markers_start_a_dream_and_mark_echoes_in_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(dir.path());
 
@@ -190,26 +190,15 @@ fn dream_markers_start_a_dream_after_sleep_and_mark_echoes_in_it() {
     assert!(said.ends_with(turn::UNHEARD_HINT), "{said}");
     turn::end(&mut c, pending, "Mm.").unwrap();
 
-    // Mid-conversation, a dream is refused and nothing is recorded.
-    let turns = |c: &Companion| {
-        c.assemble("x", 4000, &Default::default())
-            .unwrap()
-            .turns
-            .len()
-    };
-    let before = turns(&c);
-    assert_eq!(
-        turn::begin(&mut c, "~~ You're in a kitchen.", 4000, false).unwrap(),
-        Begin::Awake
-    );
-    assert_eq!(turns(&c), before);
-
+    // Mid-conversation, `~~` ends the conversation, which waits to be slept
+    // on, and starts the dream; glued to the dream's first words it still does.
     let session = c.session_in_progress().unwrap().unwrap();
-    c.end_session(session, clanka_core::model::SessionEnd::Doctor)
-        .unwrap();
-    // Glued to the dream's first words, `~~` still starts it.
     let (first, pending) = begin(&mut c, "~~You're in a kitchen.", false);
     assert!(pending.dream && !pending.wake);
+    assert_eq!(pending.closed, Some(session));
+    assert!(pending.consolidates());
+    assert_ne!(pending.session, session);
+    assert_eq!(c.unconsolidated().unwrap(), [session]);
     assert!(first.contains("somewhere you know"), "{first}");
     assert!(!first.contains(turn::UNHEARD_HINT), "{first}");
     turn::end(&mut c, pending, "It smells of bread.").unwrap();
@@ -270,28 +259,26 @@ fn a_leading_zz_says_goodnight_and_wakes_a_dream() {
     let (said, pending) = begin(&mut c, " Zz night, love", false);
     assert!(pending.sleep && !pending.wake, "{pending:?}");
     assert!(said.ends_with(turn::GOODNIGHT_HINT), "{said}");
+    let user_said = |c: &Companion| -> Vec<String> {
+        c.assemble("x", 4000, &clanka_core::Ranking::default())
+            .unwrap()
+            .turns
+            .into_iter()
+            .filter(|t| t.speaker == clanka_core::model::Speaker::User)
+            .map(|t| t.content)
+            .collect()
+    };
+    assert_eq!(user_said(&c), ["zzz", "so zz", "zzap", "night, love"]);
     turn::end(&mut c, pending, "Sleep well.").unwrap();
+    assert_eq!(c.session_in_progress().unwrap(), None, "the night ended");
+    // A bare `zz` opens a new conversation and ends it at once.
     let (_, pending) = begin(&mut c, "zz", false);
     assert!(pending.sleep);
+    assert_eq!(user_said(&c), [turn::GOODNIGHT]);
     turn::end(&mut c, pending, "Night.").unwrap();
-
-    let said: Vec<String> = c
-        .assemble("x", 4000, &clanka_core::Ranking::default())
-        .unwrap()
-        .turns
-        .into_iter()
-        .filter(|t| t.speaker == clanka_core::model::Speaker::User)
-        .map(|t| t.content)
-        .collect();
-    assert_eq!(
-        said,
-        ["zzz", "so zz", "zzap", "night, love", turn::GOODNIGHT]
-    );
+    assert_eq!(c.unconsolidated().unwrap().len(), 2);
 
     // In a dream it wakes the companion instead of putting it to sleep.
-    let session = c.session_in_progress().unwrap().unwrap();
-    c.end_session(session, clanka_core::model::SessionEnd::Doctor)
-        .unwrap();
     let (_, pending) = begin(&mut c, "~~ You're in a kitchen.", false);
     assert!(pending.dream && !pending.wake);
     turn::end(&mut c, pending, "It smells of bread.").unwrap();
@@ -323,25 +310,30 @@ fn an_open_handle_takes_up_a_persona_settled_elsewhere() {
     assert!(host.soul().body.contains("Now fond of tea."));
 }
 
-/// A message that arrives while the companion is falling asleep lands in the
-/// session being slept, after the night's prompt was written. Its reply is
-/// still kept, in that session, and the next message starts a new one.
+/// A goodnight ends the night with its reply, before sleep runs: the next
+/// message starts a new conversation at once, and the night waits for the
+/// writer, which consolidates it whenever it gets to it.
 #[test]
-fn a_reply_to_a_message_sent_while_falling_asleep_is_kept() {
+fn a_goodnight_ends_the_night_before_sleep_runs() {
     use clanka_core::deps::{LlmResponse, ToolCall};
-    use std::sync::{Arc, Mutex};
 
     let dir = tempfile::tempdir().unwrap();
     let mut chat = open(dir.path());
     let (_, pending) = begin(&mut chat, "long day", true);
-    let session = pending.session;
     turn::end(&mut chat, pending, "Tell me.").unwrap();
+    let (_, pending) = begin(&mut chat, "zz night", false);
+    let night = pending.session;
+    assert!(pending.sleep && pending.consolidates());
+    turn::end(&mut chat, pending, "Night.").unwrap();
+    assert_eq!(chat.session_in_progress().unwrap(), None);
 
-    // The late message is sent from the chat handle during sleep's model call.
-    let chat = Arc::new(Mutex::new(chat));
-    let late = Arc::new(Mutex::new(None));
-    let (during, sent) = (chat.clone(), late.clone());
-    let mut night = Some(ToolCall {
+    // Before any sleep, the next message is a new conversation.
+    let (_, next) = begin(&mut chat, "one more thing", false);
+    assert_ne!(next.session, night);
+    turn::end(&mut chat, next, "Go on.").unwrap();
+    assert_eq!(chat.unconsolidated().unwrap(), [night]);
+
+    let mut episode = Some(ToolCall {
         id: "e".into(),
         name: "write_episode".into(),
         arguments: r#"{"interpretation": "A long day, told.", "valence": 0.2}"#.into(),
@@ -349,25 +341,15 @@ fn a_reply_to_a_message_sent_while_falling_asleep_is_kept() {
     let mut writer = common::open_with(
         dir.path(),
         common::Scripted::new(move |_| {
-            if let Some(episode) = night.take() {
-                *sent.lock().unwrap() =
-                    Some(begin(&mut during.lock().unwrap(), "one more thing", false).1);
-                return Ok(LlmResponse {
-                    text: String::new(),
-                    tool_calls: vec![episode],
-                });
-            }
-            Ok(LlmResponse::default())
+            Ok(LlmResponse {
+                text: String::new(),
+                tool_calls: episode.take().into_iter().collect(),
+            })
         }),
     );
-    writer.sleep(session).unwrap();
-
-    let pending = late.lock().unwrap().take().unwrap();
-    assert_eq!(pending.session, session);
-    let mut chat = chat.lock().unwrap();
-    let (user, reply) = turn::end(&mut chat, pending, "Go on.").unwrap();
-    assert!(reply > user);
-    assert!(!chat.unanswered(session).unwrap());
-    let (_, next) = begin(&mut chat, "anyway", false);
-    assert_ne!(next.session, session);
+    let done = writer.consolidate().unwrap();
+    assert_eq!(done.len(), 1);
+    assert!(writer.unconsolidated().unwrap().is_empty());
+    // The conversation after it is still going on.
+    assert!(chat.session_in_progress().unwrap().is_some());
 }

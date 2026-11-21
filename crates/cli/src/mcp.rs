@@ -8,7 +8,7 @@
 
 use crate::turn::{self, Begin, Pending};
 use anyhow::Result;
-use clanka_core::Companion;
+use clanka_core::{Companion, Consolidated};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, PromptMessage, Role, ServerCapabilities, ServerConfig};
 use rmcp::{
@@ -123,10 +123,6 @@ impl Server {
                 Begin::Frozen => "Memory is frozen by the doctor, so nothing is recorded. Reply \
                      without memories and do not call end_turn."
                     .into(),
-                Begin::Awake => format!(
-                    "Not recorded. {} Tell the user so in a line and do not call end_turn.",
-                    turn::AWAKE
-                ),
                 Begin::Open {
                     context,
                     pending: p,
@@ -153,31 +149,40 @@ impl Server {
     ) -> Result<String, String> {
         let (chat, pending, writer) =
             (self.chat.clone(), self.pending.clone(), self.writer.clone());
-        let (user_turn, companion_turn, dream, sleep) = blocking(move || {
+        let (user_turn, companion_turn, dream, sleep, consolidates) = blocking(move || {
             let Some(p) = lock(&pending).take() else {
                 return Err(
                     "No turn is open: call begin_turn with the user's message first.".into(),
                 );
             };
-            let (dream, sleep) = (p.dream.then_some((p.session, p.wake)), p.sleep);
+            let (dream, sleep, consolidates) =
+                (p.dream.then_some(p.wake), p.sleep, p.consolidates());
             let (user, companion) =
                 turn::end(&mut lock(&chat), p, &reply).map_err(|e| e.to_string())?;
-            Ok((user, companion, dream, sleep))
+            Ok((user, companion, dream, sleep, consolidates))
         })
         .await?;
-        // Nothing of a dream is kept as it happens: it is decided on waking.
-        if let Some((session, wakes)) = dream {
-            if !wakes {
-                return Ok("Saved.".into());
+        // A goodnight or a waking ended the night with this reply; sleep or
+        // waking consolidates it behind, and nobody waits for it. Without a
+        // model it waits for one.
+        if consolidates {
+            if writer.is_none() {
+                return Ok(WAITS.into());
             }
-            let (chat, writer) = (self.chat.clone(), self.writer.clone());
-            return blocking(move || wake(&chat, writer.as_deref(), session)).await;
+            settle_behind(writer.clone());
+        }
+        // Nothing of a dream is kept as it happens: it is decided on waking.
+        if let Some(wakes) = dream {
+            return Ok(if wakes {
+                "Saved. You woke; the next message starts a new conversation.".into()
+            } else {
+                "Saved.".into()
+            });
         }
         // The user said goodnight with `zz`: sleep reads the whole
         // conversation, this exchange included, so it is not reflected on.
         if sleep {
-            let chat = self.chat.clone();
-            return blocking(move || fall_asleep(&chat, writer.as_deref())).await;
+            return Ok(ASLEEP.into());
         }
         let Some(writer) = writer else {
             return Ok(
@@ -243,18 +248,27 @@ impl Server {
     }
 
     #[tool(
-        description = "Call when the user says goodnight or asks you to sleep, after your reply and end_turn. Ends the conversation and turns it into memories. Takes a while."
+        description = "Call when the user says goodnight or asks you to sleep, after your reply and end_turn. Ends the conversation at once; it becomes memories in the background."
     )]
     async fn sleep(&self) -> Result<String, String> {
-        // In a dream, sleep is waking up.
-        let (chat, writer) = (self.chat.clone(), self.writer.clone());
-        let dream = blocking(move || lock(&chat).dreaming().map_err(|e| e.to_string())).await?;
-        if let Some(dream) = dream {
-            let chat = self.chat.clone();
-            return blocking(move || wake(&chat, writer.as_deref(), dream)).await;
+        if self.writer.is_none() {
+            return Err(NO_MODEL.into());
         }
+        // In a dream, sleep is waking up.
         let chat = self.chat.clone();
-        blocking(move || fall_asleep(&chat, writer.as_deref())).await
+        blocking(move || {
+            let mut chat = lock(&chat);
+            let close = |c: &mut Companion| -> clanka_core::Result<()> {
+                if let Some(night) = c.dreaming()?.or(c.session_in_progress()?) {
+                    c.close_night(night)?;
+                }
+                Ok(())
+            };
+            close(&mut chat).map_err(|e| e.to_string())
+        })
+        .await?;
+        settle_behind(self.writer.clone());
+        Ok(ASLEEP.into())
     }
 }
 
@@ -289,57 +303,38 @@ impl ServerHandler for Server {
     }
 }
 
-/// Ends the conversation and consolidates it with the writer.
-fn fall_asleep(
-    chat: &Mutex<Companion>,
-    writer: Option<&Mutex<Companion>>,
-) -> Result<String, String> {
-    let Some(writer) = writer else {
-        return Err(
-            "Can't sleep: no companion model is configured. Add a [model] section to \
-            ~/.config/clanka/config.toml naming the model you run on."
-                .into(),
-        );
-    };
-    let session = lock(chat).open_session().map_err(|e| e.to_string())?;
-    // Waits for any reflection still running on this handle.
-    let report = lock(writer).sleep(session).map_err(|e| e.to_string())?;
-    Ok(format!(
-        "Asleep. The conversation is now a memory; {} memories shifted and {} unresolved \
-         things weigh more. The next message starts a new conversation.",
-        report.drifted.len(),
-        report.escalated.len()
-    ))
-}
+const NO_MODEL: &str = "Can't sleep: no companion model is configured. Add a [model] section to \
+    ~/.config/clanka/config.toml naming the model you run on.";
 
-/// Wakes the companion from `dream` with the writer; without one (no companion
-/// model) the dream is dropped instead, since nothing could decide what stays.
-fn wake(
-    chat: &Mutex<Companion>,
-    writer: Option<&Mutex<Companion>>,
-    dream: i64,
-) -> Result<String, String> {
-    let Some(writer) = writer else {
-        lock(chat).drop_dream().map_err(|e| e.to_string())?;
-        return Ok(
-            "You woke. No companion model is configured, so nothing of the dream was \
-                   kept. The next message starts a new conversation."
-                .into(),
-        );
-    };
-    let report = lock(writer).wake(dream).map_err(|e| e.to_string())?;
-    let seared = if report.seared.is_some() {
-        " One thing an echo showed you stays, burned in, and you mean to find out whether it \
-         is true."
-    } else {
-        ""
-    };
-    Ok(format!(
-        "You woke: {} fragments linger and {} memories shifted.{seared} The next message \
-         starts a new conversation.",
-        report.fragments.len(),
-        report.drifted.len()
-    ))
+const WAITS: &str = "Saved. The conversation has ended, but no companion model is configured, \
+    so it waits to become a memory. The next message starts a new conversation.";
+
+const ASLEEP: &str = "Asleep. The conversation becomes a memory as you sleep; the next message \
+    starts a new conversation.";
+
+/// Sleeps on every night and wakes from every dream that ended, on the
+/// writer and off the hot path. Without a writer they wait for one.
+fn settle_behind(writer: Option<Arc<Mutex<Companion>>>) {
+    let Some(writer) = writer else { return };
+    tokio::task::spawn_blocking(move || match lock(&writer).consolidate() {
+        Ok(done) => {
+            for c in done {
+                match c {
+                    Consolidated::Slept(r) => eprintln!(
+                        "clanka: asleep; {} memories shifted, {} unresolved things weigh more",
+                        r.drifted.len(),
+                        r.escalated.len()
+                    ),
+                    Consolidated::Woke(r) => eprintln!(
+                        "clanka: awake; {} fragments linger, {} memories shifted",
+                        r.fragments.len(),
+                        r.drifted.len()
+                    ),
+                }
+            }
+        }
+        Err(e) => eprintln!("clanka: the night is not settled yet ({e}); it is tried again later"),
+    });
 }
 
 pub fn serve(chat: Companion, writer: Option<Companion>, budget: usize) -> Result<()> {

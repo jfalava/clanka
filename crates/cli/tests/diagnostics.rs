@@ -78,7 +78,7 @@ fn an_evening_is_counted_and_nothing_said_is_kept() {
         }
     }
     assert!(
-        triage.contains("Now: awake, in a conversation."),
+        triage.contains("Now: no conversation open; 1 night waits to be slept on."),
         "{triage}"
     );
     assert!(

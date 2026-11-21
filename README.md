@@ -69,8 +69,8 @@ Every command explains itself: `clanka help <command>`.
 
 ## Dreams
 
-After the companion has slept, a message starting with `~~` sends it into a
-dream. What you write there is what happens to it, as "you"; it lives it in
+A message starting with `~~` sends the companion into a dream, ending the
+conversation first if one is going on. What you write there is what happens to it, as "you"; it lives it in
 first person without knowing it is dreaming, its temperament louder and its
 life hazy. In a dream, `<<` shows it an echo, a scene from the past.
 

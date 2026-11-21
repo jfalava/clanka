@@ -99,7 +99,7 @@ fn an_echo_sears_only_what_was_written_awake() {
         .unwrap();
     clk.fetch_add(DAY, Ordering::SeqCst);
 
-    let dream = c.start_dream().unwrap();
+    let (dream, _) = c.start_dream().unwrap();
     c.record_turn(dream, Speaker::User, "Sam is at the door, in red.")
         .unwrap();
     c.record_turn(dream, Speaker::Companion, "I let Sam in.")
@@ -275,44 +275,62 @@ fn an_echo_sears_only_what_was_written_awake() {
     );
 }
 
-/// Waking without a mood isn't waking: the dream stays open, nothing ends,
-/// and a retry finishes it.
+/// Waking without a mood isn't waking: the dream is over, but what stays of
+/// it waits for another pass, and a retry finishes it.
 #[test]
 fn a_wake_without_a_mood_leaves_the_dream_open() {
     let f = fixture();
     let clk = clock();
     let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), clk.clone());
-    let dream = c.start_dream().unwrap();
+    let (dream, _) = c.start_dream().unwrap();
     c.record_turn(dream, Speaker::User, "You're on a train.")
         .unwrap();
     c.record_turn(dream, Speaker::Companion, "Where to?")
         .unwrap();
     assert!(matches!(c.wake(dream), Err(Error::Llm(_))));
-    assert_eq!(c.dreaming().unwrap(), Some(dream));
+    assert_eq!(c.dreaming().unwrap(), None);
+    assert_eq!(c.unconsolidated().unwrap(), [dream]);
     drop(c);
 
     let mut c = open_full(&f, waker(vec![mood("A long ride")], Arc::default()), clk);
     let report = c.wake(dream).unwrap();
     assert_eq!(report.seared, None);
-    assert_eq!(c.dreaming().unwrap(), None);
+    assert!(c.unconsolidated().unwrap().is_empty());
+    assert!(
+        matches!(c.wake(dream), Err(Error::SessionClosed(_))),
+        "woken once"
+    );
 }
 
-/// A dream starts only after sleep; it belongs to the handle that dreams it,
-/// and any other handle finds it lost and drops it with nothing written. Its
+/// A dream started mid-conversation ends the conversation first, which waits
+/// to be slept on. A dream belongs to the handle that dreams it, and any
+/// other handle finds it lost and drops it with nothing written. Its
 /// exchanges are never reflected on: that would call the model, and the
 /// fixture's model refuses every call.
 #[test]
-fn a_dream_starts_after_sleep_and_a_lost_one_is_dropped() {
+fn a_dream_ends_the_conversation_and_a_lost_one_is_dropped() {
     let f = fixture();
     let mut c = open(&f, "k").unwrap();
     let s = c.open_session().unwrap();
     c.record_turn(s, Speaker::User, "hi").unwrap();
-    assert!(matches!(c.start_dream(), Err(Error::Awake)));
-    c.end_session(s, SessionEnd::Doctor).unwrap();
+    let (first, closed) = c.start_dream().unwrap();
+    assert_eq!(closed, Some(s));
+    assert_ne!(first, s);
+    assert_eq!(
+        c.unconsolidated().unwrap(),
+        [s],
+        "the night waits for sleep"
+    );
+    assert_eq!(c.drop_dream().unwrap(), Some(first));
+    assert_eq!(
+        c.unconsolidated().unwrap(),
+        [s],
+        "a dropped dream isn't a night"
+    );
 
     // An open session nothing was said in becomes the dream.
     let empty = c.open_session().unwrap();
-    let dream = c.start_dream().unwrap();
+    let (dream, _) = c.start_dream().unwrap();
     assert_eq!(dream, empty);
     assert!(matches!(
         c.sleep(dream),
@@ -329,7 +347,10 @@ fn a_dream_starts_after_sleep_and_a_lost_one_is_dropped() {
     assert_eq!(c.drop_lost_dream().unwrap(), None, "it is this handle's");
 
     let mut other = open(&f, "k").unwrap();
-    assert!(matches!(other.wake(s), Err(Error::SessionClosed(_))));
+    assert!(
+        matches!(other.wake(s), Err(Error::Invalid(_))),
+        "it is no dream"
+    );
     assert_eq!(other.drop_lost_dream().unwrap(), Some(dream));
     assert_eq!(other.dreaming().unwrap(), None);
     let db = raw(other.db_path(), "k");
@@ -364,7 +385,7 @@ fn only_what_the_dream_told_it_can_wake_it() {
         (false, NOT_DREAMING)
     );
     awake_evening(&mut c, "Laura knew all along.");
-    let dream = c.start_dream().unwrap();
+    let (dream, _) = c.start_dream().unwrap();
     c.record_turn(
         dream,
         Speaker::User,

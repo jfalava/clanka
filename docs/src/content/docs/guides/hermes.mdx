@@ -86,7 +86,8 @@ companion never reads it, and nothing is recorded. See
 
 ## When a conversation ends
 
-The companion has one conversation at a time, and sleep is what ends it: it
+The companion has one conversation at a time, and a goodnight ends it: the
+next message starts a new one at once, while sleep, in the background,
 writes the night's episode, settles its mood, lets the memories that came up
 drift and raises what was left unresolved. Once it has slept, or woken from a
 dream, clanka posts one line to the chat saying so, such as
@@ -128,9 +129,6 @@ Sleep can't be taken back, though, and Hermes ends chats it means to resume.
 Sleeping on those would close a conversation halfway and write a night for
 half of it. So only an end someone chose puts the companion to sleep, and
 anything else leaves the conversation open for the next goodnight.
-
-A message you send while the companion is falling asleep is kept and
-reflected on like any other, but it isn't part of that night.
 
 If a conversation stays open anyway,
 [`clanka doctor end-session`](/cli/doctor/#end-session) closes it without

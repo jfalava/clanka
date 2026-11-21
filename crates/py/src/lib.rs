@@ -13,9 +13,9 @@
 use clanka::diagnostics::{Host, Log, error_code};
 use clanka::setup::{self, Config, Paths, SharedEmbedder};
 use clanka::turn::{self, Begin, Pending};
-use clanka_core::Companion;
 use clanka_core::deps::{Llm, LlmRequest, LlmResponse, Role};
 use clanka_core::diagnostics::{Event, PLUGIN_EVENTS, Recorder};
+use clanka_core::{Companion, Consolidated};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -135,12 +135,11 @@ impl PyCompanion {
 
     /// Before the model replies. Returns `("doctor", "")` when the message is
     /// the doctor token (memory is frozen, nothing recorded: don't send the
-    /// message to the model), `("frozen", "")` while frozen, `("awake", why)`
-    /// when the message asked for a dream (`~~`) mid-conversation (nothing
-    /// recorded; show `why` instead of a reply), `("open", context)` with
-    /// the memory to give the model, or `("goodnight", context)` for the same
-    /// when the user said goodnight with `zz` (the companion sleeps after this
-    /// reply: see `end_turn`). On the host conversation's first turn
+    /// message to the model), `("frozen", "")` while frozen, `("open",
+    /// context)` with the memory to give the model, or `("goodnight",
+    /// context)` for the same when the user said goodnight with `zz` (the
+    /// night ends with this reply: see `end_turn`). A `~~` mid-conversation
+    /// ends the conversation and starts the dream. On the host conversation's first turn
     /// (`first`) that is everything; later it is only what the model hasn't
     /// seen, and empty when nothing is new.
     #[pyo3(signature = (message, first = true))]
@@ -160,7 +159,6 @@ impl PyCompanion {
             Ok(match begun {
                 Begin::Doctor => ("doctor", String::new()),
                 Begin::Frozen => ("frozen", String::new()),
-                Begin::Awake => ("awake", turn::AWAKE.to_owned()),
                 Begin::Open { context, pending } => {
                     let kind = if pending.sleep { "goodnight" } else { "open" };
                     *lock(&self.pending) = Some(pending);
@@ -171,21 +169,23 @@ impl PyCompanion {
     }
 
     /// After the reply: records it and marks what was recalled. Fast. Returns
-    /// the `(user, companion)` turn IDs to pass to `reflect` and whether the
-    /// companion sleeps after this reply (the user said goodnight with `zz`,
-    /// or the dream ends: it filled the session, `wake_up` woke the companion,
-    /// or `zz` did; call `sleep`, which in a dream wakes it), or `None` when
-    /// no turn was open (the doctor token, a frozen memory, or a vetoed turn).
-    /// `reflect` on a dream's turns does nothing.
+    /// the `(user, companion)` turn IDs to pass to `reflect` and whether a
+    /// night or a dream ended and waits for `consolidate` (the user said
+    /// goodnight with `zz`, the dream ended because it filled the session,
+    /// `wake_up` or `zz` woke the companion, or `~~` ended the conversation
+    /// to start a dream), or `None` when no turn was open (the doctor token,
+    /// a frozen memory, or a vetoed turn). A night that ends here is closed
+    /// already: the next message starts a new conversation. `reflect` on a
+    /// dream's turns does nothing.
     fn end_turn(&self, py: Python<'_>, reply: &str) -> PyResult<Option<(i64, i64, bool)>> {
         py.detach(|| {
             let Some(pending) = lock(&self.pending).take() else {
                 return Ok(None);
             };
-            let sleep = pending.wake || pending.sleep;
+            let consolidates = pending.consolidates();
             let (user, companion) =
                 turn::end(&mut lock(&self.chat), pending, reply).map_err(err)?;
-            Ok(Some((user, companion, sleep)))
+            Ok(Some((user, companion, consolidates)))
         })
     }
 
@@ -258,40 +258,54 @@ impl PyCompanion {
         })
     }
 
-    /// Ends the conversation and consolidates it. Slow. Does nothing, and says
-    /// so, when nothing was said since the companion last slept, so a host may
-    /// call it at every conversation boundary. In a dream, the companion wakes
-    /// instead, and what stays of the dream is decided.
-    fn sleep(&self, py: Python<'_>) -> PyResult<String> {
+    /// Ends the conversation, or wakes the companion from its dream, at once:
+    /// the next message starts a new conversation. Fast. Returns whether
+    /// anything ended; nothing does when nothing was said since the companion
+    /// last slept, so a host may call it at every conversation boundary. Call
+    /// `consolidate` after it, off the hot path.
+    fn close(&self, py: Python<'_>) -> PyResult<bool> {
         py.detach(|| {
-            let dream = {
-                let mut chat = lock(&self.chat);
-                chat.drop_lost_dream().map_err(err)?;
-                chat.dreaming().map_err(err)?
+            let mut chat = lock(&self.chat);
+            chat.drop_lost_dream().map_err(err)?;
+            let open = match chat.dreaming().map_err(err)? {
+                Some(dream) => Some(dream),
+                None => chat.session_in_progress().map_err(err)?,
             };
-            if let Some(dream) = dream {
-                let report = lock(&self.writer).wake(dream).map_err(err)?;
-                return Ok(format!(
-                    "Awake. {} fragments linger, {} memories shifted{}.",
-                    report.fragments.len(),
-                    report.drifted.len(),
-                    if report.seared.is_some() {
-                        ", and one thing an echo showed stays seared"
-                    } else {
-                        ""
-                    }
-                ));
+            if let Some(night) = open {
+                chat.close_night(night).map_err(err)?;
             }
-            let Some(session) = lock(&self.chat).session_in_progress().map_err(err)? else {
-                return Ok("Already asleep: nothing was said since.".to_owned());
-            };
-            let report = lock(&self.writer).sleep(session).map_err(err)?;
-            Ok(format!(
-                "Asleep. The conversation is now a memory; {} memories shifted and {} unresolved \
-                 things weigh more.",
-                report.drifted.len(),
-                report.escalated.len()
-            ))
+            Ok(open.is_some())
+        })
+    }
+
+    /// Sleeps on every night and wakes from every dream that ended and waits
+    /// for it, oldest first. Slow: call it off the hot path. Returns a line of
+    /// counts for each, never anything said or remembered. A night whose pass
+    /// fails waits for the next call, a few times at most.
+    fn consolidate(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        py.detach(|| {
+            let done = lock(&self.writer).consolidate().map_err(err)?;
+            Ok(done
+                .into_iter()
+                .map(|c| match c {
+                    Consolidated::Slept(report) => format!(
+                        "Asleep. The conversation is now a memory; {} memories shifted and {} \
+                         unresolved things weigh more.",
+                        report.drifted.len(),
+                        report.escalated.len()
+                    ),
+                    Consolidated::Woke(report) => format!(
+                        "Awake. {} fragments linger, {} memories shifted{}.",
+                        report.fragments.len(),
+                        report.drifted.len(),
+                        if report.seared.is_some() {
+                            ", and one thing an echo showed stays seared"
+                        } else {
+                            ""
+                        }
+                    ),
+                })
+                .collect())
         })
     }
 

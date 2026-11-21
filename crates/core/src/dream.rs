@@ -20,8 +20,8 @@
 use crate::companion::ensure_writable;
 use crate::deps::{ToolCall, ToolSpec};
 use crate::diagnostics::Pass;
-use crate::memory::ensure_open;
-use crate::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Urgency};
+use crate::memory::{count_failed_pass, mark_consolidated, to_consolidate};
+use crate::model::{Actor, Level, MemoryType, Speaker, Urgency};
 use crate::sleep::{clip, drift_spec, mood_spec, newest_that_fit};
 use crate::soul::Soul;
 use crate::writer::{args, parse, said_verbatim};
@@ -250,11 +250,12 @@ impl Companion {
         })
     }
 
-    /// Falls asleep into a dream, which this handle then owns. Refused with
-    /// [`Error::Awake`] while a conversation is going on: a dream starts only
-    /// after the companion has slept. An open session nothing was said in
-    /// becomes the dream. Already dreaming, it is the same dream.
-    pub fn start_dream(&mut self) -> Result<i64> {
+    /// Falls asleep into a dream, which this handle then owns. A conversation
+    /// going on ends first: its night is closed, to be slept on behind the
+    /// dream ([`Companion::consolidate`]). An open session nothing was said in
+    /// becomes the dream. Already dreaming, it is the same dream. Returns the
+    /// dream and the night it closed, if it closed one.
+    pub fn start_dream(&mut self) -> Result<(i64, Option<i64>)> {
         let now = self.deps.clock.now_ms();
         let tx = self
             .conn
@@ -268,14 +269,21 @@ impl Companion {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
+        let mut closed = None;
         let id = match open {
             Some((id, true, _)) => id,
-            Some((_, false, true)) => return Err(Error::Awake),
             Some((id, false, false)) => {
                 tx.execute("UPDATE sessions SET dream = 1 WHERE id = ?1", [id])?;
                 id
             }
-            None => {
+            awake => {
+                if let Some((night, false, true)) = awake {
+                    tx.execute(
+                        "UPDATE sessions SET ended_at = ?1, ended_by = 'sleep' WHERE id = ?2",
+                        params![now, night],
+                    )?;
+                    closed = Some(night);
+                }
                 tx.execute(
                     "INSERT INTO sessions (started_at, dream) VALUES (?1, 1)",
                     [now],
@@ -285,7 +293,7 @@ impl Companion {
         };
         tx.commit()?;
         self.dream = Some(id);
-        Ok(id)
+        Ok((id, closed))
     }
 
     /// Drops the open dream, if there is one: it ends with nothing written,
@@ -336,6 +344,9 @@ impl Companion {
         let mut calls = None;
         let report = self.wake_from(session, &mut calls);
         let error = report.as_ref().err();
+        if let Some(e) = error {
+            count_failed_pass(&self.conn, session, e);
+        }
         self.diagnose_pass(Pass::Wake, started, false, calls.as_ref(), error);
         report
     }
@@ -345,11 +356,14 @@ impl Companion {
     fn wake_from(&mut self, session: i64, calls: &mut Option<Reflection>) -> Result<WakeReport> {
         self.refresh()?;
         ensure_writable(&self.conn, &self.soul.hash)?;
-        ensure_open(&self.conn, session)?;
+        let open = to_consolidate(&self.conn, session)?;
         if !is_dream(&self.conn, session)? {
             return Err(Error::Invalid(format!(
                 "session {session} is no dream; it ends by sleep, not by waking"
             )));
+        }
+        if open {
+            self.close_night(session)?;
         }
         let offered = self.drift_offers(session, exaggerate(self.soul.traits.drift))?;
         let prompt = self.wake_prompt(session, &offered)?;
@@ -372,13 +386,10 @@ impl Companion {
         *calls = Some(reflection);
         if !waking.mood {
             return Err(Error::Llm(
-                "woke without settling a mood; the dream stays open".into(),
+                "woke without settling a mood; the dream waits for another try".into(),
             ));
         }
-        self.end_session(session, SessionEnd::Sleep)?;
-        if self.dream == Some(session) {
-            self.dream = None;
-        }
+        mark_consolidated(&self.conn, session, self.deps.clock.now_ms())?;
         Ok(WakeReport {
             fragments: waking.fragments,
             seared: waking.seared,

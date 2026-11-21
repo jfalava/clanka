@@ -296,7 +296,6 @@ impl Error {
             Error::Archived => "archived",
             Error::PersonaUnresolved => "persona_unresolved",
             Error::SessionClosed(_) => "session_closed",
-            Error::Awake => "awake",
             Error::NotFound(_) => "not_found",
             Error::Duplicate { .. } => "duplicate",
             Error::LevelDown { .. } => "level_down",
