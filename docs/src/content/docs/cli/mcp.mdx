@@ -10,7 +10,7 @@ clanka mcp [--budget <tokens>] [--session-tokens <tokens>] <soul>
 Serves one companion to an MCP host over stdio, for trying it out. The host
 does the talking and calls the tools: `begin_turn` before each reply,
 `end_turn` after it, `recall` to search memory on purpose, `read_lore` to
-open an entry of the [lore](/concepts/lore/), and `sleep` to end the
+open an entry of the [lore](/lore/reading/), and `sleep` to end the
 conversation. The persona prompt tells the host's model how to use
 them.
 
@@ -18,9 +18,13 @@ Memory is written by the [`[model]`](/configuration/#model) in
 `config.toml`, so set the host to the same model. Without one, turns are
 recorded but never turned into memories, and `sleep` is unavailable.
 
+Like [`clanka chat`](/cli/chat/), it refuses to start when the persona
+changed and isn't settled, or when the lore the companion reads has an error
+[`clanka lore lint`](/cli/lore/#lint) reports.
+
 stdout carries the MCP protocol; notes go to stderr.
 
-[MCP](/guides/mcp/) shows how to add it to a host.
+[MCP](/plugins/mcp/) shows how to add it to a host.
 
 ```sh
 clanka mcp ~/.config/clanka/souls/<id>.md
@@ -43,7 +47,7 @@ clanka mcp --budget 4000 ~/.config/clanka/souls/<id>.md
 Estimated tokens of conversation before the companion tires, for this
 companion. Sleep reads this much of the night. Wins over
 [`[session] tokens`](/configuration/#session). See
-[Getting tired](/concepts/sleep-and-dreams/#getting-tired).
+[Getting tired](/conversations/sleep/#getting-tired).
 
 - Default: `[session] tokens`, or `64000`
 

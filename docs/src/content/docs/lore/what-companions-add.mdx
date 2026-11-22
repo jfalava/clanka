@@ -1,0 +1,164 @@
+---
+title: What companions add
+description: The deeds and notes companions add beside your text, how each is labelled, the keeper, and how you strike them.
+---
+
+After each exchange, while an entry is open, the companion's reflection may
+make up to two lore calls besides its memory calls:
+
+- **A deed**: something it did in the story that others would come to know.
+  It must quote at least three words of the exchange.
+- **A note**: something it now knows. Kept private, or released for every
+  reader.
+- **A retraction**: it withdraws or replaces a line of its own. The old line
+  stays on record.
+- **A stub**: an entry for a place or thing you named in play that has none,
+  titled in your exact words. One per conversation.
+
+The goodnight exchange gets the same chance before the night is slept on.
+Sleep itself does no lore work. Waking from a dream may keep notes, never
+deeds: nothing done in a dream happened.
+
+A line holding your name, or anything you told the companion about yourself,
+is refused: lore files are plaintext that other companions read.
+
+### Example: one evening and one dream
+
+These are from a real evening with Kestrel, the healer in the
+[lore examples](/lore/writing-lore/). The user mentioned the Old well, which
+had no entry, so Kestrel made a stub for it. A dream that night showed the
+dead of 1612 lowered into it, and Kestrel shared a note from waking:
+
+```sh
+clanka lore list
+```
+
+```text
+ashford/corvin: Corvin Dunmore (0 lines standing)
+ashford/old-well: Old well (1 lines standing, a stub)
+ashford/the-mill: The Mill (0 lines standing)
+ashford/wells: The Ashford wells (0 lines standing)
+moonrot: The moonrot (1 lines standing)
+```
+
+```sh
+clanka lore show ashford/old-well
+```
+
+```text
+# Old well (ashford/old-well)
+A stub: nobody has written it yet. `clanka lore new ashford/old-well` starts it.
+
+Lines:
+[38d4010c] Note by Kestrel (dreamt): Dreamt: in 1612, the flood year, the dead were lowered into this well by night and the cover slid back over them. If that holds, the water has been sitting on corpses a lifetime.
+```
+
+Its private notes stay out of the ledger. `clanka lore notes` lists both
+kinds, newest first:
+
+```sh
+clanka lore notes ~/.config/clanka/souls/<id>.md
+```
+
+```text
+   3  ashford/old-well  Dreamt: in 1612, the flood year, the dead were lowered into this well by night and the cover slid back over them. If that holds, the water has been sitting on corpses a lifetime. (dreamt, released as [38d4010c])
+   2  ashford/corvin  Kestrel means to be at his door at first light — said so plainly, and put her bees' watering second to it. (worked_out)
+   1  moonrot  Kestrel: grey spots on the palms are how it starts. Next thing I look for is thirst beyond what the weather accounts for. (worked_out, released as [83d31669])
+```
+
+## How each line is labelled
+
+clanka works out how a companion knows something from your words, never
+from the model's say-so:
+
+| Label        | When                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| `narrated`   | A deed whose quote is your words: you said it happened.                                           |
+| `told`       | A note whose every name and number, and most of its other words, you said or the entry holds.     |
+| `claimed`    | A deed whose quote is only the companion's reply: its word.                                       |
+| `worked_out` | Any other note: its own conclusion, even when it uses names you said.                             |
+| `dreamt`     | A note from a dream.                                                                              |
+
+The moonrot note above is `worked_out`: "grey spots on the palms" is in the
+entry, but "thirst beyond what the weather accounts for" is Kestrel's own.
+The Old well note is `dreamt`.
+
+Lines show in that order, strongest first. With `dreams = "shared"` in a
+`soul.md`, its dreams are a place others visit: what you tell it there, in
+any voice, counts as `told`.
+
+When Kestrel cures the moonrot because you narrated it, the moonrot entry
+says so for every companion that reads it, labelled as seen.
+
+## The keeper
+
+Once an entry has more than 20 lines since its last digest, the keeper folds
+them into a short digest after the night is slept on. It writes without any
+companion's persona, cites the lines it folds, and may name only what your
+text or those lines name; a digest that invents a name is refused and
+nothing changes. It takes the weakest label among the lines it cites.
+
+When a deed makes a sentence of your text untrue ("It is thought
+incurable."), the digest quotes that sentence and readers see it as no
+longer so, until you rewrite the sentence yourself.
+
+## You have the last word
+
+[`clanka lore strike`](/cli/lore/#strike) hides a line from every reader;
+`--by` strikes everything one companion added since a time. Nothing else
+removes a line, and a struck line stays in the ledger with your strike after
+it. A companion's private notes go only with
+[`clanka lore forget`](/cli/lore/#forget).
+
+```sh
+clanka lore strike moonrot 83d31669
+```
+
+```text
+Struck [83d31669] from moonrot: Kestrel: grey spots on the palms are how it starts. Next thing I look for is thirst beyond what the weather accounts for.
+```
+
+Everything Kestrel added in the last day, then one private note by its
+number in `clanka lore notes`:
+
+```sh
+clanka lore strike --by ~/.config/clanka/souls/<id>.md --since 1d
+clanka lore forget ~/.config/clanka/souls/<id>.md 2
+```
+
+```text
+Struck 1 lines Kestrel added.
+Forgot note 2 on ashford/corvin: Kestrel means to be at his door at first light — said so plainly, and put her bees' watering second to it.
+```
+
+## Files and git
+
+Beside each entry, `<id>.ledger.jsonl` holds what companions added: one JSON
+line each, with its own ID, appended under a lock and never rewritten. Lines
+not yet appended wait in the companion's database, so a busy lock or a crash
+only delays them, and a frozen companion publishes nothing.
+
+```json
+{"id":"01a20493-bfaa-77d0-8d56-cc0583d31669","kind":"note","by":"01a20492-ca3c-7046-82fb-5c5c35d13157","name":"Kestrel","provenance":"worked_out","at":1795373121450,"text":"Kestrel: grey spots on the palms are how it starts. Next thing I look for is thirst beyond what the weather accounts for."}
+```
+
+The short ID `clanka lore show` prints is the end of the line's `id`.
+
+Git is needed to keep the lore on record. `clanka lore new` makes the
+directory a git repository when git is installed, and from then on every
+line a companion adds is a commit under its name, of that ledger alone: your
+own uncommitted edits are never swept in.
+
+```sh
+git -C ~/.config/clanka/lore log --format='%h %an: %s'
+```
+
+```text
+f4f7f91 Kestrel: ashford/old-well: lines
+db0f7f7 Kestrel: ashford/old-well: stub
+798b321 Kestrel: moonrot: lines
+```
+ Without git everything still
+works, and [`clanka lore lint`](/cli/lore/#lint) says what is missing.
+Copy or clone the directory to move the lore to another machine;
+[`clanka export`](/cli/export/) reminds you.

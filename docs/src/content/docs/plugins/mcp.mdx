@@ -1,8 +1,6 @@
 ---
 title: MCP
 description: Serve a companion to an MCP host over stdio and understand the tools the host calls.
-sidebar:
-  order: 3
 ---
 
 [`clanka mcp`](/cli/mcp/) serves one companion to an MCP host over stdio. It
@@ -40,9 +38,9 @@ The host's model follows one fixed order on every user message:
 | `end_turn`   | Last, after the reply        | Saves the reply so the exchange can be remembered. After a `zz` goodnight, it also sleeps.                  |
 | `recall`     | Optional                     | Searches long-term memory on purpose. `begin_turn` already brings up what is relevant.                      |
 | `sleep`      | When the user says goodnight | Ends the conversation at once; it becomes memories in the background.                                       |
-| `wake_up`    | In a dream                   | Asks to wake from a [dream](/concepts/sleep-and-dreams/#dreams), quoting the words that wake the companion. |
+| `wake_up`    | In a dream                   | Asks to wake from a [dream](/conversations/dreams/), quoting the words that wake the companion. |
 
-The doctor is never a tool. The [doctor token](/concepts/souls/#the-doctor-token)
+The doctor is never a tool. The [doctor token](/souls/traits/#the-doctor-token)
 freezes memory, and the CLI does the rest.
 
 ## Set the same model

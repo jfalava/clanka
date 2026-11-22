@@ -73,6 +73,9 @@ Some failures show as more than an error:
 - `open` with `persona_unresolved` is a soul.md that changed since its
   memories were written. Nothing talks with it until
   [`clanka soul`](/cli/soul/) settles the change.
+- `open` with `lore_invalid` is lore the companion reads that
+  [`clanka lore lint`](/cli/lore/#lint) reports an error in. Nothing talks
+  with it until the lore is fixed.
 - `turn_begin` with `database_gone` is a database file that was deleted or
   replaced while a front end had it open. That front end refuses every turn
   until it is restarted. An `open` with `created` for a companion that had

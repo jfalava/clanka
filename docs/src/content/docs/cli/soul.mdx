@@ -10,7 +10,7 @@ clanka soul <subcommand>
 The persona is the `soul.md`'s Markdown body. Editing it makes chat, MCP and
 Hermes refuse the companion until you choose what its memories do:
 [`continue`](#continue), [`update`](#update) or [`fork`](#fork). Editing the
-frontmatter is not a persona change. See [Souls](/concepts/souls/).
+frontmatter is not a persona change. See [Traits and persona changes](/souls/traits/).
 
 After editing the persona:
 
@@ -69,7 +69,7 @@ Prints the guide to writing a soul: what a good body looks like, what each
 trait does, a checklist and a short example. Pipe it to any model as its
 instructions, then `clanka init <Name> --from` what it wrote.
 
-The same guide is on [Writing a soul](/guides/writing-a-soul/).
+The same guide is on [Writing a persona](/souls/writing-a-persona/).
 
 ```sh
 clanka soul guide | less
@@ -98,7 +98,7 @@ The companion's display name.
 ### `--brief <brief>`
 
 Required. Who the companion is, in a sentence or a paragraph.
-[The brief](/guides/writing-a-soul/#the-brief) says what to put in.
+[The brief](/souls/writing-a-persona/#the-brief) says what to put in.
 
 ```sh
 clanka soul draft Mara --brief "a night-shift radiographer in a coastal town, dry, kind"

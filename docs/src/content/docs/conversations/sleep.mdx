@@ -1,11 +1,7 @@
 ---
-title: Sleep and dreams
-description: What happens when a conversation ends, how dreams work, and how to say something out of the companion's earshot.
-sidebar:
-  order: 3
+title: Sleep and getting tired
+description: What happens when a conversation ends, and how long one runs before the companion tires.
 ---
-
-## Sleep
 
 Sleep ends a conversation. In `clanka chat` you send `/sleep`; on Hermes or
 an MCP host the model calls its sleep tool when you say goodnight.
@@ -22,6 +18,24 @@ you> zz night, see you tomorrow
 you> zz The moment you take the ring, the room goes dark.
 ```
 
+In `clanka chat` the night ends with a line on what sleep did:
+
+```text
+you> zz I should go. Night, Kestrel.
+Kestrel> Night. I'll be at the Dunmore door at first light, and the
+bees will have to wait for their water.
+Kestrel is asleep: 0 memories shifted, 0 unresolved things weigh more.
+```
+
+What it wrote for the night is an episode, in its own voice
+([`clanka memories`](/cli/memories/)):
+
+```text
+#6 [episode, normal, -0.3] Talked of the Dunmore girl's grey palms,
+and of Corvin wanting the Old well open. I'll be at her door at first
+light. It left me restless, waiting on a look I haven't had yet.
+```
+
 While it sleeps, the companion:
 
 - raises the threads that were left open too long,
@@ -32,7 +46,7 @@ While it sleeps, the companion:
 Drift is how much a memory blurs. The `drift` trait sets the amount: 0 is a
 tape recorder. Faint memories shift the most, vivid ones only in detail, and
 seared ones never.
-[What you told it about yourself](/concepts/memory/#what-you-told-it-about-yourself)
+[What you told it about yourself](/memory/how-memory-works/#what-you-told-it-about-yourself)
 never drifts either; if the night changed one of those things, sleep replaces
 it with how it is now.
 
@@ -65,63 +79,9 @@ a companion with many memories doesn't tire sooner than a new one.
 Set the allowance for every companion with
 [`[session] tokens`](/configuration/#session), or for one with
 `--session-tokens` on [`clanka chat`](/cli/chat/) and [`clanka mcp`](/cli/mcp/)
-or `session_tokens` in a [Hermes profile](/guides/hermes/). At the default and
+or `session_tokens` in a [Hermes profile](/plugins/hermes/). At the default and
 a turn of about 200 tokens each way, the companion tires after about 220
 exchanges; at 128,000, about 450. On a host that keeps its own history, such
 as Hermes, every turn resends the conversation so far, so a long night costs
 more per turn as it grows. A model with a window under 128,000 tokens needs a
 lower allowance.
-
-## Dreams
-
-A message that starts with `~~` sends the companion into a dream. Sent in the
-middle of a conversation, it ends the conversation first, as a goodnight
-would, and the night is slept on behind the dream. What you write there is what happens to it, as "you". It lives the
-dream in first person without knowing it is dreaming, with its temperament
-louder and its life hazy.
-
-In a dream, a message that starts with `<<` shows it an echo, a scene from
-the past. Neither marker needs a space after it.
-
-```text
-you> ~~ You're standing in your mother's kitchen. It is too quiet.
-you> << >>3 Years ago, in this room, the judge reads the sentence aloud.
-```
-
-### Waking
-
-The companion wakes:
-
-- when it chooses to, over something it cannot bear or that turns against a
-  core value or a seared memory. It has to quote what you wrote in the dream:
-  nothing it imagines wakes it.
-- when the dream fills the session,
-- on `/sleep` or `zz`: the reply is its last moment in the dream.
-
-### What stays
-
-Waking keeps the companion's mood, a few fragments that come back only in
-later dreams, and at most one seared memory: a name, date or place that an
-echo showed and that you had also written while it was awake. Anything the
-dream made up fades.
-
-Leaving mid-dream keeps nothing.
-
-## Out of earshot
-
-Anywhere in a waking message, text between `||` and `||` is said out of the
-companion's earshot. It is told not to acknowledge it, and memory never keeps
-it, until an echo reveals it.
-
-```text
-you> Dinner was fine. ||I haven't told her about the job yet.||
-```
-
-## Reply length
-
-`>>N` (or `>> N`) at the start of a message asks for a reply of about N
-paragraphs.
-
-```text
-you> >>3 Tell me about the cello lesson.
-```

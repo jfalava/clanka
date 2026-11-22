@@ -1,8 +1,6 @@
 ---
-title: Souls
+title: Traits and persona changes
 description: What a soul.md holds, what each trait does, and what happens when you edit the persona.
-sidebar:
-  order: 1
 ---
 
 A `soul.md` is one Markdown file per companion, under
@@ -41,7 +39,7 @@ Everything inside `<!-- -->` comments is dropped before any model sees it and
 never changes the companion's identity, so you can leave notes in the file.
 
 A persona has four short sections: who the companion is, how it talks, what
-it cares about, and its core values. [Writing a soul](/guides/writing-a-soul/)
+it cares about, and its core values. [Writing a persona](/souls/writing-a-persona/)
 covers each one.
 
 ## Traits
@@ -55,11 +53,11 @@ The frontmatter holds the companion's ID, its name and its traits.
 | `time_sense`      | bool   | `true`    | Time away shifts its warmth: warmer after a good parting, cooler after a bad one.                                 |
 | `recall_window`   | 1 to 5 | `2`       | How many of the user's recent messages are used to search memory.                                                 |
 | `drift`           | 0 to 1 | `0.3`     | How much memories blur while it sleeps. 0 is a tape recorder.                                                     |
-| `tired_at`        | 0 to 1 | `0.7`     | Share of the conversation's [allowance](/concepts/sleep-and-dreams/#getting-tired) it may fill before the companion gets tired. Must be below `sleep_at`. |
+| `tired_at`        | 0 to 1 | `0.7`     | Share of the conversation's [allowance](/conversations/sleep/#getting-tired) it may fill before the companion gets tired. Must be below `sleep_at`. |
 | `sleep_at`        | 0 to 1 | `0.9`     | Share at which the companion asks to sleep.                                                                       |
 | `pushback_window` | turns  | `20`      | How many turns its pushback budget is counted over.                                                               |
 | `doctor_token`    | string | generated | Sent as a whole message, it freezes memory. Never shown to the model.                                             |
-| `lore`            | list   | `[]`      | The [lore](/concepts/lore/) entries it reads: IDs, and directories with a trailing `/`. Applies on its next turn. |
+| `lore`            | list   | `[]`      | The [lore](/lore/reading/) entries it reads: IDs, and directories with a trailing `/`. Applies on its next turn. |
 | `dreams`          | `own` or `shared` | `own` | `shared`: its dreams are a place others visit, so what it is told there counts as told in the lore.     |
 
 Editing a trait is not a persona change. It applies the next time the
@@ -70,7 +68,7 @@ companion opens, so restart anything that has the companion open.
 `clanka init` generates a `doctor_token` for each soul. Sending it as a whole
 message in a chat freezes the companion's memory at once, the same as
 [`clanka doctor freeze`](/cli/doctor/#freeze). It is the emergency stop for a
-conversation that is going wrong. See [Repairing memory](/guides/repairing-memory/).
+conversation that is going wrong. See [Repairing memory](/memory/repairing-memory/).
 
 The token must never reach the model, which is why
 [`clanka soul persona`](/cli/soul/#persona) prints the body without the

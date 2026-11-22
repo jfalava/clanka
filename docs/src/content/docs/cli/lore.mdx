@@ -12,7 +12,7 @@ house, a disease. Each entry is a Markdown file in the lore directory
 (`lore/` beside `souls/`, or [`[lore] dir`](/configuration/#lore)) whose text
 is yours and is never rewritten by clanka. A companion reads the entries its
 `soul.md` grants (`lore = ["moonrot", "ashford/"]`, a trailing `/` for a
-whole directory). See [Lore](/concepts/lore/).
+whole directory). See [How lore is read](/lore/reading/).
 
 Companions add lines beside your text in the entry's ledger: what they did in
 the story, and notes they chose to share, each labelled by how they know it,
@@ -69,7 +69,8 @@ clanka lore list
 ```
 
 Every entry: its title, how many lines companions added since its last
-digest, and whether it is a stub or sealed.
+digest, and whether it is a stub or sealed. A file whose name is no entry ID
+is listed as not read.
 
 ## show
 
@@ -87,9 +88,15 @@ clanka lore lint
 ```
 
 Checks every entry, every ledger and every soul's grants. An entry that
-doesn't parse, a file whose name is no entry ID and an unreadable ledger line
-are errors; a grant or an `opens` that names no entry, and a lore directory
-that isn't a git repository, are warnings. Exits non-zero on an error.
+doesn't parse, a file whose name is no entry ID, a title or alias several
+entries go by (a message that says it opens them all) and an unreadable
+ledger line are errors; a grant or an `opens` that names no entry, and a lore
+directory that isn't a git repository, are warnings. Exits non-zero on an
+error.
+
+A companion whose grants reach an entry with an error, or two entries that
+share a name, refuses to talk in `clanka chat`, `clanka mcp` and Hermes until
+the error is fixed. Errors in entries it can't read don't stop it.
 
 ## notes
 

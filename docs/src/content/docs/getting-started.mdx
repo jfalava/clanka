@@ -15,7 +15,7 @@ Each [release](https://github.com/jfalava/clanka/releases) has builds for
 Linux on x86_64 and arm64 and for macOS on Apple Silicon. The installer
 downloads the one for your machine, checks it against the release's
 `SHA256SUMS`, and puts `clanka` in `~/.local/bin`, along with the
-[Hermes plugin](/guides/hermes/). The Linux builds need glibc 2.39 and
+[Hermes plugin](/plugins/hermes/). The Linux builds need glibc 2.39 and
 libstdc++ from GCC 14 or newer, as on Ubuntu 24.04 or Debian 13.
 
 ```sh
@@ -38,7 +38,7 @@ cargo build --release -p clanka
 The binary is `target/release/clanka`. Put it on your `PATH`.
 
 Python 3.11 or newer is needed only for `crates/py`, the bindings the
-[Hermes plugin](/guides/hermes/) uses.
+[Hermes plugin](/plugins/hermes/) uses.
 
 ## Create a companion
 
@@ -74,7 +74,7 @@ Every other command takes that path.
 
 Open the `soul.md` and replace every `TODO`. The Markdown body is the persona:
 who the companion is, how it talks, what it cares about and its core values.
-[Writing a soul](/guides/writing-a-soul/) explains what makes a good one.
+[Writing a persona](/souls/writing-a-persona/) explains what makes a good one.
 
 ```sh
 $EDITOR ~/.config/clanka/souls/<id>.md
@@ -128,9 +128,12 @@ The next conversation recalls those memories.
 
 ## Next steps
 
-- [Souls](/concepts/souls/) and [Memory](/concepts/memory/) explain how a
-  companion works.
-- [Hermes](/guides/hermes/) runs a companion as a Hermes profile, on Telegram
+- [Talk to a companion](/conversations/talking/): sleep, dreams, echoes and
+  saying things out of its earshot.
+- [Write lore](/lore/writing-lore/) to give your companions a world.
+- [How memory works](/memory/how-memory-works/): what a companion keeps and
+  how it comes back.
+- [Hermes](/plugins/hermes/) runs a companion as a Hermes profile, on Telegram
   or any other platform Hermes serves.
-- [MCP](/guides/mcp/) serves a companion to an MCP host.
+- [MCP](/plugins/mcp/) serves a companion to an MCP host.
 - The [CLI reference](/cli/) documents every command.

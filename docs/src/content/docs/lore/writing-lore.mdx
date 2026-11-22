@@ -1,0 +1,146 @@
+---
+title: Write lore
+description: Write a world's lore so companions find the right entry, and check it before they read it.
+---
+
+Lore is reference for a story world: places, people, how magic works. Each
+entry is a Markdown file you write; a companion reads the ones its
+`soul.md` grants, and an entry opens when a message names it.
+
+The examples on this page are a small world for Kestrel, the healer from
+[Create a soul](/souls/creating-a-soul/): a sickness and a river town.
+
+```text
+~/.config/clanka/lore/
+├── moonrot.md
+└── ashford/
+    ├── corvin.md
+    ├── the-mill.md
+    └── wells.md
+```
+
+## Write an entry
+
+```sh
+clanka lore new moonrot --title "The moonrot"
+clanka lore edit moonrot
+```
+
+```markdown
++++
+title = "The moonrot"
+aliases = ["moonrot", "the wasting"]
+opens = ["ashford/wells"]
++++
+
+The moonrot is a wasting sickness of the river towns. It starts as grey
+spots on the palms and a thirst nothing quenches. It is thought incurable.
+```
+
+The text under the frontmatter is canon, as you write it. `opens` lets a
+companion that read this entry read `ashford/wells` from then on, without a
+grant.
+
+An entry in a directory takes the directory in its ID:
+
+```sh
+clanka lore new ashford/wells --title "The Ashford wells"
+```
+
+```markdown
++++
+title = "The Ashford wells"
+aliases = ["ashford wells", "the wells"]
++++
+
+Three wells feed Ashford: the Market well, the Mill well and the Old well by
+the church. The Old well has been sealed since the flood of 1612.
+```
+
+Grant entries in the companion's `soul.md` frontmatter. A trailing `/`
+grants a whole directory:
+
+```toml
+lore = ["moonrot", "ashford/"]
+```
+
+## Check it
+
+```sh
+clanka lore lint
+clanka lore list
+```
+
+```text
+4 entries, all well.
+ashford/corvin: Corvin Dunmore (0 lines standing)
+ashford/the-mill: The Mill (0 lines standing)
+ashford/wells: The Ashford wells (0 lines standing)
+moonrot: The moonrot (0 lines standing)
+```
+
+An error looks like this, with a second entry that also goes by `the wells`:
+
+```text
+error: ashford/old-well, ashford/wells all go by "the wells": a message that says one opens every one of them; give each name to one entry
+```
+
+Fix every `error:`. A companion whose lore has an error refuses to talk, in
+`clanka chat`, `clanka mcp` and Hermes, until you do. Errors in lore it isn't
+granted don't stop it.
+
+## Rules that keep it working
+
+- **IDs are lower case.** Paths are segments of `a-z`, `0-9` and `-`:
+  `ashford/`, not `Ashford/`. A file with another name isn't read.
+- **Every name belongs to one entry.** A title or alias two entries share
+  opens both, and lint refuses it.
+- **No everyday words as aliases.** `well`, `town`, `home` or `water` come
+  up in any conversation and open the entry when nobody meant it. Use names:
+  `ashford wells`, `the mill`.
+- **One fact, one place.** clanka can't tell that two entries disagree. If
+  one says the Old well is sealed and another says it was reopened, the
+  companion picks one and invents a story to fit both.
+- **Keep entries short.** A turn shows at most
+  [`[lore] tokens`](/configuration/#lore) of lore (3,000 by default); an
+  entry that doesn't fit beside the ones read more recently closes until it
+  is named again.
+
+A longer name wins over a shorter one inside it: if one entry is called "The
+Mill well" and another goes by `the mill`, a message about the Mill well
+opens only the first.
+
+## What companions add
+
+After an exchange, a companion may add lines beside your text: what it did,
+and notes it chose to share. Each is labelled by how it knows it, worked out
+from your words, not the model's. After one evening with Kestrel:
+
+```sh
+clanka lore show moonrot
+```
+
+```text
+# The moonrot (moonrot)
+The moonrot is a wasting sickness of the river towns. It starts as grey
+spots on the palms and a thirst nothing quenches. It is thought incurable.
+
+Lines:
+[83d31669] Note by Kestrel (worked_out): Kestrel: grey spots on the palms are how it starts. Next thing I look for is thirst beyond what the weather accounts for.
+```
+
+Strike a line you don't want by its ID:
+
+```sh
+clanka lore strike moonrot 83d31669
+```
+
+Your text is never rewritten. With git installed, every change is a commit.
+
+## More
+
+- [How lore is read](/lore/reading/): grants, `opens`, sealed entries, and
+  when an entry opens.
+- [What companions add](/lore/what-companions-add/): deeds, notes, labels,
+  the keeper, strikes.
+- [`clanka lore`](/cli/lore/): every subcommand.

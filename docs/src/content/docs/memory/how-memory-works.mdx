@@ -1,8 +1,6 @@
 ---
-title: Memory
+title: How memory works
 description: How a companion writes memories, how deeply they are kept, and how recall brings them back.
-sidebar:
-  order: 2
 ---
 
 Each companion has one encrypted database (SQLCipher) under
@@ -19,7 +17,7 @@ thread, a pushback, a mood change and a note.
 The model cannot edit a memory's facts, lower a level, touch a seared memory
 or write the persona. There is no tool for those.
 
-When the conversation ends, the companion [sleeps](/concepts/sleep-and-dreams/)
+When the conversation ends, the companion [sleeps](/conversations/sleep/)
 on it and writes an episode for the night.
 
 ## What a memory holds
@@ -78,7 +76,7 @@ as the companion's own memories, with at most a couple of seared ones so the
 same moments do not come up forever.
 
 [`clanka recall`](/cli/recall/) prints both numbers for one query, and
-[Tuning recall](/guides/tuning-recall/) shows how to change the ranking and
+[Tuning recall](/memory/tuning-recall/) shows how to change the ranking and
 measure the result.
 
 ## What you told it about yourself
@@ -105,3 +103,65 @@ Every write is logged with its time and who made it: the writer after an
 exchange, sleep, the doctor or the CLI. [`clanka doctor log`](/cli/doctor/#log)
 prints it, and [`clanka doctor rollback`](/cli/doctor/#rollback) uses it to
 put the memory back as it was.
+
+## Reading what it kept
+
+[`clanka memories`](/cli/memories/) prints all of it: the mood and why, the
+sections it keeps about you and your relationship, open threads, then every
+memory. This is Kestrel, the healer from
+[Create a soul](/souls/creating-a-soul/), after one
+[evening and one dream](/conversations/talking/), shortened:
+
+```sh
+clanka memories ~/.config/clanka/souls/<id>.md
+```
+
+```text
+Mood: valence -0.5, energy +0.3, warmth +0.2. Why: Cold stone under my
+palm and knocking from a well that should have stayed shut; I woke
+already reaching for rope and lamp.
+
+about_user:
+(empty)
+
+relationship:
+An old friend who comes by most evenings, and doesn't need to be
+entertained. They bring me news of the town before I've heard it
+myself — the Dunmore girl at the mill, Corvin and the Old well. …
+
+Open threads (3):
+#2 [hot, vivid, 2026-11-22] I need to see the Dunmore girl before the
+mill bell tomorrow and speak plainly to her mother about what I'm
+looking for. Until I've had my hands on her, I don't know if this is
+the moonrot.
+#5 [simmering, normal, 2026-11-22] Corvin wants the Old well open and
+I don't know why it was shut. I asked what it serves and whether the
+Dunmores draw from it — no answer yet.
+#11 [hot, normal, 2026-11-22] Whether the Old well was ever cleaned
+after 1612, and who has been drinking from it since the cover came
+off.
+
+Memories (8):
+#1 [user_fact, normal, -0.4, 2026-11-22] My friend came by of an
+evening to tell me the Dunmore girl was at the mill with grey spots on
+her palms. It put me on edge — that is how the moonrot starts, and I
+want eyes on her before the bell. facts {"person":"the Dunmore
+girl","place":"the mill"}
+#3 [relationship, faint, +0.4, 2026-11-22] My friend asked me what I'd
+do first about the Dunmore girl, and listened while I laid out the
+whole of it. It's good to have someone who wants the method and not
+just the worry.
+#6 [episode, normal, -0.3, 2026-11-22] Talked of the Dunmore girl's
+grey palms, and of Corvin wanting the Old well open. I'll be at her
+door at first light. It left me restless, waiting on a look I haven't
+had yet.
+#10 [user_fact, dreamt, seared, -0.5, 2026-11-22] In 1612, the flood
+year, the dead were lowered into the Old well by night and the cover
+slid back over them. …
+```
+
+Each memory shows its type, its level, how it felt (valence, −1 to +1) and
+when.
+Every memory is in the companion's voice, written in character. Thread #11
+came out of the dream: what the echo showed left it something to chase.
+

@@ -1,0 +1,87 @@
+---
+title: Dreams and echoes
+description: Send the companion into a dream, show it echoes of the past, and what stays when it wakes.
+---
+
+A message that starts with `~~` sends the companion into a dream. Sent in the
+middle of a conversation, it ends the conversation first, as a goodnight
+would, and the night is slept on behind the dream. What you write there is what happens to it, as "you". It lives the
+dream in first person without knowing it is dreaming, with its temperament
+louder and its life hazy.
+
+In a dream, a message that starts with `<<` shows it an echo, a scene from
+the past. Neither marker needs a space after it.
+
+```text
+you> ~~ You're standing in your mother's kitchen. It is too quiet.
+you> << >>3 Years ago, in this room, the judge reads the sentence aloud.
+```
+
+## Waking
+
+The companion wakes:
+
+- when it chooses to, over something it cannot bear or that turns against a
+  core value or a seared memory. It has to quote what you wrote in the dream:
+  nothing it imagines wakes it.
+- when the dream fills the session,
+- on `/sleep` or `zz`: the reply is its last moment in the dream.
+
+## What stays
+
+Waking keeps the companion's mood, a few fragments that come back only in
+later dreams, and at most one seared memory: a name, date or place that an
+echo showed and that you had also written while it was awake. Anything the
+dream made up fades.
+
+Leaving mid-dream keeps nothing.
+
+## Example
+
+A real dream with Kestrel, the healer from
+[Create a soul](/souls/creating-a-soul/). Earlier that evening, awake, the
+user had mentioned the Old well and, out of earshot, the dead of 1612.
+
+```text
+you> ~~ You're standing at the Old well by the church. The cover is
+off. Something is knocking from below.
+Kestrel> Cover off and nobody thought to tell me. I put my palm on the
+rim, cold as a spring morning, and the knocking comes up through the
+stone like knuckles on a door. Who took it off? Corvin, I'd wager, and
+I mean to know why before anyone in this town drinks from it.
+you> << 1612. The flood. By night, men lower the dead into the Old
+well and slide the cover back.
+Kestrel> 1612, the flood year. So that's why the cover was on: they
+filled it with the dead and shut it up, and Corvin's pulled it off
+like it's nothing. Water's been sitting on corpses for a lifetime, and
+now it's knocking. Dead men don't knock, though. Let me get my lamp
+down in it before he has half the town drawing from it.
+you> zz The knocking stops.
+Kestrel> Stopped, has it. That's worse, not better. Knocking I can
+measure; silence means whatever it was has finished, or heard me. Hand
+me that rope and hold the lamp steady, I'm going down.
+```
+
+Once the wake pass is done, `clanka chat` says what stayed:
+
+```text
+Kestrel wakes: 3 fragments linger, 0 memories shifted; one thing an echo showed stays, burned in.
+```
+
+The fragments are faint images, marked `dreamt`, that come back only in later
+dreams. The seared memory's facts are only what the echo showed and the user
+had also said awake: the Old well and 1612.
+
+```text
+#7 [episode, dreamt, faint, -0.3] A stone rim, cold as a spring
+morning, and my palm flat on it.
+#8 [episode, dreamt, faint, -0.6] The knocking stopping all at once,
+and the quiet after being worse.
+#9 [episode, dreamt, faint, +0.1] A lamp held steady over black water,
+and rope in my hands.
+#10 [user_fact, dreamt, seared, -0.5] In 1612, the flood year, the
+dead were lowered into the Old well by night and the cover slid back
+over them. That is why it was covered — not for a season, but for
+good. Anyone drawing from it now is drawing off the flood dead. facts
+{"place":"Old well","year":"1612"}
+```

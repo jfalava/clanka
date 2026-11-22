@@ -1,8 +1,6 @@
 ---
 title: Hermes
 description: Install the clanka plugin for Hermes Agent, run a companion as a profile, and let Nightshade write a soul for you.
-sidebar:
-  order: 2
 ---
 
 On Hermes Agent a companion is a profile of its own: its persona is the
@@ -45,7 +43,7 @@ and memory records it as `*shows you a photo*`.
 The root's own providers, model aliases and the keys they read are copied
 into the profile, so `/model <alias>` works in its chat.
 
-Run the command again after [changing the persona](/concepts/souls/#changing-the-persona)
+Run the command again after [changing the persona](/souls/traits/#changing-the-persona)
 to refresh the profile's `SOUL.md`. A gateway that already serves the profile
 re-reads its config on its own.
 
@@ -86,11 +84,16 @@ companion never reads it, and nothing is recorded. See
 
 ## Lore
 
-A companion whose `soul.md` grants [lore](/concepts/lore/) reads it on
+A companion whose `soul.md` grants [lore](/lore/reading/) reads it on
 Hermes as everywhere: an entry you name opens on its own, and the model can
 open one with its `read_lore` tool. `/lore` lists the entries, `/lore <id>`
 shows one as the companion reads it, and `/lore strike <id> <line>` hides a
 companion's line. Like `/triage`, none of them is a turn.
+
+When the lore the companion reads has an error
+[`clanka lore lint`](/cli/lore/#lint) reports, every turn is refused with a
+`clanka:` notice. Fix the lore and send the message again; Hermes needs no
+restart.
 
 ## When a conversation ends
 
@@ -143,7 +146,7 @@ If a conversation stays open anyway,
 sleeping on it.
 
 How long a conversation runs before the companion tires is its
-[allowance](/concepts/sleep-and-dreams/#getting-tired).
+[allowance](/conversations/sleep/#getting-tired).
 `plugins.entries.clanka.settings.session_tokens` in the profile's
 `config.yaml` sets it for this companion, over `[session] tokens` in
 clanka's `config.toml`:

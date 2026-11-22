@@ -20,24 +20,29 @@ const nimbusConfig = defineNimbusConfig({
     items: [
       "getting-started",
       {
-        label: "Concepts",
+        label: "Souls",
+        items: ["souls/creating-a-soul", "souls/writing-a-persona", "souls/traits"],
+      },
+      {
+        label: "Lore",
+        items: ["lore/writing-lore", "lore/reading", "lore/what-companions-add"],
+      },
+      {
+        label: "Conversations",
         items: [
-          "concepts/souls",
-          "concepts/memory",
-          "concepts/sleep-and-dreams",
-          "concepts/lore",
+          "conversations/talking",
+          "conversations/sleep",
+          "conversations/dreams",
+          "conversations/notation",
         ],
       },
       {
-        label: "Guides",
-        items: [
-          "guides/writing-a-soul",
-          "guides/notation",
-          "guides/hermes",
-          "guides/mcp",
-          "guides/repairing-memory",
-          "guides/tuning-recall",
-        ],
+        label: "Memory",
+        items: ["memory/how-memory-works", "memory/tuning-recall", "memory/repairing-memory"],
+      },
+      {
+        label: "Plugins",
+        items: ["plugins/hermes", "plugins/mcp"],
       },
       "configuration",
       {

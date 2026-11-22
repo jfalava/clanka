@@ -16,7 +16,7 @@ On Linux:
 | -------------------------------- | ------------------------------------------------- |
 | `~/.config/clanka/config.toml`   | The settings on this page.                        |
 | `~/.config/clanka/souls/<id>.md` | Each companion's `soul.md`.                       |
-| `~/.config/clanka/lore/`         | The [lore](/concepts/lore/), unless `[lore] dir` says otherwise. |
+| `~/.config/clanka/lore/`         | The [lore](/lore/reading/), unless `[lore] dir` says otherwise. |
 | `~/.config/clanka/keys/<id>.key` | Database keys, only with `[keys] store = "file"`. |
 | `~/.config/clanka/keys/diagnostics.token` | The [diagnostics upload token](/cli/diagnostics/#token), only with `[keys] store = "file"`. |
 | `~/.local/share/clanka/`         | The databases, the embedding model and the [diagnostics log](/cli/diagnostics/#the-log). |
@@ -88,7 +88,7 @@ model.
 ## `[recall]`
 
 The ranking recall uses. Set any of the keys; the rest keep their defaults.
-[Tuning recall](/guides/tuning-recall/) shows how to measure a change.
+[Tuning recall](/memory/tuning-recall/) shows how to measure a change.
 
 ```toml
 [recall]
@@ -167,7 +167,7 @@ The weight per level, in the order faint, normal, vivid, seared.
 ## `[session]`
 
 The conversation's allowance, for every companion on this machine. See
-[Getting tired](/concepts/sleep-and-dreams/#getting-tired).
+[Getting tired](/conversations/sleep/#getting-tired).
 
 ```toml
 [session]
@@ -186,7 +186,7 @@ conversation in Chinese or Japanese, needs less.
 
 ## `[lore]`
 
-Where the [lore](/concepts/lore/) lives and how much of it a turn shows, for
+Where the [lore](/lore/reading/) lives and how much of it a turn shows, for
 every companion on this machine. Which entries each one reads is its
 `soul.md`'s `lore` grants.
 
@@ -206,7 +206,9 @@ The lore directory. A relative path is relative to the config directory.
 
 Estimated tokens of lore a turn may show: the index and the open entries. It
 is apart from the memory budget and the conversation's allowance, so lore
-never tires a companion. An entry whose text alone is longer doesn't open.
+never tires a companion. It is the only limit on how many entries are open:
+when it runs out, the one read longest ago closes until it is named again.
+An entry whose text alone is longer doesn't open.
 
 - Default: `3000`
 

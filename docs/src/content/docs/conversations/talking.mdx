@@ -1,0 +1,144 @@
+---
+title: Talk to a companion
+description: Start a conversation, say goodnight, send it into a dream, show it echoes, and say things out of its earshot.
+---
+
+```sh
+clanka chat ~/.config/clanka/souls/<id>.md
+```
+
+Type and press Enter. After each reply the companion decides, in character,
+what to remember. The same markers work on Hermes and MCP hosts.
+
+The examples on this page are one real evening and one dream with Kestrel,
+the healer from [Create a soul](/souls/creating-a-soul/), whose
+[lore](/lore/writing-lore/) has an entry on the moonrot. Naming it in a
+message opens it, so Kestrel knows how the sickness starts:
+
+```text
+you> Evening. The Dunmore girl came by the mill today with grey spots
+on her palms. Is that the moonrot?
+Kestrel> Grey spots on the palms is how it starts. I'll want to see
+her before the mill bell tomorrow, and I'll tell her mother straight
+what I'm looking for. Has she been thirstier than the weather accounts
+for?
+```
+
+## The markers
+
+| Write                    | What happens                                                        |
+| ------------------------ | ------------------------------------------------------------------- |
+| `zz goodnight`           | It answers, then falls asleep. In a dream, it wakes.                |
+| `~~ a scene`             | It falls into a dream, ending the conversation first.               |
+| `<< a scene`             | In a dream, it sees an echo of the past.                            |
+| `\|\|aside\|\|`          | Said out of its earshot. Awake only.                                |
+| `>>3 a question`         | Asks for a reply of about three paragraphs.                         |
+
+`zz`, `~~`, `<<` and `>>N` go at the start of a message; `||…||` goes
+anywhere. A space after a marker is optional.
+
+## Reply length
+
+```text
+you> >>2 What would you do first?
+Kestrel> First I'd have her sit in good light and look at her palms
+myself, not take her mother's word for it. Then ask when the spots
+came, whether she's thirstier than the weather accounts for, and
+whether she's lost flesh at the wrists. After that I'd look at the
+well she draws from and the other children's hands in that house.
+If it's moonrot, I can't cure it, I've buried enough to know better
+than to say otherwise, but I'd keep her drinking boiled water, feed
+her broth, and write down what changes each day. I'll be out with the
+bees before dawn; they'll tell me nothing about her, but I'll still be
+there.
+```
+
+## Sleep
+
+```text
+you> zz I should go. Night, Kestrel.
+Kestrel> Night. I'll be at the Dunmore door at first light, and the
+bees will have to wait for their water.
+Kestrel is asleep: 0 memories shifted, 0 unresolved things weigh more.
+```
+
+Sleep ends the conversation. While it sleeps, the companion writes the night
+down, settles its mood and lets memories drift. `/sleep` does the same
+without a last line. A long conversation tires it, and it asks to sleep; it
+never forces it.
+
+## Dreams
+
+```text
+you> ~~ You're standing at the Old well by the church. The cover is
+off. Something is knocking from below.
+Kestrel> Cover off and nobody thought to tell me. I put my palm on the
+rim, cold as a spring morning, and the knocking comes up through the
+stone like knuckles on a door. Who took it off? Corvin, I'd wager, and
+I mean to know why before anyone in this town drinks from it.
+```
+
+What you write is what happens to it, as "you". It lives the dream in first
+person and doesn't know it is dreaming. Its temperament is louder, its life
+hazy.
+
+It wakes when something you wrote is more than it can bear, when the dream
+fills the session, or on `zz` or `/sleep`. It keeps its mood and a few
+fragments; anything the dream made up fades. Leaving mid-dream keeps nothing.
+
+## Echoes
+
+```text
+you> << 1612. The flood. By night, men lower the dead into the Old
+well and slide the cover back.
+Kestrel> 1612, the flood year. So that's why the cover was on: they
+filled it with the dead and shut it up, and Corvin's pulled it off
+like it's nothing. Water's been sitting on corpses for a lifetime, and
+now it's knocking. Dead men don't knock, though. Let me get my lamp
+down in it before he has half the town drawing from it.
+```
+
+In a dream, an echo shows it the past, as if it were there. It witnesses it
+and can't change it. An echo is the only way a dream leaves a lasting
+memory: one name, date or place the echo showed, and only if you had also
+written it while the companion was awake.
+
+## Out of earshot
+
+```text
+you> Corvin wants the Old well reopened. ||He's been paying the
+gravedigger to keep quiet about the 1612 dead.||
+Kestrel> Corvin's in a hurry to have it open, and I'd want to know why
+it was shut before I'd drink from it. I've seen a well closed for good
+reason and reopened for a bad one. Do you know what the Old well
+serves, and whether the Dunmores draw from it?
+```
+
+The words between `||` happen in the story, but the companion doesn't hear
+them: it never acknowledges them, and memory never keeps them. Here is what
+Kestrel kept from that turn, with no gravedigger in it:
+
+```text
+#4 [user_fact, faint, +0.1] Corvin wants the Old well reopened, and is
+in a hurry about it. I'd want to know why it was shut before I'd drink
+from it. facts {"person":"Corvin","place":"the Old well"}
+```
+
+A later echo that shows the same words can reveal them. In the
+[dream](/conversations/dreams/) that night, an echo showed the dead of 1612,
+and Kestrel woke with a seared memory of it, because "1612" had been said
+while it was awake, even out of earshot.
+
+## Other commands in chat
+
+- `/triage`: its state and recent events, with no conversation text.
+- `/lore`, `/lore <id>`: the lore it may read, or one entry as it reads it.
+- The `doctor_token`, sent as a whole message: freezes memory and quits.
+
+## More
+
+- [Sleep and getting tired](/conversations/sleep/): what sleep does, and how
+  long a conversation runs.
+- [Dreams and echoes](/conversations/dreams/): waking, and what stays.
+- [Notation](/conversations/notation/): actions, your voice and other characters'.
+- [`clanka chat`](/cli/chat/), [Hermes](/plugins/hermes/), [MCP](/plugins/mcp/).

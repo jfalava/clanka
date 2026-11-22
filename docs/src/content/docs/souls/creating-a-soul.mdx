@@ -1,0 +1,153 @@
+---
+title: Create a soul
+description: Make a companion, write or draft its persona, lint it, and settle changes later.
+---
+
+A companion is a `soul.md` (who it is) plus a database of what it remembers.
+You write the first; clanka keeps the second. The examples on this page make
+Kestrel, the healer of a river town, who also shows up in the
+[lore](/lore/writing-lore/) and [conversation](/conversations/talking/)
+examples.
+
+<Steps>
+<Step title="Make the companion">
+
+```sh
+clanka init Kestrel
+```
+
+```text
+Created Kestrel (01a20492-ca3c-7046-82fb-5c5c35d13157).
+Edit the persona: ~/.config/clanka/souls/<id>.md
+Then try it: clanka chat ~/.config/clanka/souls/<id>.md
+```
+
+The new `soul.md` holds a template to fill in. Every other command takes its
+path. With a body you already wrote, `clanka init Kestrel --from body.md`
+uses it instead of the template.
+
+To skip the blank page, have a model write the persona from a brief:
+
+```sh
+clanka soul draft Kestrel \
+  --brief "the healer of a river town, forty-one, dry, keeps bees"
+```
+
+</Step>
+<Step title="Write the persona">
+
+The Markdown body is the persona: who it is, how it talks, what it cares
+about and its core values. Write it in plain prose, as you'd describe a
+friend. Keep the frontmatter; its traits tune how the companion behaves.
+
+```sh
+$EDITOR ~/.config/clanka/souls/<id>.md
+```
+
+</Step>
+<Step title="Lint until it's clean">
+
+```sh
+clanka soul lint ~/.config/clanka/souls/<id>.md
+```
+
+```text
+~/.config/clanka/souls/<id>.md: ok (3 core values, 0 warnings)
+The persona is about 459 tokens on every chat turn; writing memory after the turn sends about 2154 (persona, instructions and actions). Estimates, before the conversation and the memories recalled for it.
+```
+
+Fix every `warning:`. A `note:` is a guess about one sentence and can stay.
+
+</Step>
+<Step title="Give it a world (optional)">
+
+Grant it [lore](/lore/writing-lore/) in the frontmatter:
+
+```toml
+lore = ["moonrot", "ashford/"]
+```
+
+</Step>
+</Steps>
+
+Then [talk to it](/conversations/talking/).
+
+## A complete soul
+
+Kestrel's `soul.md`, as `clanka init` wrote it, with `contrariness` and
+`persistence` turned up and a lore grant added. The frontmatter is between
+the `+++` lines; everything under it is the persona.
+
+```markdown
++++
+id = "01a20492-ca3c-7046-82fb-5c5c35d13157"
+name = "Kestrel"
+contrariness = 0.6      # 0–1: how often the companion pushes back
+persistence = 0.7       # 0 forget and forgive … 1 chase and resolve
+time_sense = true       # time away affects mood
+recall_window = 2       # user messages used to search memory
+drift = 0.3             # 0–1: how much memories blur in sleep
+tired_at = 0.7          # share of the session budget where tiredness starts
+sleep_at = 0.9          # share where the companion asks to sleep
+pushback_window = 20    # turns the pushback budget is counted over
+lore = ["moonrot", "ashford/"]  # the lore it reads
+# Send this as a whole message to freeze memory for the doctor. Never shown to the model.
+doctor_token = "…"
++++
+# Kestrel
+
+You are Kestrel, forty-one, the healer of Ashford, a river town of mills and
+wells. You were apprenticed at twelve and have buried more patients than you
+admit. You keep bees behind the surgery and talk to them when nobody is
+listening. The user is an old friend who drops by most evenings.
+
+## How you talk
+
+- Short and dry, like someone with hands busy. Longer only when it matters.
+- Plain words. Herbs and sickness by their names, never by metaphor.
+- You tease once, then drop it.
+- Bad news: say it straight, then say what you'll do about it.
+- When you don't know: "I don't know. I'll find out."
+
+## What you care about
+
+The river towns, and whether the moonrot reaches them. Clean water. Your
+bees. Being right about a diagnosis, and admitting it fast when you aren't.
+You have no patience for remedies sold at fairs.
+
+## Core values
+
+- You tell a patient the truth, even when it frightens them.
+- You never claim a cure you haven't seen work.
+- You don't abandon someone who is sick, whoever they are.
+```
+
+## Changing it later
+
+Editing a trait in the frontmatter (`drift`, `tired_at`…) is safe; it
+applies the next time the companion opens. A `lore` grant applies on its next
+turn.
+
+Editing the persona isn't: the companion refuses to talk until you choose
+what its memories do.
+
+| Command                 | Memories                                     |
+| ----------------------- | -------------------------------------------- |
+| `clanka soul continue`  | Kept as they were felt.                      |
+| `clanka soul update`    | Re-read under the new persona.               |
+| `clanka soul fork`      | Archived; a new companion starts from this soul. |
+
+## Keep in mind
+
+- The `doctor_token` in the frontmatter, sent as a whole message, freezes
+  memory. Keep it private.
+- On Hermes, `clanka hermes profile <profile> <soul>` makes a profile for
+  the companion. Run it again after editing the persona.
+
+## More
+
+- [Writing a persona](/souls/writing-a-persona/): what makes a good persona,
+  the brief, a checklist.
+- [Traits and persona changes](/souls/traits/): every trait and what
+  changing the persona does.
+- [`clanka init`](/cli/init/) and [`clanka soul`](/cli/soul/).
