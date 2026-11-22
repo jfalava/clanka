@@ -71,6 +71,12 @@ pub enum Error {
     Rule(&'static str, String),
     #[error("lore: {0}")]
     Lore(String),
+    #[error(
+        "the lore this companion reads has errors; fix them (`clanka lore lint` lists them), then \
+         reopen the companion:\n{}",
+        .0.join("\n")
+    )]
+    LoreInvalid(Vec<String>),
     #[error("key source: {0}")]
     Key(String),
     #[error("embedder: {0}")]

@@ -311,6 +311,7 @@ impl Error {
             Error::Invalid(_) => "invalid",
             Error::Rule(rule, _) => rule,
             Error::Lore(_) => "lore",
+            Error::LoreInvalid(_) => "lore_invalid",
             Error::Key(_) => "key",
             Error::Embedder(_) => "embedder",
             Error::Llm(_) => "llm",

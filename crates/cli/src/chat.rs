@@ -392,7 +392,10 @@ impl Notes {
     fn tell(&self, text: &str, line: bool) -> bool {
         let mut notes = lock(&self.0);
         let end = if line { "\n" } else { "" };
-        write!(notes, "{text}{end}")
+        // One write: each write takes the live row away and puts it back, so
+        // a line written in pieces gets the row drawn into it.
+        notes
+            .write_all(format!("{text}{end}").as_bytes())
             .and_then(|()| notes.flush())
             .is_ok()
     }

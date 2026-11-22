@@ -264,6 +264,107 @@ fn grants_directories_and_what_an_entry_opens() {
 }
 
 #[test]
+fn a_title_wins_over_another_entrys_alias() {
+    // The key sorts first and goes by the scape's title as an alias.
+    let (f, lore) = world(
+        "lore = [\"dream/\"]",
+        &[
+            (
+                "dream/key",
+                "+++\ntitle = \"Dreamkey\"\naliases = [\"dreamscape\"]\n+++\nA device.\n",
+            ),
+            (
+                "dream/scape",
+                "+++\ntitle = \"Dreamscape\"\n+++\nA reflection.\n",
+            ),
+        ],
+    );
+    let mut c = open(&f, &lore, script(Vec::new()));
+    assert!(c.read_lore("dreamscape").unwrap().contains("A reflection."));
+    assert!(c.read_lore("Dreamkey").unwrap().contains("A device."));
+}
+
+#[test]
+fn a_name_inside_a_longer_name_does_not_open_its_entry() {
+    let (f, lore) = world(
+        "lore = [\"city/\"]",
+        &[
+            (
+                "city/watch",
+                "+++\ntitle = \"The City Watch\"\naliases = [\"guard\", \"guards\"]\n+++\nGrey cloaks.\n",
+            ),
+            (
+                "city/obsidian-guard",
+                "+++\ntitle = \"The Obsidian Guard\"\n+++\nThe empress's own.\n",
+            ),
+        ],
+    );
+    let mut c = open(&f, &lore, script(Vec::new()));
+    let s = c.open_session().unwrap();
+    let ctx = c
+        .lore_context(s, "The Obsidian Guard came through.", true)
+        .unwrap()
+        .unwrap();
+    assert!(ctx.contains("The empress's own.") && !ctx.contains("Grey cloaks."));
+    // Named on its own, it opens.
+    let ctx = c
+        .lore_context(s, "And the guards on the wall?", true)
+        .unwrap()
+        .unwrap();
+    assert!(ctx.contains("Grey cloaks."));
+}
+
+#[test]
+fn the_allotment_not_a_count_decides_what_stays_open() {
+    let entry = |title: &str| {
+        format!(
+            "+++\ntitle = \"{title}\"\n+++\n{title} {}\n",
+            "lore ".repeat(150)
+        )
+    };
+    let names = ["Amber", "Basalt", "Cobalt", "Dune", "Ember"];
+    let entries: Vec<(String, String)> = names
+        .iter()
+        .map(|n| (format!("w/{}", n.to_lowercase()), entry(n)))
+        .collect();
+    let entries: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|(i, t)| (i.as_str(), t.as_str()))
+        .collect();
+    let (f, lore) = world("lore = [\"w/\"]", &entries);
+    let mut c = open(&f, &lore, script(Vec::new()));
+    let s = c.open_session().unwrap();
+    // Five short entries named at once all fit the allotment.
+    let ctx = c
+        .lore_context(s, "Ember, Dune, Cobalt, Basalt and Amber.", true)
+        .unwrap()
+        .unwrap();
+    assert!(
+        names.iter().all(|n| ctx.contains(&format!("### {n}"))),
+        "{ctx}"
+    );
+
+    // With room for one, the first named stays, whatever the IDs' order,
+    // and the other is back in the index, not too long.
+    let (f, mut lore) = world("lore = [\"w/\"]", &entries);
+    lore.tokens = 450;
+    let mut c = open(&f, &lore, script(Vec::new()));
+    let s = c.open_session().unwrap();
+    let ctx = c
+        .lore_context(s, "Amber, then Ember.", true)
+        .unwrap()
+        .unwrap();
+    assert!(
+        ctx.contains("### Amber") && !ctx.contains("### Ember"),
+        "{ctx}"
+    );
+    assert!(
+        ctx.contains("w/ember: Ember") && !ctx.contains("Too long"),
+        "{ctx}"
+    );
+}
+
+#[test]
 fn an_entry_longer_than_the_allotment_does_not_open() {
     let long = format!(
         "+++\ntitle = \"The library\"\n+++\n{}\n",

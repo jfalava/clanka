@@ -48,9 +48,9 @@ pub enum LoreCommand {
     Show { id: String },
     /// Check every entry, every ledger and every soul's grants.
     ///
-    /// An entry that doesn't parse, a file whose name is no entry ID and an unreadable
-    /// ledger line are errors; a grant or an `opens` that names no entry is a warning.
-    /// Exits non-zero on an error.
+    /// An entry that doesn't parse, a file whose name is no entry ID, a title or alias
+    /// several entries go by and an unreadable ledger line are errors; a grant or an
+    /// `opens` that names no entry is a warning. Exits non-zero on an error.
     #[command(after_long_help = "Example:\n  clanka lore lint")]
     Lint,
     /// List a companion's notes on the lore, private and released, newest first.
@@ -291,7 +291,12 @@ fn edit(lore: &Lore, id: &str) -> Result<()> {
 
 fn list(lore: &Lore) -> Result<()> {
     let ids = lore.ids()?;
-    if ids.is_empty() {
+    let unread: Vec<PathBuf> = lore
+        .files()?
+        .into_iter()
+        .filter(|path| !lore.id_of(path).is_some_and(|id| valid_id(&id)))
+        .collect();
+    if ids.is_empty() && unread.is_empty() {
         println!(
             "No lore in {}. Start an entry with `clanka lore new <id>`.",
             lore.dir.display()
@@ -311,6 +316,12 @@ fn list(lore: &Lore) -> Result<()> {
             Ok(None) => {}
             Err(e) => println!("{id}: {e}"),
         }
+    }
+    for path in unread {
+        println!(
+            "{}: not read: the name is no entry ID (segments of a-z, 0-9 and -)",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -406,33 +417,13 @@ fn strike_by(lore: &Lore, soul: &Path, since: &str) -> Result<()> {
 
 /// Every problem in the lore and the souls' grants; false on an error.
 fn lint(paths: &Paths, lore: &Lore) -> Result<bool> {
-    let mut errors = Vec::new();
+    let mut errors: Vec<String> = lore.problems()?.into_iter().map(|p| p.text).collect();
     let mut warnings = Vec::new();
     let ids = lore.ids()?;
-    for path in lore.files()? {
-        match lore.id_of(&path) {
-            Some(id) if valid_id(&id) => {}
-            _ => errors.push(format!(
-                "{}: the name is no entry ID (segments of a-z, 0-9 and -)",
-                path.display()
-            )),
-        }
-    }
     for id in &ids {
-        match lore.entry(id) {
-            Err(e) => errors.push(e.to_string()),
-            Ok(None) => {}
-            Ok(Some(entry)) => {
-                if entry.bad_lines > 0 {
-                    errors.push(format!(
-                        "{}: {} lines are not ledger lines and are skipped",
-                        lore.ledger_path(id).display(),
-                        entry.bad_lines
-                    ));
-                }
-                for open in entry.front.opens.iter().filter(|o| !ids.contains(o)) {
-                    warnings.push(format!("{id}: opens {open:?}, which is no entry"));
-                }
+        if let Ok(Some(entry)) = lore.entry(id) {
+            for open in entry.front.opens.iter().filter(|o| !ids.contains(o)) {
+                warnings.push(format!("{id}: opens {open:?}, which is no entry"));
             }
         }
     }

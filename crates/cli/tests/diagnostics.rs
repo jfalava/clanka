@@ -317,3 +317,67 @@ fn a_failed_open_names_its_companion_and_why() {
         ]
     );
 }
+
+/// Lore a companion reads with an error in it refuses the companion to a
+/// front end, as `clanka lore lint` would, and lore it doesn't read doesn't.
+#[test]
+fn lore_with_an_error_it_reads_refuses_the_companion() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        config: dir.path().join("config"),
+        souls: dir.path().join("config/souls"),
+        data: dir.path().join("data"),
+        models: dir.path().join("data/models"),
+    };
+    std::fs::create_dir_all(&paths.souls).unwrap();
+    std::fs::write(paths.config_file(), "[keys]\nstore = \"file\"\n").unwrap();
+    let id = open(dir.path()).id();
+    let soul = paths.souls.join(format!("{id}.md"));
+    // A grant is frontmatter, not persona: no settling needed.
+    let text = std::fs::read_to_string(dir.path().join("soul.md")).unwrap();
+    std::fs::write(
+        &soul,
+        text.replacen("doctor_token", "lore = [\"w/\"]\ndoctor_token", 1),
+    )
+    .unwrap();
+    Keys::new(&paths, &Config::load(&paths).unwrap())
+        .store(id, "k")
+        .unwrap();
+    let lore = paths.config.join("lore");
+    let entry = |path: &str, title: &str, alias: &str| {
+        let file = lore.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            file,
+            format!("+++\ntitle = \"{title}\"\naliases = [\"{alias}\"]\n+++\nText.\n"),
+        )
+        .unwrap();
+    };
+    let to_talk = || setup::open_to_talk(&paths, &soul, Dummy, Box::new(Dummy));
+
+    entry("w/barrier.md", "The Barrier", "barrier");
+    // Two entries it doesn't read share a name, and one is broken: not its lore.
+    entry("other/a.md", "A", "shared");
+    entry("other/b.md", "B", "shared");
+    std::fs::write(lore.join("other/broken.md"), "no frontmatter").unwrap();
+    to_talk().unwrap();
+
+    // Two entries it reads share a name: a message that says it opens both.
+    entry("w/ward.md", "The Ward", "barrier");
+    let Err(refused) = to_talk() else {
+        panic!("lore with a shared name was talked with");
+    };
+    assert_eq!(error_code(&refused), "lore_invalid");
+    assert!(
+        refused.to_string().contains("w/barrier, w/ward"),
+        "{refused}"
+    );
+    // The doctor and `clanka soul` still open it.
+    setup::open_with(&paths, &soul, Dummy, Box::new(Dummy)).unwrap();
+
+    std::fs::remove_file(lore.join("w/ward.md")).unwrap();
+    std::fs::write(lore.join("w/barrier.md"), "+++\ntitle = \n").unwrap();
+    assert_eq!(error_code(&to_talk().err().unwrap()), "lore_invalid");
+    entry("w/barrier.md", "The Barrier", "barrier");
+    to_talk().unwrap();
+}

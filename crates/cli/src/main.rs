@@ -155,7 +155,8 @@ enum Command {
     /// the memory and quit without recording anything. Send /triage to see the companion's
     /// state and last diagnostics events, without any conversation text, and /lore to list or
     /// read the lore it may read (`/lore <id>`, `/lore strike <id> <line>`). Refuses to start
-    /// if the persona changed since its memories were written.
+    /// if the persona changed since its memories were written, or if the lore it reads has
+    /// an error `clanka lore lint` reports.
     ///
     /// Markers at the start of a message: `zz` says goodnight: the companion answers it
     /// and falls asleep, as on /sleep. `>>N` asks for a reply of about N paragraphs.

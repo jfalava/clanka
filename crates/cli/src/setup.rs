@@ -693,8 +693,9 @@ pub fn open_with(
 }
 
 /// [`open_with`] for a front end about to talk with the companion: one whose
-/// persona changed since its memories were written is refused, as its first
-/// turn would be, and the refusal is noted as the open's error.
+/// persona changed since its memories were written, or whose lore has an
+/// error in what it reads, is refused, and the refusal is noted as the open's
+/// error.
 pub fn open_to_talk(
     paths: &Paths,
     soul: &Path,
@@ -714,11 +715,20 @@ fn open_as(
     let config = Config::load(paths)?;
     let deps = deps(paths, &config, embedder, llm)?;
     let started = std::time::Instant::now();
-    let opened = Companion::open(&paths.data, soul, deps).and_then(|companion| {
-        match companion.persona_status() {
-            PersonaStatus::Changed { .. } if to_talk => Err(clanka_core::Error::PersonaUnresolved),
-            _ => Ok(companion),
+    let opened = Companion::open(&paths.data, soul, deps).and_then(|mut companion| {
+        companion.set_lore(Some(config.lore(paths)));
+        if !to_talk {
+            return Ok(companion);
         }
+        if let PersonaStatus::Changed { .. } = companion.persona_status() {
+            return Err(clanka_core::Error::PersonaUnresolved);
+        }
+        // Lore it would read wrong is refused like a persona not settled.
+        let problems = companion.lore_problems()?;
+        if !problems.is_empty() {
+            return Err(clanka_core::Error::LoreInvalid(problems));
+        }
+        Ok(companion)
     });
     Log::open(paths, &config).record(
         match &opened {
@@ -737,7 +747,6 @@ fn open_as(
     // Plain messages, not core errors: a bad setting isn't a broken companion.
     let config_file = paths.config_file();
     let bad = |e: clanka_core::Error| anyhow::anyhow!("{}: {e}", config_file.display());
-    companion.set_lore(Some(config.lore(paths)));
     companion.set_ranking(config.recall).map_err(bad)?;
     companion
         .set_session_tokens(config.session.tokens)

@@ -151,6 +151,8 @@ NOTICE_HINT = (
 _WHY = {
     "persona_unresolved": "The soul.md changed since these memories were written, so nothing "
     "was sent. Run `clanka soul continue`, `update` or `fork` on it, then say that again.",
+    "lore_invalid": "The lore this companion reads has errors, so nothing was sent. Run "
+    "`clanka lore lint`, fix what it lists, then say that again.",
     "database_gone": "The memory's database was deleted or replaced while it was open, so "
     "nothing was sent. Put it back, or restart Hermes to start with an empty memory.",
 }

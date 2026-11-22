@@ -8,10 +8,11 @@
 //! with no `.md` is a stub a companion made for a place the user named.
 //!
 //! Every line's provenance is computed here, against the user's words, never
-//! taken from the model: a note is `told` when every name and number in it
-//! was said by the user or is in the entry, `worked_out` otherwise, `dreamt`
-//! from a dream; a deed quotes the exchange and is `narrated` when the quote
-//! is the user's words, `claimed` when only the companion said it.
+//! taken from the model: a note is `told` when every name and number in it,
+//! and most of its other words, were said by the user or are in the entry,
+//! `worked_out` otherwise, `dreamt` from a dream; a deed quotes the exchange
+//! and is `narrated` when the quote is the user's words, `claimed` when only
+//! the companion said it.
 //!
 //! Which entries a companion reads is its soul's `lore` grants, plus what an
 //! entry it read `opens`. Its private notes, what is open, its read receipts
@@ -35,9 +36,6 @@ use uuid::Uuid;
 /// The lore's allotment per turn, in estimated tokens: apart from the memory
 /// budget and the conversation's allowance, so it never tires a companion.
 pub const LORE_TOKENS: usize = 3_000;
-
-/// Entries open at once in a session; the one read longest ago closes first.
-pub const MAX_OPEN: usize = 3;
 
 /// Characters in a note or a deed.
 pub const LINE_CHARS: usize = 500;
@@ -276,6 +274,13 @@ pub fn parse_entry(text: &str) -> Result<(Front, String)> {
     Ok((front, body.trim().to_owned()))
 }
 
+/// One of [`Lore::problems`]: what is wrong, and the entries it is about.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Problem {
+    pub entries: Vec<String>,
+    pub text: String,
+}
+
 impl Lore {
     pub fn new(dir: PathBuf) -> Self {
         Lore {
@@ -306,6 +311,73 @@ impl Lore {
         ids.sort();
         ids.dedup();
         Ok(ids)
+    }
+
+    /// What keeps the lore from being read as written: a file whose name is
+    /// no entry ID, an entry that doesn't parse, a ledger line that isn't one,
+    /// and a title or alias several entries go by. `clanka lore lint` calls
+    /// these errors, and a companion that reads them refuses to talk.
+    pub fn problems(&self) -> Result<Vec<Problem>> {
+        let mut out = Vec::new();
+        for path in self.files()? {
+            match self.id_of(&path) {
+                Some(id) if valid_id(&id) => {}
+                id => out.push(Problem {
+                    // The entry it was meant to be, for who reads it.
+                    entries: id.map(|id| id.to_lowercase()).into_iter().collect(),
+                    text: format!(
+                        "{}: the name is no entry ID (segments of a-z, 0-9 and -)",
+                        path.display()
+                    ),
+                }),
+            }
+        }
+        // Each name, as a message matches it, and the entries that go by it.
+        let mut names: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for id in self.ids()? {
+            match self.entry(&id) {
+                Err(e) => out.push(Problem {
+                    entries: vec![id],
+                    text: e.to_string(),
+                }),
+                Ok(None) => {}
+                Ok(Some(entry)) => {
+                    if entry.bad_lines > 0 {
+                        out.push(Problem {
+                            entries: vec![id.clone()],
+                            text: format!(
+                                "{}: {} lines are not ledger lines and are skipped",
+                                self.ledger_path(&id).display(),
+                                entry.bad_lines
+                            ),
+                        });
+                    }
+                    for name in entry.names() {
+                        let named = names.entry(name.trim().to_lowercase()).or_default();
+                        if !named.contains(&id) {
+                            named.push(id.clone());
+                        }
+                    }
+                }
+            }
+        }
+        // One problem per group of entries, with every name they share.
+        let mut shared: std::collections::BTreeMap<Vec<String>, Vec<String>> = Default::default();
+        for (name, named) in names.into_iter().filter(|(_, named)| named.len() > 1) {
+            shared.entry(named).or_default().push(format!("{name:?}"));
+        }
+        for (entries, names) in shared {
+            out.push(Problem {
+                text: format!(
+                    "{} all go by {}: a message that says one opens every one of them; give \
+                     each name to one entry",
+                    entries.join(", "),
+                    names.join(", ")
+                ),
+                entries,
+            });
+        }
+        Ok(out)
     }
 
     /// Every `.md` and `.ledger.jsonl` under the directory, outside hidden
@@ -796,18 +868,21 @@ const LORE_HEADING: &str = "## Lore\nHow the world is: the text of each entry is
     under it are what companions added: seen and told are as good as canon, claimed is their \
     word only, worked out and dreamt may be wrong.";
 
+/// Common words: as a sentence's first word none is a name, and none says
+/// what a note claims.
+const COMMON: &[&str] = &[
+    "a", "an", "the", "i", "i'm", "i've", "i'd", "i'll", "you", "he", "she", "it", "we", "they",
+    "my", "your", "his", "her", "its", "our", "their", "this", "that", "these", "those", "there",
+    "here", "in", "on", "at", "of", "to", "for", "from", "with", "by", "when", "where", "while",
+    "if", "but", "and", "or", "so", "then", "after", "before", "some", "no", "not", "all", "what",
+    "who", "how", "why", "once", "every", "each", "now", "nobody", "someone", "everyone", "only",
+    "even", "still", "yes", "maybe",
+];
+
 /// The proper names and numbers in a text: what a note's provenance checks.
 /// Capitalised words that aren't common sentence openers, and words with a
 /// digit in them. `own` (the writer's name) is left out.
 pub fn checkable(text: &str, own: &str) -> Vec<String> {
-    const OPENERS: &[&str] = &[
-        "a", "an", "the", "i", "i'm", "i've", "i'd", "i'll", "you", "he", "she", "it", "we",
-        "they", "my", "your", "his", "her", "its", "our", "their", "this", "that", "these",
-        "those", "there", "here", "in", "on", "at", "of", "to", "for", "from", "with", "by",
-        "when", "where", "while", "if", "but", "and", "or", "so", "then", "after", "before",
-        "some", "no", "not", "all", "what", "who", "how", "why", "once", "every", "each", "now",
-        "nobody", "someone", "everyone", "only", "even", "still", "yes", "maybe",
-    ];
     let mut out: Vec<String> = Vec::new();
     for raw in text.split_whitespace() {
         let word = raw.trim_matches(|c: char| !c.is_alphanumeric());
@@ -822,7 +897,7 @@ pub fn checkable(text: &str, own: &str) -> Vec<String> {
         let mut chars = word.chars();
         let name = chars.next().is_some_and(char::is_uppercase)
             && word.chars().any(char::is_lowercase)
-            && !OPENERS.contains(&word.to_lowercase().as_str());
+            && !COMMON.contains(&word.to_lowercase().as_str());
         if (number || name) && !out.iter().any(|w| w == word) {
             out.push(word.to_owned());
         }
@@ -830,19 +905,23 @@ pub fn checkable(text: &str, own: &str) -> Vec<String> {
     out
 }
 
-/// Whether a note is told: every name and number in it is in `sources`.
-/// One with none is told when most of its longer words are there, so a
-/// paraphrase of what was said counts and a guess doesn't.
+/// Whether a note is told: every name and number in it is in `sources`, and
+/// so are most of its other longer words, so a paraphrase of what was said
+/// counts and a guess dressed in known names doesn't. Common words and the
+/// writer's own name count neither way.
 pub fn is_told(note: &str, own: &str, sources: &[&str]) -> bool {
     let source = sources.join("\n").to_lowercase();
-    let words = checkable(note, own);
-    if !words.is_empty() {
-        return words.iter().all(|w| source.contains(&w.to_lowercase()));
+    if !checkable(note, own)
+        .iter()
+        .all(|w| source.contains(&w.to_lowercase()))
+    {
+        return false;
     }
     let content: Vec<String> = note
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.chars().count() >= 4)
         .map(str::to_lowercase)
+        .filter(|w| !COMMON.contains(&w.as_str()) && !w.eq_ignore_ascii_case(own))
         .collect();
     !content.is_empty()
         && content.iter().filter(|w| source.contains(*w)).count() * 2 > content.len()
@@ -897,12 +976,14 @@ fn edit_distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
-/// Whether a name appears in a message as whole words, in any case.
-fn named_in(message: &str, name: &str) -> bool {
+/// Where a name appears in a message as whole words, in any case: the byte
+/// span of each time, in the lowercased message.
+fn named_at(message: &str, name: &str) -> Vec<(usize, usize)> {
     let message = message.to_lowercase();
     let name = name.trim().to_lowercase();
+    let mut out = Vec::new();
     if name.chars().count() < 3 {
-        return false;
+        return out;
     }
     let mut from = 0;
     while let Some(i) = message[from..].find(&name) {
@@ -911,11 +992,11 @@ fn named_in(message: &str, name: &str) -> bool {
         let before = message[..start].chars().next_back();
         let after = message[end..].chars().next();
         if !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric) {
-            return true;
+            out.push((start, end));
         }
         from = start + name.chars().next().map_or(1, char::len_utf8);
     }
-    false
+    out
 }
 
 /// Where a lore line's evidence comes from: the exchange a reflection is on,
@@ -949,6 +1030,25 @@ impl Companion {
 
     pub fn lore(&self) -> Option<&Lore> {
         self.lore.as_ref()
+    }
+
+    /// The lore's problems this companion would read: about an entry it may
+    /// read, or a name shared by two or more of them.
+    pub fn lore_problems(&self) -> Result<Vec<String>> {
+        let Some(lore) = &self.lore else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for problem in lore.problems()? {
+            let mut readable = 0;
+            for id in &problem.entries {
+                readable += usize::from(self.may_read(id)?);
+            }
+            if readable > 0 && readable >= problem.entries.len().min(2) {
+                out.push(problem.text);
+            }
+        }
+        Ok(out)
     }
 
     /// Whether the companion may read entry `id`: its soul grants it, or an
@@ -988,11 +1088,13 @@ impl Companion {
     fn find_lore(&self, query: &str) -> Result<Entry> {
         let query = query.trim();
         let readable = self.readable_lore()?;
-        let found = readable.iter().find(|e| e.id == query).or_else(|| {
-            readable
-                .iter()
-                .find(|e| e.names().any(|n| n.trim().eq_ignore_ascii_case(query)))
-        });
+        let named = |n: &str| n.trim().eq_ignore_ascii_case(query);
+        // An entry's own title wins over another entry's alias.
+        let found = readable
+            .iter()
+            .find(|e| e.id == query)
+            .or_else(|| readable.iter().find(|e| named(&e.front.title)))
+            .or_else(|| readable.iter().find(|e| e.names().any(named)));
         match found {
             Some(entry) => Ok(entry.clone()),
             None if readable.is_empty() => Err(Error::Lore(format!(
@@ -1019,27 +1121,20 @@ impl Companion {
             .optional()?)
     }
 
-    /// Opens an entry in a session: it stays open, read most recently, and
-    /// the one read longest ago closes when more than [`MAX_OPEN`] are. What
-    /// the entry `opens` the companion may read from now on.
-    fn open_entry(&self, session: i64, entry: &Entry) -> Result<()> {
-        let now = self.deps.clock.now_ms();
+    /// Opens an entry in a session, read at `read_at`: it stays open until
+    /// the allotment has no room left for it beside entries read more
+    /// recently. What the entry `opens` the companion may read from now on.
+    fn open_entry(&self, session: i64, entry: &Entry, read_at: i64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO lore_open (session_id, entry, read_at) VALUES (?1, ?2, ?3)
              ON CONFLICT (session_id, entry) DO UPDATE SET read_at = excluded.read_at",
-            params![session, entry.id, now],
-        )?;
-        tx.execute(
-            "DELETE FROM lore_open WHERE session_id = ?1 AND entry NOT IN
-               (SELECT entry FROM lore_open WHERE session_id = ?1
-                ORDER BY read_at DESC, rowid DESC LIMIT ?2)",
-            params![session, MAX_OPEN as i64],
+            params![session, entry.id, read_at],
         )?;
         for id in &entry.front.opens {
             tx.execute(
                 "INSERT OR IGNORE INTO lore_earned (entry, via, earned_at) VALUES (?1, ?2, ?3)",
-                params![id, entry.id, now],
+                params![id, entry.id, read_at],
             )?;
         }
         tx.commit()?;
@@ -1145,7 +1240,7 @@ impl Companion {
             ))
         })?;
         if let Some(session) = self.open_conversation()? {
-            self.open_entry(session, &entry)?;
+            self.open_entry(session, &entry, self.deps.clock.now_ms())?;
             self.conn.execute(
                 "UPDATE lore_open SET shown = ?3 WHERE session_id = ?1 AND entry = ?2",
                 params![session, entry.id, sha256_hex(&text)],
@@ -1166,18 +1261,47 @@ impl Companion {
         if readable.is_empty() {
             return Ok(None);
         }
-        for entry in &readable {
-            if entry.names().any(|name| named_in(message, name)) {
-                self.open_entry(session, entry)?;
-            }
+        // Where the message names each entry. A name inside another entry's
+        // longer name ("guard" in "the Obsidian Guard") doesn't count.
+        let found: Vec<(&Entry, Vec<(usize, usize)>)> = readable
+            .iter()
+            .map(|e| (e, e.names().flat_map(|n| named_at(message, n)).collect()))
+            .collect();
+        let inside = |id: &str, (s, e): (usize, usize)| {
+            found.iter().any(|(other, theirs)| {
+                other.id != id
+                    && theirs
+                        .iter()
+                        .any(|&(a, b)| a <= s && e <= b && b - a > e - s)
+            })
+        };
+        let mut named: Vec<(usize, &Entry)> = found
+            .iter()
+            .filter_map(|(entry, spans)| {
+                let at = spans
+                    .iter()
+                    .filter(|&&span| !inside(&entry.id, span))
+                    .min()?;
+                Some((at.0, *entry))
+            })
+            .collect();
+        named.sort_by_key(|&(at, _)| at);
+        // The first named reads as the most recent, so it is the last to
+        // close when the allotment runs out.
+        let now = self.deps.clock.now_ms();
+        for (i, (_, entry)) in named.iter().enumerate() {
+            self.open_entry(session, entry, now - i as i64)?;
         }
         let open = self.open_lore(session)?;
-        let mut left = room.saturating_sub(estimate_tokens(LORE_HEADING));
+        let full = room.saturating_sub(estimate_tokens(LORE_HEADING));
+        let mut left = full;
+        let mut kept = Vec::new();
         let mut shown = Vec::new();
         let mut closed = Vec::new();
         for entry in &open {
             match self.read_entry(entry, left)? {
                 Some(text) => {
+                    kept.push(entry.id.as_str());
                     left = left.saturating_sub(estimate_tokens(&text) + 1);
                     let hash = sha256_hex(&text);
                     let before: Option<String> = self.conn.query_row(
@@ -1193,14 +1317,25 @@ impl Companion {
                         params![session, entry.id, hash],
                     )?;
                 }
-                None => closed.push(entry.id.as_str()),
+                None => {
+                    // No room beside what was read more recently: it closes
+                    // until it is named again. Said only when it doesn't fit
+                    // even alone.
+                    self.conn.execute(
+                        "DELETE FROM lore_open WHERE session_id = ?1 AND entry = ?2",
+                        params![session, entry.id],
+                    )?;
+                    if left == full {
+                        closed.push(entry.id.as_str());
+                    }
+                }
             }
         }
         let mut index = Vec::new();
         if first {
             for entry in readable
                 .iter()
-                .filter(|e| !open.iter().any(|o| o.id == e.id))
+                .filter(|e| !kept.contains(&e.id.as_str()) && !closed.contains(&e.id.as_str()))
                 .take(INDEX_LIMIT)
             {
                 let mut line = format!("- {}: {}", entry.id, entry.front.title);
@@ -1221,10 +1356,7 @@ impl Companion {
         let mut out = vec![LORE_HEADING.to_owned()];
         out.extend(shown);
         if !closed.is_empty() {
-            out.push(format!(
-                "Too long to keep in mind beside the rest: {}.",
-                closed.join(", ")
-            ));
+            out.push(format!("Too long to keep in mind: {}.", closed.join(", ")));
         }
         if !index.is_empty() {
             out.push(format!(
@@ -2075,6 +2207,19 @@ mod tests {
             &[said]
         ));
         assert!(!is_told("the rot hates silver", "Kestrel", &[said]));
+        // Known names don't carry a guess: the drowning is the companion's own.
+        let entry = "The Empress of Ronna is dead; the Regent rules in her place.";
+        let user = "Does it feel like home, with the Regent where the Empress was?";
+        assert!(is_told(
+            "The Empress is dead and the Regent rules in her place.",
+            "Kestrel",
+            &[user, entry]
+        ));
+        assert!(!is_told(
+            "The Regent drowned the Empress and pays the guard to keep quiet.",
+            "Kestrel",
+            &[user, entry]
+        ));
     }
 
     #[test]
@@ -2086,9 +2231,9 @@ mod tests {
 
     #[test]
     fn names_match_whole_words() {
-        assert!(named_in("We went to the Old Mill.", "old mill"));
-        assert!(!named_in("Millstone", "mill"));
-        assert!(!named_in("a", "a"));
+        assert_eq!(named_at("We went to the Old Mill.", "old mill"), [(15, 23)]);
+        assert!(named_at("Millstone", "mill").is_empty());
+        assert!(named_at("a", "a").is_empty());
     }
 
     #[test]
