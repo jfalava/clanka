@@ -1,7 +1,7 @@
 ---
 /**
  * PackageLicenses — one exclusive disclosure per open-source dependency (name,
- * version, license badge, license excerpt, full-text link). Data comes from
+ * license badge, license excerpt, full-text link). Data comes from
  * src/lib/licenses.ts, written by `bun run --cwd docs licenses`.
  */
 import Icon from "@cloudflare/nimbus-docs/components/Icon.astro";
@@ -27,7 +27,6 @@ const label =
         <summary class="flex cursor-pointer list-none items-center justify-between gap-3 py-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
           <span class="flex min-w-0 flex-wrap items-center gap-2">
             <span class="font-medium [overflow-wrap:anywhere]">{pkg.name}</span>
-            <span class="text-sm text-muted-foreground">{pkg.version}</span>
             <Badge text={pkg.license} />
           </span>
           <Icon
