@@ -424,6 +424,38 @@ fn time_away_warms_or_cools_the_companion_and_fades_as_you_talk() {
     assert_eq!(warmth(&c), (0.2, None), "gone after 4");
 }
 
+/// Sleep settles the mood after the goodnight has ended the session; that mood
+/// is how they parted, and a mood from the conversation since is not.
+#[test]
+fn the_mood_written_after_goodnight_is_how_they_parted() {
+    let f = fixture();
+    let time = clock();
+    let mut c = open_full(&f, |_: &LlmRequest| LlmResponse::default(), time.clone());
+    let s = c.open_session().unwrap();
+    c.end_session(s, SessionEnd::Sleep).unwrap();
+    time.fetch_add(60_000, Ordering::SeqCst);
+    let mood = |valence: f64| Mood {
+        valence,
+        energy: 0.0,
+        warmth: 0.2,
+        cause: "Settled".into(),
+    };
+    c.set_mood(Actor::Sleep, &mood(0.5)).unwrap();
+
+    time.fetch_add(72 * HOUR, Ordering::SeqCst);
+    assert!(close(warmth(&c).0, 0.5), "warmer: {:?}", warmth(&c));
+
+    let s = c.open_session().unwrap();
+    c.record_turn(s, Speaker::User, "hey").unwrap();
+    time.fetch_add(60_000, Ordering::SeqCst);
+    c.set_mood(Actor::Writer, &mood(-0.5)).unwrap();
+    assert!(
+        close(warmth(&c).0, 0.2 + 0.3 * 0.75),
+        "still the parting's, not tonight's: {:?}",
+        warmth(&c)
+    );
+}
+
 #[test]
 fn a_bad_parting_cools_the_companion_but_never_past_the_floor() {
     let f = fixture();

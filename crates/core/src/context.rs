@@ -328,6 +328,9 @@ impl Companion {
 
     /// Shifts warmth by how long the user was gone: warmer if the last session
     /// ended on good terms, cooler if not. Fades over your first messages back.
+    /// How it ended is the last mood from before this conversation: the night's
+    /// sleep and the reflections still running at goodnight write theirs after
+    /// the session has ended.
     fn apply_time_away(&self, mood: &mut Mood) -> Result<Option<TimeAway>> {
         if !self.soul.traits.time_sense {
             return Ok(None);
@@ -339,7 +342,8 @@ impl Companion {
             |r| r.get(0),
         )?;
         let Some(ended) = ended else { return Ok(None) };
-        let hours = (self.deps.clock.now_ms() - ended) as f64 / 3_600_000.0;
+        let now = self.deps.clock.now_ms();
+        let hours = (now - ended) as f64 / 3_600_000.0;
         let said: i64 = self.conn.query_row(
             "SELECT count(*) FROM turns WHERE role = 'user' AND session_id =
                (SELECT id FROM sessions WHERE ended_at IS NULL AND dream = 0 AND started_at > ?1
@@ -351,8 +355,10 @@ impl Companion {
         let parted: Option<f64> = self
             .conn
             .query_row(
-                "SELECT valence FROM mood_states WHERE created_at <= ?1 ORDER BY id DESC LIMIT 1",
-                [ended],
+                "SELECT valence FROM mood_states WHERE created_at <= coalesce(
+                   (SELECT min(started_at) FROM sessions WHERE dream = 0 AND started_at > ?1), ?2)
+                 ORDER BY id DESC LIMIT 1",
+                [ended, now],
                 |r| r.get(0),
             )
             .optional()?;
