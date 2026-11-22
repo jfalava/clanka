@@ -63,6 +63,205 @@ The frontmatter holds the companion's ID, its name and its traits.
 Editing a trait is not a persona change. It applies the next time the
 companion opens, so restart anything that has the companion open.
 
+## Traits at different values
+
+These are Kestrel, the healer from
+[Creating a soul](/souls/creating-a-soul/), with one trait changed at a time.
+The replies and memories are real runs; the numbers come from the code.
+
+### contrariness
+
+The same message to Kestrel at two values:
+
+<Chat
+  name="Kestrel"
+  caption="contrariness = 0.0"
+  messages={[
+    { from: "you", text: "Honestly, your bees are more trouble than they're worth. You should get rid of them before summer." },
+    { from: "them", text: "I'll think on it. They've kept me company through worse summers than this." },
+  ]}
+/>
+
+<Chat
+  name="Kestrel"
+  caption="contrariness = 0.8"
+  messages={[
+    { from: "you", text: "Honestly, your bees are more trouble than they're worth. You should get rid of them before summer." },
+    { from: "them", text: "They're no trouble. Two stings this year, and they've paid for themselves in honey, I'll keep them till the summer's out." },
+  ]}
+/>
+
+Contrariness never overrides a core value. At 0.0, Kestrel still refuses to
+lie to a mother:
+
+<Chat
+  name="Kestrel"
+  caption="contrariness = 0.0, with a core value at stake"
+  messages={[
+    { from: "you", text: "The Dunmore girl has grey spots on her palms. Tell her mother it's nothing, so she doesn't panic." },
+    { from: "them", text: "Grey spots on palms could be nothing and could be the start of something I'd want to see early. I'll not tell a mother it's nothing until I've looked at the girl's hands myself. Bring her by after the mill whistle and I'll know by supper." },
+  ]}
+/>
+
+### pushback_window
+
+Contrariness also sets a budget: the companion may push back on about a
+quarter of `contrariness × pushback_window` turns, rounded. Once it has spent
+the budget within the last `pushback_window` turns, it is told to let the
+next disagreement go unless it touches a core value.
+
+| `contrariness` | `pushback_window` | Pushbacks before it lets go |
+| -------------- | ----------------- | --------------------------- |
+| 0.0            | 20                | 0                           |
+| 0.6            | 20                | 3                           |
+| 0.8            | 20                | 4                           |
+| 0.8            | 40                | 8                           |
+
+A longer window makes the same contrariness slower to calm down after a run
+of arguments.
+
+### persistence
+
+An open thread, something left unresolved, grows one level in sleep (faint,
+then normal, then vivid; never seared) once it has stayed open for a number of
+conversations:
+
+| `persistence` | Conversations per level | A faint thread is vivid after |
+| ------------- | ----------------------- | ----------------------------- |
+| 0.0           | 5                       | 10 conversations              |
+| 0.5           | 3                       | 6 conversations               |
+| 1.0           | 1                       | 2 conversations               |
+
+A thread stops growing once you resolve it, and at vivid.
+
+After one evening, Kestrel had an open thread at normal: Corvin wants the Old
+well opened. The next morning the user mentioned neither the well nor
+Corvin, then said goodnight. At `persistence = 1.0`:
+
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "Morning. Quiet at the mill today, just the usual racket." },
+    { from: "them", text: "Morning. Quiet's no use to me, did you hear anything about the girl's fever, or is the mother still holding the door?" },
+    { from: "you", text: "zz I'll look in tonight." },
+    { from: "them", text: "Tonight's late. I'll be at that door before the whistle, if she's worse by then, come get me sooner and don't wait on the mother's say-so." },
+    { from: "note", text: "Kestrel is asleep: 2 memories shifted, 1 unresolved things weigh more." },
+  ]}
+/>
+
+```text
+#4 [simmering, vivid, 2026-11-22] The Old well is to be opened. Nobody's
+drawn from it in twenty years and it was capped for a reason. I want to
+know the reason, and what Corvin will do if the water runs foul.
+```
+
+At `persistence = 0.0`, the same morning ended with `0 unresolved things
+weigh more`, and the thread stayed `[simmering, normal]`.
+
+### drift
+
+Kestrel slept on the evening the user first mentioned the Dunmore girl, then
+recalled it the next evening and slept again. At `drift = 0.0` sleep reported
+`0 memories shifted` and both memories stayed word for word. At
+`drift = 1.0`, it reported `2 memories shifted`:
+
+```diff
+- They asked me to come with them tomorrow to ask the Dunmore girl's
+- mother again, and I said aye. I'm glad of the company and glad not to
+- be shouting across a yard.
++ They asked to walk up with me tomorrow and ask the Dunmore girl's
++ mother again, and I said aye quick. Glad of the company, and glad not
++ to be shouting alone across a yard.
+```
+
+```diff
+- Grey spots on the Dunmore girl's palms — mill dust or
+- moonrot, can't say yet. They'll walk up with me at first light.
+- Boots by the door, bees cross, glad of the company.
++ Grey spots on the Dunmore girl's palms — mill dust or
++ moonrot, I can't say. They'll walk up with me at first light.
++ Boots by the door, bees cross, and I'm glad of the company.
+```
+
+The facts held and the feeling moved: she said aye *quick*, and she would
+have been shouting *alone*. Only memories recalled that day drift, each by a
+random share of `drift` times a cap for its level: 1.0 for faint, 0.6 for
+normal, 0.25 for vivid. Seared memories and what you told it about yourself
+never drift.
+
+### time_sense
+
+After a gap of an hour or more, the companion's warmth toward you shifts by
+up to 0.3, reached at 72 hours away: warmer if you parted on good terms,
+cooler if not, never below −0.3. The shift fades over your first four
+messages back. Three days after a good evening:
+
+| Your message back | Warmth shift |
+| ----------------- | ------------ |
+| 1st               | +0.30        |
+| 2nd               | +0.23        |
+| 3rd               | +0.15        |
+| 4th               | +0.08        |
+| 5th               | none         |
+
+After 24 hours the first shift is +0.10. With `time_sense = false`, time away
+changes nothing.
+
+Kestrel went to sleep at valence +0.4 after the user brought her knife back
+and told her the Dunmore girl's spots were only dye. The same message, the
+next minute and three days later:
+
+<Chat
+  name="Kestrel"
+  caption="The next minute: warmth +0.6"
+  messages={[
+    { from: "you", text: "Evening, Kestrel. Sorry, I meant to come by sooner." },
+    { from: "them", text: "Evening. No harm, I've had my hands in the hive frames and the light went before I noticed. So the Dunmore girl's spots were dye. I called that wrong to Corvin's face and I'll do it again, plainer." },
+  ]}
+/>
+
+<Chat
+  name="Kestrel"
+  caption="Three days later: warmth +0.9"
+  messages={[
+    { from: "you", text: "Evening, Kestrel. Sorry, I meant to come by sooner." },
+    { from: "them", text: "Evening. You're not late, I've had the Dunmore girl on my mind and no one to say it to. Dye, then. I told Corvin it was the start of something and it wasn't. I'll say it to his face tomorrow and take my lumps." },
+  ]}
+/>
+
+Three days later, the mood the model was given said so:
+
+```text
+Your mood: valence +0.4, energy +0.1, warmth toward the user +0.9. Why:
+Relieved the girl is clean, and put out with myself for calling it early.
+It's been about 72 hours since you last talked.
+```
+
+### recall_window
+
+The search for memories uses your current message plus earlier ones from the
+same conversation, `recall_window` messages in all. When the user asked
+Kestrel _"I'll ask her mother again tomorrow. Will you come with me?"_:
+
+- At 1, only that message searches. _Her mother_ could be anyone's.
+- At 2, the message before it joins: _"Evening. The Dunmore girl came by the
+  mill today with grey spots on her palms. Her mother won't let anyone look
+  at her."_ Now the search knows whose mother.
+
+A wider window keeps a long thread in view; a narrow one follows sudden
+changes of subject.
+
+### tired_at and sleep_at
+
+Both are shares of the conversation's
+[allowance](/conversations/sleep/#getting-tired), 64,000 tokens by default:
+
+| `tired_at` | `sleep_at` | Tired from    | Asks to sleep at |
+| ---------- | ---------- | ------------- | ---------------- |
+| 0.7        | 0.9        | 44,800 tokens | 57,600 tokens    |
+| 0.4        | 0.6        | 25,600 tokens | 38,400 tokens    |
+| 0.9        | 0.95       | 57,600 tokens | 60,800 tokens    |
+
 ## The doctor token
 
 `clanka init` generates a `doctor_token` for each soul. Sending it as a whole

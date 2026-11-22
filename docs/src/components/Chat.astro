@@ -1,0 +1,148 @@
+---
+/**
+ * A conversation drawn as message bubbles, in the site's colours: yours on
+ * the right in the brand colour, the companion's on the left. Consecutive
+ * messages from one side form a group with a tail on the last bubble.
+ * `note` lines are what clanka prints itself, such as "Kestrel is asleep".
+ * `*marks*` in the companion's messages render in italics.
+ */
+interface Message {
+  from: "you" | "them" | "note";
+  text: string;
+}
+
+interface Props {
+  name: string;
+  caption?: string;
+  messages: Message[];
+}
+
+const { name, caption, messages } = Astro.props;
+
+const parts = (text: string) =>
+  text.split(/(\*[^*\n]+\*)/).map((s, i) => ({ mark: i % 2 === 1, text: i % 2 ? s.slice(1, -1) : s }));
+---
+
+<figure class="chat">
+  <div class="thread">
+    {
+      messages.map((m, i) =>
+        m.from === "note" ? (
+          <p class="note">{m.text}</p>
+        ) : (
+          <>
+            {m.from === "them" && messages[i - 1]?.from !== "them" && <p class="sender">{name}</p>}
+            <p class:list={["bubble", m.from, { tail: messages[i + 1]?.from !== m.from }]}>
+              {m.from === "them" ? parts(m.text).map((p) => (p.mark ? <em>{p.text}</em> : p.text)) : m.text}
+            </p>
+          </>
+        ),
+      )
+    }
+  </div>
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+
+<style>
+  .chat {
+    margin: 1.5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .thread {
+    --you: var(--nb-primary);
+    --you-ink: var(--nb-primary-foreground);
+    --them: var(--nb-muted);
+    --them-ink: var(--nb-foreground);
+    --page: var(--nb-background);
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--nb-border);
+    border-radius: 1.25rem;
+    background: var(--page);
+    font-size: 0.9375rem;
+    line-height: 1.35;
+  }
+  p {
+    margin: 0;
+  }
+  .sender {
+    margin: 0.5rem 0 0.125rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--nb-muted-foreground);
+  }
+  .sender:first-child {
+    margin-top: 0;
+  }
+  .note {
+    align-self: center;
+    margin: 0.625rem 0;
+    font-size: 0.75rem;
+    color: var(--nb-muted-foreground);
+    text-align: center;
+  }
+  .note + .note {
+    margin-top: -0.375rem;
+  }
+  .bubble {
+    position: relative;
+    max-width: 75%;
+    padding: 0.4375rem 0.8125rem;
+    border-radius: 1.125rem;
+    white-space: pre-line;
+    overflow-wrap: break-word;
+  }
+  .bubble.tail {
+    margin-bottom: 0.5rem;
+  }
+  .bubble.you {
+    align-self: flex-end;
+    background: var(--you);
+    color: var(--you-ink);
+  }
+  .bubble.them {
+    align-self: flex-start;
+    background: var(--them);
+    color: var(--them-ink);
+  }
+  /* The tail: a bubble-coloured curve, cut back by a page-coloured one. */
+  .bubble.tail::before,
+  .bubble.tail::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    height: 1.25rem;
+  }
+  .bubble.you.tail::before {
+    right: -0.4375rem;
+    width: 1.25rem;
+    background: var(--you);
+    border-bottom-left-radius: 1rem 0.875rem;
+  }
+  .bubble.you.tail::after {
+    right: -1rem;
+    width: 1rem;
+    background: var(--page);
+    border-bottom-left-radius: 0.625rem;
+  }
+  .bubble.them.tail::before {
+    left: -0.4375rem;
+    width: 1.25rem;
+    background: var(--them);
+    border-bottom-right-radius: 1rem 0.875rem;
+  }
+  .bubble.them.tail::after {
+    left: -1rem;
+    width: 1rem;
+    background: var(--page);
+    border-bottom-right-radius: 0.625rem;
+  }
+  figcaption {
+    font-size: 0.8125rem;
+    color: var(--nb-muted-foreground);
+    text-align: center;
+  }
+</style>

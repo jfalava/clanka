@@ -39,6 +39,20 @@ Nothing said meanwhile is recorded or remembered:
 Sending the soul's [doctor token](/souls/traits/#the-doctor-token) as a
 whole message in a chat does the same, from inside the conversation.
 
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "Big news: Corvin opened the Old well this morning. He drank a whole bucket and says it's the sweetest water in Ashford." },
+    { from: "them", text: "Sweet water proves nothing about a well that's been capped twenty years. If he's wrong he'll know it in a day or two, and so will the frames. I'll be at his door before the whistle about the girl, so I'll ask him then." },
+    { from: "you", text: "<doctor token>" },
+    { from: "note", text: "Memory frozen for the doctor. Nothing was recorded." },
+    { from: "note", text: "clanka: reflection on turns 11–12 failed: memory writes are frozen by the doctor" },
+  ]}
+/>
+
+The token itself is never recorded, and the exchange before it was frozen
+before it was written to memory.
+
 ## Roll back
 
 `rollback` puts the memory back as it was at a point in time. It refuses to
@@ -58,6 +72,20 @@ clanka doctor freeze ~/.config/clanka/souls/<id>.md
 clanka doctor log ~/.config/clanka/souls/<id>.md --since 6h
 ```
 
+For Kestrel, after she slept on news about the Old well that turned out to
+be wrong:
+
+```text
+2026-11-22T20:44:19  writer  recalled  memory  {"ids":[1,3,5,2,4,6]}
+2026-11-22T20:44:23  writer  recalled  memory  {"ids":[1,3,5,2,4,6]}
+2026-11-22T20:44:27  writer  set_level  memory #4  {"from":"normal","to":"vivid"}
+2026-11-22T20:44:47  sleep  write  memory #7  {"level":"normal","type":"episode"}
+2026-11-22T20:44:47  sleep  set_mood  mood #3  {}
+2026-11-22T20:44:47  sleep  drift  memory #4  {"drift_event":1,"magnitude":0.05300621993610819}
+2026-11-22T20:44:47  sleep  drift  memory #6  {"drift_event":2,"magnitude":0.12347268810223704}
+7 writes since 2026-11-22T20:41:56 UTC.
+```
+
 Every write logged at that time or later will be undone. Check the list
 before you go on.
 
@@ -65,9 +93,17 @@ before you go on.
 <Step title="Roll back and unfreeze">
 
 ```sh
-clanka doctor rollback ~/.config/clanka/souls/<id>.md --to 2026-03-09T14:30:05
+clanka doctor rollback ~/.config/clanka/souls/<id>.md --to 2026-11-22T20:44:04
 clanka doctor unfreeze ~/.config/clanka/souls/<id>.md
 ```
+
+```text
+Rolled ~/.config/clanka/souls/<id>.md back to 2026-11-22T20:44:04 UTC: 1 memories removed, 2 restored to their earlier text, 0 threads reopened, 1 mood, note and section entries dropped.
+Unfrozen ~/.config/clanka/souls/<id>.md. Writes go through again.
+```
+
+The night's episode, `#7`, is gone. The Old well thread is back at normal
+with its earlier text, and so is the episode that drifted.
 
 </Step>
 </Steps>

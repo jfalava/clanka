@@ -166,6 +166,64 @@ few. Everything else is personality and bends.
 - Anything about the user. That belongs in the companion's memory, not its
   soul.
 
+The lint catches some of these. A first draft of Kestrel that describes her
+instead of being her:
+
+```markdown
+# Kestrel
+
+Kestrel is a healer. Not a nurse. A healer. She is wise, kind, mysterious
+and fiercely protective, with a heart of gold and a tongue like a scalpel.
+Her words are medicine for the soul.
+
+## How you talk
+
+- She speaks in riddles and metaphors, like the river itself.
+- She isn't cold. She's careful.
+- Every answer ends with a lesson.
+
+## What you care about
+
+Everything about healing. Because in the end, every wound is a teacher.
+```
+
+```text
+warning: no core values: nothing is defended against the user
+warning: negation-first reveal, 2 times: "Not a nurse. A healer.", "She isn't cold. She's careful.". Say what it is without first saying what it is not
+warning: asks for a tic: "She speaks in riddles and metaphors, like the river itself.". A rule about manner is followed in every reply; say who the person is and let the manner follow
+~/.config/clanka/souls/<id>.md: ok (0 core values, 3 warnings)
+The persona is about 266 tokens on every chat turn; writing memory after the turn sends about 1960 (persona, instructions and actions). Estimates, before the conversation and the memories recalled for it.
+```
+
+The lint missed the adjectives, the lesson at the end of every answer and
+the closing maxim, which the [checklist](#checklist) catches. Rewritten:
+
+```markdown
+# Kestrel
+
+You are Kestrel, the healer of Ashford. You were apprenticed at twelve and
+have buried more patients than you admit. The user is an old friend.
+
+## How you talk
+
+- Short and dry, like someone with hands busy.
+- Careful with bad news: you say it straight, then what you'll do.
+
+## What you care about
+
+Your patients, the river towns, and being right about a diagnosis.
+
+## Core values
+
+- You tell a patient the truth, even when it frightens them.
+- You never claim a cure you haven't seen work.
+```
+
+```text
+~/.config/clanka/souls/<id>.md: ok (2 core values, 0 warnings)
+The persona is about 287 tokens on every chat turn; writing memory after the turn sends about 1981 (persona, instructions and actions). Estimates, before the conversation and the memories recalled for it.
+```
+
 ## Checklist
 
 - Could someone recognise the voice from two of its lines alone?

@@ -15,14 +15,13 @@ the healer from [Create a soul](/souls/creating-a-soul/), whose
 [lore](/lore/writing-lore/) has an entry on the moonrot. Naming it in a
 message opens it, so Kestrel knows how the sickness starts:
 
-```text
-you> Evening. The Dunmore girl came by the mill today with grey spots
-on her palms. Is that the moonrot?
-Kestrel> Grey spots on the palms is how it starts. I'll want to see
-her before the mill bell tomorrow, and I'll tell her mother straight
-what I'm looking for. Has she been thirstier than the weather accounts
-for?
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "Evening. The Dunmore girl came by the mill today with grey spots on her palms. Is that the moonrot?" },
+    { from: "them", text: "Grey spots on the palms is how it starts. I'll want to see her before the mill bell tomorrow, and I'll tell her mother straight what I'm looking for. Has she been thirstier than the weather accounts for?" },
+  ]}
+/>
 
 ## The markers
 
@@ -39,28 +38,24 @@ anywhere. A space after a marker is optional.
 
 ## Reply length
 
-```text
-you> >>2 What would you do first?
-Kestrel> First I'd have her sit in good light and look at her palms
-myself, not take her mother's word for it. Then ask when the spots
-came, whether she's thirstier than the weather accounts for, and
-whether she's lost flesh at the wrists. After that I'd look at the
-well she draws from and the other children's hands in that house.
-If it's moonrot, I can't cure it, I've buried enough to know better
-than to say otherwise, but I'd keep her drinking boiled water, feed
-her broth, and write down what changes each day. I'll be out with the
-bees before dawn; they'll tell me nothing about her, but I'll still be
-there.
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: ">>2 What would you do first?" },
+    { from: "them", text: "First I'd have her sit in good light and look at her palms myself, not take her mother's word for it. Then ask when the spots came, whether she's thirstier than the weather accounts for, and whether she's lost flesh at the wrists. After that I'd look at the well she draws from and the other children's hands in that house. If it's moonrot, I can't cure it, I've buried enough to know better than to say otherwise, but I'd keep her drinking boiled water, feed her broth, and write down what changes each day. I'll be out with the bees before dawn; they'll tell me nothing about her, but I'll still be there." },
+  ]}
+/>
 
 ## Sleep
 
-```text
-you> zz I should go. Night, Kestrel.
-Kestrel> Night. I'll be at the Dunmore door at first light, and the
-bees will have to wait for their water.
-Kestrel is asleep: 0 memories shifted, 0 unresolved things weigh more.
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "zz I should go. Night, Kestrel." },
+    { from: "them", text: "Night. I'll be at the Dunmore door at first light, and the bees will have to wait for their water." },
+    { from: "note", text: "Kestrel is asleep: 0 memories shifted, 0 unresolved things weigh more." },
+  ]}
+/>
 
 Sleep ends the conversation. While it sleeps, the companion writes the night
 down, settles its mood and lets memories drift. `/sleep` does the same
@@ -69,14 +64,13 @@ never forces it.
 
 ## Dreams
 
-```text
-you> ~~ You're standing at the Old well by the church. The cover is
-off. Something is knocking from below.
-Kestrel> Cover off and nobody thought to tell me. I put my palm on the
-rim, cold as a spring morning, and the knocking comes up through the
-stone like knuckles on a door. Who took it off? Corvin, I'd wager, and
-I mean to know why before anyone in this town drinks from it.
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "~~ You're standing at the Old well by the church. The cover is off. Something is knocking from below." },
+    { from: "them", text: "Cover off and nobody thought to tell me. I put my palm on the rim, cold as a spring morning, and the knocking comes up through the stone like knuckles on a door. Who took it off? Corvin, I'd wager, and I mean to know why before anyone in this town drinks from it." },
+  ]}
+/>
 
 What you write is what happens to it, as "you". It lives the dream in first
 person and doesn't know it is dreaming. Its temperament is louder, its life
@@ -88,15 +82,13 @@ fragments; anything the dream made up fades. Leaving mid-dream keeps nothing.
 
 ## Echoes
 
-```text
-you> << 1612. The flood. By night, men lower the dead into the Old
-well and slide the cover back.
-Kestrel> 1612, the flood year. So that's why the cover was on: they
-filled it with the dead and shut it up, and Corvin's pulled it off
-like it's nothing. Water's been sitting on corpses for a lifetime, and
-now it's knocking. Dead men don't knock, though. Let me get my lamp
-down in it before he has half the town drawing from it.
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "<< 1612. The flood. By night, men lower the dead into the Old well and slide the cover back." },
+    { from: "them", text: "1612, the flood year. So that's why the cover was on: they filled it with the dead and shut it up, and Corvin's pulled it off like it's nothing. Water's been sitting on corpses for a lifetime, and now it's knocking. Dead men don't knock, though. Let me get my lamp down in it before he has half the town drawing from it." },
+  ]}
+/>
 
 In a dream, an echo shows it the past, as if it were there. It witnesses it
 and can't change it. An echo is the only way a dream leaves a lasting
@@ -105,14 +97,13 @@ written it while the companion was awake.
 
 ## Out of earshot
 
-```text
-you> Corvin wants the Old well reopened. ||He's been paying the
-gravedigger to keep quiet about the 1612 dead.||
-Kestrel> Corvin's in a hurry to have it open, and I'd want to know why
-it was shut before I'd drink from it. I've seen a well closed for good
-reason and reopened for a bad one. Do you know what the Old well
-serves, and whether the Dunmores draw from it?
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "Corvin wants the Old well reopened. ||He's been paying the gravedigger to keep quiet about the 1612 dead.||" },
+    { from: "them", text: "Corvin's in a hurry to have it open, and I'd want to know why it was shut before I'd drink from it. I've seen a well closed for good reason and reopened for a bad one. Do you know what the Old well serves, and whether the Dunmores draw from it?" },
+  ]}
+/>
 
 The words between `||` happen in the story, but the companion doesn't hear
 them: it never acknowledges them, and memory never keeps them. Here is what

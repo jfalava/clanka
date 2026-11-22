@@ -20,12 +20,14 @@ you> zz The moment you take the ring, the room goes dark.
 
 In `clanka chat` the night ends with a line on what sleep did:
 
-```text
-you> zz I should go. Night, Kestrel.
-Kestrel> Night. I'll be at the Dunmore door at first light, and the
-bees will have to wait for their water.
-Kestrel is asleep: 0 memories shifted, 0 unresolved things weigh more.
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "zz I should go. Night, Kestrel." },
+    { from: "them", text: "Night. I'll be at the Dunmore door at first light, and the bees will have to wait for their water." },
+    { from: "note", text: "Kestrel is asleep: 0 memories shifted, 0 unresolved things weigh more." },
+  ]}
+/>
 
 What it wrote for the night is an episode, in its own voice
 ([`clanka memories`](/cli/memories/)):
@@ -72,6 +74,22 @@ default, one token per 3 characters. Once the conversation fills the
 `tired_at` share of it the companion gets tired, and past the `sleep_at`
 share it asks to sleep. It asks, but never forces it. A dream ends when it
 fills the whole allowance.
+
+The companion is only told how tired it is; how it shows depends on the
+model. Kestrel at `--session-tokens 700`, so tired from 490 tokens and
+sleepy from 630, was rested for eight messages, tired for two, then sleepy.
+Her replies kept their length, and she didn't bring up sleep until the user
+offered to stay:
+
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "What did you do for it?" },
+    { from: "them", text: "Cold cloth and patience, and once a poultice when the swelling climbed my arm. Nothing clever about it. My master said the cure for a sting is to stop being stung." },
+    { from: "you", text: "I could stay a while longer, if you like." },
+    { from: "them", text: "Stay if you want the company, I'm glad of it. But I'll be nodding off in this chair before long, so don't take it personal." },
+  ]}
+/>
 
 Memory has a separate budget (`--budget`, 6000 estimated tokens per turn), so
 a companion with many memories doesn't tire sooner than a new one.

@@ -42,25 +42,17 @@ A real dream with Kestrel, the healer from
 [Create a soul](/souls/creating-a-soul/). Earlier that evening, awake, the
 user had mentioned the Old well and, out of earshot, the dead of 1612.
 
-```text
-you> ~~ You're standing at the Old well by the church. The cover is
-off. Something is knocking from below.
-Kestrel> Cover off and nobody thought to tell me. I put my palm on the
-rim, cold as a spring morning, and the knocking comes up through the
-stone like knuckles on a door. Who took it off? Corvin, I'd wager, and
-I mean to know why before anyone in this town drinks from it.
-you> << 1612. The flood. By night, men lower the dead into the Old
-well and slide the cover back.
-Kestrel> 1612, the flood year. So that's why the cover was on: they
-filled it with the dead and shut it up, and Corvin's pulled it off
-like it's nothing. Water's been sitting on corpses for a lifetime, and
-now it's knocking. Dead men don't knock, though. Let me get my lamp
-down in it before he has half the town drawing from it.
-you> zz The knocking stops.
-Kestrel> Stopped, has it. That's worse, not better. Knocking I can
-measure; silence means whatever it was has finished, or heard me. Hand
-me that rope and hold the lamp steady, I'm going down.
-```
+<Chat
+  name="Kestrel"
+  messages={[
+    { from: "you", text: "~~ You're standing at the Old well by the church. The cover is off. Something is knocking from below." },
+    { from: "them", text: "Cover off and nobody thought to tell me. I put my palm on the rim, cold as a spring morning, and the knocking comes up through the stone like knuckles on a door. Who took it off? Corvin, I'd wager, and I mean to know why before anyone in this town drinks from it." },
+    { from: "you", text: "<< 1612. The flood. By night, men lower the dead into the Old well and slide the cover back." },
+    { from: "them", text: "1612, the flood year. So that's why the cover was on: they filled it with the dead and shut it up, and Corvin's pulled it off like it's nothing. Water's been sitting on corpses for a lifetime, and now it's knocking. Dead men don't knock, though. Let me get my lamp down in it before he has half the town drawing from it." },
+    { from: "you", text: "zz The knocking stops." },
+    { from: "them", text: "Stopped, has it. That's worse, not better. Knocking I can measure; silence means whatever it was has finished, or heard me. Hand me that rope and hold the lamp steady, I'm going down." },
+  ]}
+/>
 
 Once the wake pass is done, `clanka chat` says what stayed:
 

@@ -10,8 +10,18 @@ compare.
 ## Look at one query
 
 ```sh
-clanka recall ~/.config/clanka/souls/<id>.md "how was the concert"
+clanka recall ~/.config/clanka/souls/<id>.md "Is the Old well safe to drink from?"
 ```
+
+```text
+0.62 relevance, 0.74 score  #4 [open_thread, normal] The Old well is to be opened. Nobody's drawn from it in twenty years and it was capped for a reason. I want to know the reason, and what Corvin will do if the water runs foul.
+0.30 relevance, 0.30 score  #3 [user_fact, normal] Corvin Dunmore means to open the Old well again rather than walk the hour a day to the Market well. I want the reason it was capped before he lifts the boards.
+0.38 relevance, 0.29 score  #5 [user_fact, faint] They still have my good knife from the honey harvest and keep forgetting to bring it back. I told them to keep it till harvest — I'd rather have it back before I go poking at that well.
+3 of at most 8 memories (min_relevance 0.25, min_score 0.05).
+```
+
+That is Kestrel after one evening. The knife came up because the memory
+mentions a well.
 
 [`clanka recall`](/cli/recall/) runs the same search a turn runs, on the
 query alone. For each memory it prints the relevance (how close the memory is
@@ -26,13 +36,17 @@ Put the queries and what each should bring up in a TOML file:
 
 ```toml
 [[case]]
-query = "how was the concert"
-expect = ["Laura", "concert"]
-reject = ["dentist"]
+query = "Is the Old well safe to drink from?"
+expect = ["Old well"]
+reject = ["knife"]
 
 [[case]]
-query = "what do I do for work"
-expect = ["radiographer"]
+query = "How is the Dunmore girl?"
+expect = ["grey spots"]
+
+[[case]]
+query = "Did I ever give back your knife?"
+expect = ["knife"]
 ```
 
 - `expect` lists texts that must appear in a recalled memory or in the value
@@ -51,6 +65,18 @@ clanka eval ~/.config/clanka/souls/<id>.md cases.toml
 memories came up and their mean reciprocal rank. It exits non-zero on a miss
 or an unwanted memory, so it works in a script.
 
+```text
+"Is the Old well safe to drink from?": 3 recalled
+  ok    "Old well" at 1
+  NOISE "knife" at 3
+"How is the Dunmore girl?": 4 recalled
+  ok    "grey spots" at 1
+"Did I ever give back your knife?": 2 recalled
+  ok    "knife" at 1
+
+3 of 3 expected memories came up (mean reciprocal rank 1.00); 1 unwanted.
+```
+
 ## Change a value and compare
 
 Set a key under [`[recall]`](/configuration/#recall) in `config.toml`, then
@@ -58,9 +84,23 @@ run the eval again:
 
 ```toml
 [recall]
-min_relevance = 0.3
-limit = 6
+min_relevance = 0.4
 ```
+
+```text
+"Is the Old well safe to drink from?": 1 recalled
+  ok    "Old well" at 1
+"How is the Dunmore girl?": 4 recalled
+  ok    "grey spots" at 1
+"Did I ever give back your knife?": 1 recalled
+  ok    "knife" at 1
+
+3 of 3 expected memories came up (mean reciprocal rank 1.00); 0 unwanted.
+```
+
+The knife is gone, but so is Corvin's memory, which was below 0.4 too. The
+cases didn't ask for it, so the eval can't see what was lost; add an
+`expect` for everything a query should bring up.
 
 Some starting points:
 

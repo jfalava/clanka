@@ -51,6 +51,32 @@ your entry on 1960s politics. A grant takes effect on the companion's next
 turn; nothing has to restart. [`clanka soul lint`](/cli/soul/#lint) refuses
 a malformed grant and warns about one that names no entry on this machine.
 
+Kestrel is granted `moonrot`. Wren, who runs the ferry below Ashford, is
+granted only `ashford/the-mill`. Both were asked the same question, with no
+memories yet:
+
+<Chat
+  name="Kestrel"
+  caption={`lore = ["moonrot", "ashford/"]`}
+  messages={[
+    { from: "you", text: "What are the first signs of the moonrot?" },
+    { from: "them", text: "Grey spots on the palms first, pinhead small, then a thirst water won't touch, a fortnight between them, in the two I watched here. Who's showing them? I'll come look tonight and bring the good lamp." },
+  ]}
+/>
+
+<Chat
+  name="Wren"
+  caption={`lore = ["ashford/the-mill"]`}
+  messages={[
+    { from: "you", text: "What are the first signs of the moonrot?" },
+    { from: "them", text: "First sign's the silver creeping under the fingernails, then sleeping till noon and a ache in the bones that follows the tide. You seen that on someone, or just collecting symptoms?" },
+  ]}
+/>
+
+Kestrel answers from the entry: grey spots, then thirst. Wren has never read
+it, so the model makes something up. A companion only knows your canon if
+you grant it the entry.
+
 A companion won't talk while the lore it reads has an error
 [`clanka lore lint`](/cli/lore/#lint) reports, such as an entry that doesn't
 parse or a name two of its entries share. Lore it isn't granted doesn't

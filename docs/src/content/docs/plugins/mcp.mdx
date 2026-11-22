@@ -37,11 +37,75 @@ The host's model follows one fixed order on every user message:
 | `begin_turn` | First, before the reply      | Records the message and returns the companion's memories, mood and notes for this turn.                     |
 | `end_turn`   | Last, after the reply        | Saves the reply so the exchange can be remembered. After a `zz` goodnight, it also sleeps.                  |
 | `recall`     | Optional                     | Searches long-term memory on purpose. `begin_turn` already brings up what is relevant.                      |
+| `read_lore`  | Optional                     | Opens a [lore](/lore/reading/) entry that `begin_turn` lists. An entry the user names opens by itself.       |
 | `sleep`      | When the user says goodnight | Ends the conversation at once; it becomes memories in the background.                                       |
 | `wake_up`    | In a dream                   | Asks to wake from a [dream](/conversations/dreams/), quoting the words that wake the companion. |
 
 The doctor is never a tool. The [doctor token](/souls/traits/#the-doctor-token)
 freezes memory, and the CLI does the rest.
+
+## A turn
+
+Kestrel, after one evening, as an MCP host's model sees her. Asked _"Is the
+Old well safe to drink from?"_, the host calls `begin_turn` with the message
+and gets back (wrapped here to fit):
+
+```text
+## Lore
+How the world is: the text of each entry is canon. Lines under it are
+what companions added: seen and told are as good as canon, claimed is
+their word only, worked out and dreamt may be wrong.
+
+Other entries you know of; one opens when it is named:
+- ashford/corvin: Corvin Dunmore
+- ashford/the-mill: The Mill
+- ashford/wells: The Ashford wells
+- moonrot: The moonrot
+
+## Your relationship
+Easy, and old enough that neither of us dresses it up. They come in
+the evening, we talk over whatever's happened, and they go. No
+ceremony about it. They carry news to me and I tell them straight what
+I make of it, and they don't flinch at that. When I say I'll be
+somewhere at first light, they know I mean it.
+
+What the person you're talking to has told you about themselves:
+- They came by in the evening to tell me the Dunmore girl has grey
+  spots on her palms and that her mother won't let anyone look at her.
+  Grey on the palms worries me; I want eyes on that girl. [girl:
+  Dunmore, place: the mill]
+- Corvin Dunmore means to open the Old well again rather than walk the
+  hour a day to the Market well. I want the reason it was capped
+  before he lifts the boards. [other well: the Market well, person:
+  Corvin, well: the Old well]
+- They still have my good knife from the honey harvest and keep
+  forgetting to bring it back. I told them to keep it till harvest —
+  I'd rather have it back before I go poking at that well. [event: the
+  honey harvest]
+
+Your mood: valence -0.3, energy +0.2, warmth toward the user +0.6.
+Why: Grey palms and a shut door. That's how moonrot gets a start on a
+town.
+
+Your note from last turn: Keep it short and practical: get the fever
+answer, then say plainly I'll be at the Dunmore door before the
+whistle. No lecturing about the mother.
+
+Unresolved, and it matters to you; one comes up when it fits, as a
+remark:
+- The Dunmore girl with grey spots on her palms, and a mother who
+  won't let anyone look at her. I mean to be at that door before the
+  mill whistle. [girl: Dunmore, place: the mill]
+
+What you remember:
+- The Old well is to be opened. Nobody's drawn from it in twenty years
+  and it was capped for a reason. I want to know the reason, and what
+  Corvin will do if the water runs foul. [person: Corvin, well: the
+  Old well]
+```
+
+The model replies from that, then calls `end_turn` with its reply, which
+answers `Saved.`.
 
 ## Set the same model
 

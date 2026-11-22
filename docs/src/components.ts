@@ -4,6 +4,7 @@
  * Add new components here as you build (or install) them.
  */
 
+import Chat from "./components/Chat.astro";
 import ChatMockup from "./components/ChatMockup.astro";
 import { Aside } from "./components/ui/aside";
 import { Card } from "./components/ui/card";
@@ -16,6 +17,7 @@ export const components = {
   Aside,
   Card,
   CardGrid,
+  Chat,
   ChatMockup,
   PackageManagers,
   Step,
