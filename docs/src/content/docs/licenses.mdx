@@ -1,0 +1,67 @@
+---
+title: Licenses
+description: clanka's license, the third-party files and models it uses, and the open-source packages it is built with.
+---
+
+clanka is released under the
+[GNU Affero General Public License, version 3 only](https://github.com/jfalava/clanka/blob/main/LICENSE).
+Releases up to and including 0.1.6 were published under the MIT License.
+[REUSE.toml](https://github.com/jfalava/clanka/blob/main/REUSE.toml) in the
+repository is the authoritative statement of which files carry another
+license.
+
+## Attributions
+
+### foldcn components
+
+The telemetry console's components in `admin/src/components/ui/`, with
+`admin/src/lib/icons.ts` and `admin/src/lib/utils.ts`, are copied from the
+[foldcn](https://github.com/elianiva/foldcn) registry by elianiva and
+restyled. They keep its
+[MIT License](https://github.com/jfalava/clanka/blob/main/LICENSES/MIT.txt).
+
+### Nimbus registry components
+
+The components in `docs/src/components/ui/` were installed from the
+[Nimbus](https://github.com/cloudflare/nimbus) docs registry, copyright
+Cloudflare, Inc., under the
+[MIT License](https://github.com/jfalava/clanka/blob/main/LICENSES/MIT.txt).
+
+### IBM Plex Sans
+
+The docs site's social cards are drawn with IBM Plex Sans Bold, copyright 2017
+IBM Corp., under the
+[SIL Open Font License 1.1](https://github.com/jfalava/clanka/blob/main/LICENSES/OFL-1.1.txt).
+
+### Embedding models
+
+clanka does not ship an embedding model; [`clanka embedding`](/cli/embedding/)
+downloads one on first use. Both are licensed under Apache-2.0:
+
+- `english`: [Xenova/all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2),
+  an ONNX conversion of
+  [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2).
+- `multilingual`:
+  [Qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q](https://huggingface.co/Qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q),
+  a quantized ONNX conversion of
+  [sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2).
+
+## Open-source packages
+
+clanka is built with the help of these open-source projects, and I am
+grateful to everyone who works on them. Each list holds every direct
+dependency at the version the repository locks or installs.
+
+### Rust crates
+
+The memory engine, the `clanka` CLI and the Python bindings for the Hermes
+plugin.
+
+<PackageLicenses list="crates" />
+
+### JavaScript packages
+
+This documentation site, the diagnostics endpoint, the telemetry console, the
+router and the stack that deploys them.
+
+<PackageLicenses list="packages" />

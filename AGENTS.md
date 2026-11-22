@@ -61,6 +61,8 @@ A schema change is a new file in `crates/core/src/migrations/`, added to `MIGRAT
 
 The CLI pages under `docs/src/content/docs/cli/` mirror `clanka help <command>`, and `configuration.mdx` mirrors the defaults in `crates/core`. Update them with the command or setting they describe.
 
+The Licenses page (`docs/src/content/docs/licenses.mdx`) lists every direct dependency of the Rust and Bun workspaces from `docs/src/lib/licenses.ts`. After adding, removing or upgrading a dependency, regenerate it with `bun run --cwd docs licenses` (it needs `cargo`, installed packages and network); `bun run --cwd docs licenses:check` fails when it is stale. CI does not run it, since the Workers Build has no `cargo`.
+
 ## License
 
 AGPL-3.0-only (`LICENSE`, `Cargo.toml`, every `package.json`); releases up to 0.1.6 were MIT. `REUSE.toml` lists the files that keep another license (the foldcn copies in `admin/`, the Nimbus registry components in `docs/`, a vendored font); add an annotation there when you copy in third-party code.

@@ -6,6 +6,7 @@
 
 import Chat from "./components/Chat.astro";
 import ChatMockup from "./components/ChatMockup.astro";
+import PackageLicenses from "./components/PackageLicenses.astro";
 import { Aside } from "./components/ui/aside";
 import { Card } from "./components/ui/card";
 import { CardGrid } from "./components/ui/card-grid";
@@ -19,6 +20,7 @@ export const components = {
   CardGrid,
   Chat,
   ChatMockup,
+  PackageLicenses,
   PackageManagers,
   Step,
   Steps,

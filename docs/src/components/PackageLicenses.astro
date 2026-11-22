@@ -1,0 +1,59 @@
+---
+/**
+ * PackageLicenses — one exclusive disclosure per open-source dependency (name,
+ * version, license badge, license excerpt, full-text link). Data comes from
+ * src/lib/licenses.ts, written by `bun run --cwd docs licenses`.
+ */
+import Icon from "@cloudflare/nimbus-docs/components/Icon.astro";
+import { Badge } from "@/components/ui/badge";
+import { LinkButton } from "@/components/ui/link-button";
+import { crates, packages } from "@/lib/licenses";
+
+interface Props {
+  /** `crates` for the Rust workspace, `packages` for the Bun workspaces. */
+  list: "crates" | "packages";
+}
+
+const { list } = Astro.props;
+const items = list === "crates" ? crates : packages;
+const label =
+  list === "crates" ? "Rust crates and their licenses" : "JavaScript packages and their licenses";
+---
+
+<section class="my-6 rounded-lg bg-card px-6 py-2 shadow-sm ring ring-border" aria-label={label}>
+  {
+    items.map((pkg) => (
+      <details name={`licenses-${list}`} class="group border-b border-border last:border-b-0">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 py-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+          <span class="flex min-w-0 flex-wrap items-center gap-2">
+            <span class="font-medium [overflow-wrap:anywhere]">{pkg.name}</span>
+            <span class="text-sm text-muted-foreground">{pkg.version}</span>
+            <Badge text={pkg.license} />
+          </span>
+          <Icon
+            name="ph:caret-down"
+            class="size-4.5 shrink-0 transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        </summary>
+        <div class="flex flex-col items-start gap-4 pb-6">
+          <p class="m-0 text-sm leading-normal whitespace-pre-wrap text-muted-foreground italic [overflow-wrap:anywhere]">
+            {pkg.excerpt || "See the full license for this project's terms."}
+          </p>
+          <LinkButton
+            href={pkg.licenseUrl}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {/\/(package\.json|Cargo\.toml)$/.test(pkg.licenseUrl)
+              ? "View license declaration"
+              : "View full license"}
+            <Icon name="ph:arrow-up-right" class="size-4" aria-hidden="true" />
+          </LinkButton>
+        </div>
+      </details>
+    ))
+  }
+</section>

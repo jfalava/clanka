@@ -8,6 +8,8 @@
     "dev": "astro dev --host",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
+    "licenses": "bun scripts/generate-licenses.ts",
+    "licenses:check": "bun scripts/generate-licenses.ts --check",
     "lint": "bun run lint:astro && bun run lint:docs",
     "lint:astro": "eslint \"src/**/*.astro\"",
     "lint:astro:fix": "eslint \"src/**/*.astro\" --fix",

@@ -69,6 +69,7 @@ const nimbusConfig = defineNimbusConfig({
           "cli/debug",
         ],
       },
+      "licenses",
     ],
   },
   socialImageAlt: "Clanka documentation preview",
