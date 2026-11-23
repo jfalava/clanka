@@ -39,7 +39,8 @@ A general plugin on Hermes's public plugin API only:
 - ``on_session_reset`` (``/new``, ``/reset``, a session-reset policy plugin):
   the companion sleeps on whatever was said since it last slept, so a
   conversation the user walked away from still becomes a memory. Nothing
-  happens when nothing was said.
+  happens when nothing was said. The resets the TUI gateway fires with no
+  reason whenever it opens, resumes or rebuilds a chat leave it awake.
 - ``on_session_finalize``: the same when someone leaves the chat the
   companion is talking in (quitting the CLI, a one-shot exiting, the TUI), so
   that conversation doesn't stay open and run into the next one. Ends Hermes
@@ -407,10 +408,24 @@ class _Plugin:
         threading.Thread(target=run, args=(target, *args), name=name).start()
 
     def on_session_reset(self, reason="", **_):
+        # Every /new says new_session: the gateway's, the CLI's, a viewer's,
+        # and the session-reset policy plugin's, which goes through the
+        # gateway's. The TUI gateway, which the TUI and the Desktop app talk
+        # to, also fires this hook with no reason each time it builds an agent
+        # for a chat: opening, resuming or rebuilding one, or a client
+        # reconnecting. Nobody ended anything then, and ending the
+        # conversation would drop an open dream, so it stays awake. The TUI's
+        # own /new closes the chat first, which on_session_finalize sees.
+        if reason != "new_session":
+            logger.info("clanka: session reset (%s): not a /new; awake", reason or "no reason")
+            return
+        self._end(reason)
+
+    def _end(self, why):
         # Off the hook thread: Hermes gives a hook callback 30s, and sleep is
         # a model call plus a pass over memory. The work lock keeps it after
         # the reflection on the last exchange.
-        logger.info("clanka: session reset (%s): sleeping", reason or "unknown")
+        logger.info("clanka: session reset (%s): sleeping", why)
         self._off_thread(self._reset, name="clanka-sleep")
 
     def on_session_finalize(self, session_id=None, platform="", reason="", **_):
@@ -437,7 +452,7 @@ class _Plugin:
             )
             return
         self._live_chat = None
-        self.on_session_reset(reason=f"finalize: {reason}")
+        self._end(f"finalize: {reason}")
 
     def _reset(self):
         # A dream the conversation ended before the companion woke from is

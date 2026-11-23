@@ -128,6 +128,9 @@ It stays awake through:
   The Desktop app ends a chat only this way, so there the companion sleeps on
   a goodnight or `/new`.
 - Archiving or deleting a chat.
+- The TUI or the Desktop app opening, resuming or reconnecting to a chat.
+  Hermes reports each as a reset with no reason; before 0.3.2 the companion
+  took it for a `/new`, which dropped a dream it was in.
 
 ### Why
 
