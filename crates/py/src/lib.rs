@@ -138,7 +138,9 @@ impl PyCompanion {
     /// message to the model), `("frozen", "")` while frozen, `("open",
     /// context)` with the memory to give the model, or `("goodnight",
     /// context)` for the same when the user said goodnight with `zz` (the
-    /// night ends with this reply: see `end_turn`). A `~~` mid-conversation
+    /// night ends with this reply: see `end_turn`), or `("waking", context)`
+    /// when a dream ends with this reply (`zz`, or the dream filled its
+    /// session). A `~~` mid-conversation
     /// ends the conversation and starts the dream. On the host conversation's first turn
     /// (`first`) that is everything; later it is only what the model hasn't
     /// seen, and empty when nothing is new.
@@ -160,7 +162,13 @@ impl PyCompanion {
                 Begin::Doctor => ("doctor", String::new()),
                 Begin::Frozen => ("frozen", String::new()),
                 Begin::Open { context, pending } => {
-                    let kind = if pending.sleep { "goodnight" } else { "open" };
+                    let kind = if pending.sleep {
+                        "goodnight"
+                    } else if pending.wake {
+                        "waking"
+                    } else {
+                        "open"
+                    };
                     *lock(&self.pending) = Some(pending);
                     (kind, context)
                 }

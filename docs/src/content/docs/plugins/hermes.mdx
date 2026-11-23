@@ -65,7 +65,10 @@ The companion falls asleep when you say goodnight and its model calls
 ```
 
 `/sleep` sends `zz` and your words as your next message, and the companion
-answers it before it sleeps; in a dream, it wakes. Hermes
+answers it before it sleeps; in a dream, it wakes. Either way its model is
+asked to call `go_to_sleep`, so the chat shows the tool call, as it is when a
+dream ends because it filled its session. The companion sleeps or wakes
+after the reply even if the model doesn't call it. Hermes
 lets a plugin send a message only with
 `plugins.entries.clanka.allow_gateway_injection`, which
 `clanka hermes profile` sets. On an older profile, run it again, or send `zz`

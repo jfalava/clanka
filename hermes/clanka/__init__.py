@@ -26,7 +26,9 @@ A general plugin on Hermes's public plugin API only:
   conversation is slept on behind it.
 - ``zz`` at the start of a message says goodnight for sure: the companion
   answers what follows it as the conversation's last beat and sleeps after it,
-  tool call or not (in a dream, it wakes). ``/sleep [words]`` sends that message for the user, which
+  tool call or not (in a dream, it wakes). The model is asked to call
+  ``go_to_sleep`` all the same, in a dream too, so the chat shows it.
+  ``/sleep [words]`` sends that message for the user, which
   needs ``plugins.entries.clanka.allow_gateway_injection`` (``clanka hermes
   profile`` sets it).
 - ``/triage`` answers with the companion's state and its last diagnostics
@@ -72,8 +74,11 @@ logger = logging.getLogger(__name__)
 
 # Most one memory-writing reply may run to.
 MAX_TOKENS = 2048
-# Added after a ``zz`` goodnight's context, last, so the model calls the tool
-# the user asked for. Sleep comes after the reply whether it does or not.
+# Added after the context of a turn whose reply ends the night or the dream
+# (``zz``, or a dream that filled its session), last, so the chat shows a tool
+# call for it. Sleep or waking comes after the reply whether it calls it or
+# not. A dream asks for go_to_sleep too: wake_up wants three words quoted from
+# the dream, and models skip it when the message is a bare ``zz``.
 GO_TO_SLEEP = "Call go_to_sleep first, then write that last reply."
 
 # How long /triage waits for memory to open: a command answers at once or not
@@ -363,7 +368,7 @@ class _Plugin:
         # Once, on the turn after a notice: Hermes replays it from then on.
         if notices and notices[-1]:
             parts.append(NOTICE_HINT)
-        if kind == "goodnight":
+        if kind in ("goodnight", "waking"):
             parts.append(GO_TO_SLEEP)
         return {"context": "\n\n".join(parts)} if parts else None
 
