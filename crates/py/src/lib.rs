@@ -271,10 +271,18 @@ impl PyCompanion {
     /// anything ended; nothing does when nothing was said since the companion
     /// last slept, so a host may call it at every conversation boundary. Call
     /// `consolidate` after it, off the hot path.
-    fn close(&self, py: Python<'_>) -> PyResult<bool> {
+    ///
+    /// A dream another handle started counts as lost and is dropped first,
+    /// unless `wake_dream`: a host that ends the conversation from another
+    /// process than the one it talks in (Hermes archives a chat in its
+    /// gateway, while the iOS app's turns run in `hermes serve`) wakes it.
+    #[pyo3(signature = (wake_dream = false))]
+    fn close(&self, py: Python<'_>, wake_dream: bool) -> PyResult<bool> {
         py.detach(|| {
             let mut chat = lock(&self.chat);
-            chat.drop_lost_dream().map_err(err)?;
+            if !wake_dream {
+                chat.drop_lost_dream().map_err(err)?;
+            }
             let open = match chat.dreaming().map_err(err)? {
                 Some(dream) => Some(dream),
                 None => chat.session_in_progress().map_err(err)?,

@@ -368,6 +368,7 @@ class _Plugin:
                 "Memory is frozen by the doctor. `clanka doctor unfreeze` lets us talk again."
             )
         self._live_chat = session_id
+        self._share_chat(session_id)
         parts = [context] if context else []
         # Once, on the turn after a notice: Hermes replays it from then on.
         if notices and notices[-1]:
@@ -437,6 +438,35 @@ class _Plugin:
         logger.info("clanka: session reset (%s): sleeping", why)
         self._off_thread(self._reset, drop_dream, name="clanka-sleep")
 
+    def _chat_file(self):
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home() / "plugin-data" / "clanka" / "live-chat.json"
+
+    def _share_chat(self, chat):
+        # The chat the companion's last turn came from, for the other Hermes
+        # processes of this profile: the iOS and Desktop apps talk through
+        # `hermes serve`, but their archive and delete reach the gateway's
+        # copy of this plugin. Tagged with the soul, so another companion on
+        # the profile never matches it.
+        try:
+            path = self._chat_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps({"soul": self._soul(), "chat": chat}))
+            os.replace(tmp, path)
+        except Exception:
+            logger.debug("clanka: the live chat could not be shared", exc_info=True)
+
+    def _shared_chat(self):
+        # This process's own when nothing was shared (an older plugin talked
+        # last): a stale one here must not outrank a shared end.
+        try:
+            shared = json.loads(self._chat_file().read_text())
+        except Exception:
+            return self._live_chat
+        return shared.get("chat") if shared.get("soul") == self._soul() else None
+
     def on_session_delete(self, session_id=None, reason="", deleted_ids=None, **_):
         # The iOS and Desktop apps never say /new to a plugin (their /new is a
         # reset with no reason, like opening a chat), so archiving or deleting
@@ -447,13 +477,18 @@ class _Plugin:
         # were reflected on as they came. Only the companion's own chat
         # counts: archiving last week's chat must not end tonight's. A
         # compacted chat comes with its whole lineage in deleted_ids.
+        #
+        # The hook fires in the process that changed the chat, which is often
+        # not the one that talked in it, so the live chat is the shared one.
         if reason not in ("archive", "delete"):
             return
         chats = {session_id, *(deleted_ids or ())}
-        if self._live_chat is None or self._live_chat not in chats:
+        live = self._shared_chat()
+        if live is None or live not in chats:
             logger.info("clanka: chat %s %s: not the conversation's chat; awake", session_id, reason)
             return
         self._live_chat = None
+        self._share_chat(None)
         self._end(f"chat {reason}", drop_dream=reason == "delete")
 
     def on_session_finalize(self, session_id=None, platform="", reason="", **_):
@@ -492,7 +527,9 @@ class _Plugin:
             if drop_dream and c.drop_dream():
                 logger.info("clanka: the conversation ended mid-dream: the dream is dropped")
                 return
-            closed = c.close()
+            # A dream that isn't dropped wakes, even one another process of
+            # this profile started (the archive reached this one).
+            closed = c.close(wake_dream=not drop_dream)
         except Exception:
             logger.exception("clanka: ending the conversation failed")
             return
