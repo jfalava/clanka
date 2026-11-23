@@ -121,6 +121,12 @@ the Hermes log instead. On Hermes the companion falls asleep:
   message as a one-shot, like `hermes/bench.sh`, sets
   `plugins.entries.clanka.settings.sleep_on_leave` to `false`; leaving then
   keeps the companion awake, and a goodnight or `/new` ends the conversation.
+- When you archive or delete the chat it is talking in. This is how the iOS
+  and Desktop apps end a conversation, since their `/new` reaches clanka only
+  as a reset with no reason. Archiving is like `/sleep`: in a dream, it wakes
+  and keeps what a dream keeps. Deleting is like `/new`: a dream is dropped.
+  Deleting a chat doesn't make the companion forget it, since it reflected
+  on each exchange as it came.
 
 It stays awake through:
 
@@ -129,11 +135,12 @@ It stays awake through:
 - Ends Hermes makes on its own and keeps resumable: a dropped connection
   reaped, the gateway stopping or restarting, an idle or evicted session.
   The Desktop app ends a chat only this way, so there the companion sleeps on
-  a goodnight or `/new`.
-- Archiving or deleting a chat.
-- The TUI or the Desktop app opening, resuming or reconnecting to a chat.
-  Hermes reports each as a reset with no reason; before 0.3.2 the companion
-  took it for a `/new`, which dropped a dream it was in.
+  a goodnight, `zz`, `/sleep`, or archiving or deleting the chat.
+- Archiving or deleting another chat.
+- The TUI or the iOS and Desktop apps opening, resuming or reconnecting to a
+  chat, and `/new` in the iOS and Desktop apps. Hermes reports each as a reset
+  with no reason; before 0.3.2 the companion took it for a `/new`, which
+  dropped a dream it was in.
 
 ### Why
 

@@ -50,6 +50,10 @@ A general plugin on Hermes's public plugin API only:
   awake. ``plugins.entries.clanka.settings.sleep_on_leave: false`` makes
   leaving keep it awake too, for a script that sends each message as a
   one-shot (``hermes/bench.sh``); ``/new`` still puts it to sleep.
+- ``on_session_delete``: archiving the chat the companion is talking in ends
+  the conversation as ``/sleep`` does (a dream wakes), deleting it as ``/new``
+  does (a dream is dropped). The iOS and Desktop apps have no other end a
+  plugin can tell apart. Other chats, and Hermes's own prunes, leave it awake.
 - ``plugins.entries.clanka.settings.session_tokens`` sets how much
   conversation this companion holds before it tires, in estimated tokens;
   it wins over ``[session] tokens`` in clanka's config.toml.
@@ -426,12 +430,31 @@ class _Plugin:
             return
         self._end(reason)
 
-    def _end(self, why):
+    def _end(self, why, drop_dream=True):
         # Off the hook thread: Hermes gives a hook callback 30s, and sleep is
         # a model call plus a pass over memory. The work lock keeps it after
         # the reflection on the last exchange.
         logger.info("clanka: session reset (%s): sleeping", why)
-        self._off_thread(self._reset, name="clanka-sleep")
+        self._off_thread(self._reset, drop_dream, name="clanka-sleep")
+
+    def on_session_delete(self, session_id=None, reason="", deleted_ids=None, **_):
+        # The iOS and Desktop apps never say /new to a plugin (their /new is a
+        # reset with no reason, like opening a chat), so archiving or deleting
+        # the chat the companion is talking in is how they end a conversation.
+        # Archive ends it as /sleep does: the night is slept on and a dream
+        # wakes and keeps what it keeps. Delete ends it as /new does: a dream
+        # is dropped. Neither forgets a waking conversation, whose exchanges
+        # were reflected on as they came. Only the companion's own chat
+        # counts: archiving last week's chat must not end tonight's. A
+        # compacted chat comes with its whole lineage in deleted_ids.
+        if reason not in ("archive", "delete"):
+            return
+        chats = {session_id, *(deleted_ids or ())}
+        if self._live_chat is None or self._live_chat not in chats:
+            logger.info("clanka: chat %s %s: not the conversation's chat; awake", session_id, reason)
+            return
+        self._live_chat = None
+        self._end(f"chat {reason}", drop_dream=reason == "delete")
 
     def on_session_finalize(self, session_id=None, platform="", reason="", **_):
         # The conversation is over without a /new: quitting the CLI, closing
@@ -459,13 +482,14 @@ class _Plugin:
         self._live_chat = None
         self._end(f"finalize: {reason}")
 
-    def _reset(self):
+    def _reset(self, drop_dream=True):
         # A dream the conversation ended before the companion woke from is
-        # dropped: nothing of it is kept. A night with nothing said since the
-        # companion last slept is no night; the host's boundary costs nothing.
+        # dropped: nothing of it is kept, unless the end asks it to wake. A
+        # night with nothing said since the companion last slept is no night;
+        # the host's boundary costs nothing.
         try:
             c = self.companion()
-            if c.drop_dream():
+            if drop_dream and c.drop_dream():
                 logger.info("clanka: the conversation ended mid-dream: the dream is dropped")
                 return
             closed = c.close()
@@ -617,6 +641,7 @@ def register(ctx):
     ctx.register_hook("api_request_error", plugin.api_request_error)
     ctx.register_hook("on_session_reset", plugin.on_session_reset)
     ctx.register_hook("on_session_finalize", plugin.on_session_finalize)
+    ctx.register_hook("on_session_delete", plugin.on_session_delete)
     ctx.register_tool(
         name="recall_memory",
         toolset="clanka",
