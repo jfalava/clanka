@@ -1,0 +1,32 @@
+{
+  "turns": [
+    {
+      "content": "My sister Marisol moved away",
+      "created_at": 1,
+      "echo": false,
+      "id": 1,
+      "session": 1,
+      "speaker": "user"
+    }
+  ],
+  "versions": [
+    {
+      "created_at": 1,
+      "drift_magnitude": null,
+      "id": 1,
+      "interpretation": "Their sister Marisol moved to Oslo",
+      "level": "normal",
+      "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295",
+      "reason": "written"
+    },
+    {
+      "created_at": 1,
+      "drift_magnitude": null,
+      "id": 3,
+      "interpretation": "Their sister Marisol moved to Oslo",
+      "level": "vivid",
+      "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295",
+      "reason": "cli"
+    }
+  ]
+}

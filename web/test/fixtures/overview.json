@@ -1,0 +1,34 @@
+{
+  "archived": false,
+  "frozen": false,
+  "id": "00000000-0000-7000-8000-000000000000",
+  "mood": {
+    "cause": "Marisol left",
+    "energy": 0.25,
+    "valence": -0.5,
+    "warmth": 0.75
+  },
+  "name": "Nova",
+  "nights_waiting": 0,
+  "note": "Ask about Marisol",
+  "persona_changed": false,
+  "sections": [
+    {
+      "name": "about_user",
+      "versions": [
+        {
+          "content": "Has a sister, Marisol.",
+          "created_at": 1,
+          "id": 1,
+          "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295"
+        }
+      ]
+    },
+    {
+      "name": "relationship",
+      "versions": []
+    }
+  ],
+  "session": "conversation",
+  "soul": "/souls/soul.md"
+}

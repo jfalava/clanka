@@ -63,6 +63,16 @@ The CLI pages under `docs/src/content/docs/cli/` mirror `clanka help <command>`,
 
 The Licenses page (`docs/src/content/docs/licenses.mdx`) lists every direct dependency of the Rust and Bun workspaces from `docs/src/lib/licenses.ts`. After adding, removing or upgrading a dependency, regenerate it with `bun run --cwd docs licenses` (it needs `cargo`, installed packages and network); `bun run --cwd docs licenses:check` fails when it is stale. CI does not run it, since the Workers Build has no `cargo`.
 
+## The `clanka web` page
+
+`web/` is the page `clanka web` serves (`crates/cli/src/web/`): a Foldkit app like `admin/`, with its own copies of the foldcn components and of `admin/src/styles.css`. It only reads: every route of the server is a GET and nothing in it calls a write of the core. Repairs stay in `clanka doctor` until the owner asks for them on the page.
+
+- Its build, `web/dist`, is committed, and `crates/cli/build.rs` compiles every file in it into the binary, so `cargo build` never runs Bun and `release.yml` needs none. After changing anything under `web/src`, run `bun run web:build` and commit `web/dist` with the change: the `web` job in `.github/workflows/ci.yml` fails when the committed build is not what the sources build. Vite gives the files fixed names, with no hash, so a rebuild changes them in place; the server sends an `ETag` instead.
+- Check: `bun run web:check` (typecheck and `bun test`).
+- The server answers with the core's own types as JSON, and `web/src/api.ts` declares the same shapes as Effect Schemas. `web/test/fixtures/` holds what the server sends for a seeded companion: `cargo test` fails when the server stops sending it and `bun test` fails when the Schemas stop decoding it. After changing a field on purpose, run `CLANKA_UPDATE_FIXTURES=1 cargo test -p clanka --bin clanka web`, bring `web/src/api.ts` in line and rebuild the page.
+- Work on it: run `clanka web --no-open`, then `bun run --cwd web dev`, and open Vite's address with the `#t=…` that `clanka web` printed. Vite serves the page and passes `/api` on to port 7333.
+- `docs/src/content/docs/cli/web.mdx` describes the page; update it with what the page shows.
+
 ## License
 
 AGPL-3.0-only (`LICENSE`, `Cargo.toml`, every `package.json`); releases up to 0.1.6 were MIT. `REUSE.toml` lists the files that keep another license (the foldcn copies in `admin/`, the Nimbus registry components in `docs/`, a vendored font); add an annotation there when you copy in third-party code.

@@ -37,3 +37,25 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The tests need no model provider, keyring, Hermes or network.
       - run: cargo test --workspace --locked
+  # The page `clanka web` serves (web/). Its build, web/dist, is committed and
+  # compiled into the binary, so the job fails when the committed one is not
+  # what the sources build: a change to web/src without `bun run web:build`
+  # would ship the old page.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.5"
+      - run: bun install --frozen-lockfile
+      - run: bun run web:check
+      - run: bun run web:build
+      - name: web/dist is what web/src builds
+        run: |
+          if [ -n "$(git status --porcelain -- web/dist)" ]; then
+            git status --short -- web/dist
+            echo "::error::web/dist is stale; run \`bun run web:build\` and commit it"
+            exit 1
+          fi

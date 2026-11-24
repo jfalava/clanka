@@ -106,6 +106,28 @@
         "typescript": "6.0.2",
       },
     },
+    "web": {
+      "name": "@clanka/web",
+      "dependencies": {
+        "@foldkit/ui": "0.170.0",
+        "@fontsource/google-sans-code": "5.3.2",
+        "@fontsource/ibm-plex-sans": "5.3.0",
+        "@fontsource/zilla-slab": "5.3.0",
+        "cn": "0.5.2",
+        "effect": "4.1.2",
+        "foldkit": "0.170.0",
+        "lucide": "1.73.0",
+      },
+      "devDependencies": {
+        "@foldkit/vite-plugin": "0.29.0",
+        "@tailwindcss/vite": "4.3.4",
+        "bun-types": "1.4.4",
+        "tailwindcss": "4.3.4",
+        "tw-animate-css": "1.4.0",
+        "typescript": "6.0.2",
+        "vite": "8.3.8",
+      },
+    },
   },
   "packages": {
     "@alchemy.run/acme": ["@alchemy.run/acme@2.0.0-beta.85", "", { "dependencies": { "@distilled.cloud/acme": "1.0.0-rc.18" }, "peerDependencies": { "alchemy": "2.0.0-beta.85", "effect": "^4.1.0" } }, "sha512-hOV18VHG6ivrbPnk35hoqlCQPc6bR8b9soGmHlSkbnPIgVZUg7jpliF9AztSSJbJK4GHcBFc9hWetwCRHzGYAg=="],
@@ -219,6 +241,8 @@
     "@clanka/ingest": ["@clanka/ingest@workspace:ingest"],
 
     "@clanka/router": ["@clanka/router@workspace:router"],
+
+    "@clanka/web": ["@clanka/web@workspace:web"],
 
     "@cloudflare/nimbus-docs": ["@cloudflare/nimbus-docs@0.19.2", "", { "dependencies": { "@astrojs/markdown-satteri": "^0.4.3", "@astrojs/mdx": "~8.0.0", "@astrojs/sitemap": "3.7.2", "@clack/prompts": "^1.8.0", "@fontsource/stix-two-math": "^5.3.0", "@iconify/tools": "^5.0.12", "@iconify/types": "^2.0.0", "@iconify/utils": "^3.1.4", "@scalar/json-magic": "0.12.20", "@shikijs/transformers": "^4.4.1", "@shikijs/types": "^4.4.1", "@vercel/detect-agent": "1.2.3", "clsx": "^2.1.1", "cross-spawn": "7.0.6", "giget": "^3.3.0", "github-slugger": "^2.0.0", "hast-util-from-html": "^2.0.3", "hast-util-sanitize": "^5.0.2", "hast-util-to-html": "^9.0.5", "jsonc-parser": "^3.3.1", "mdast-util-gfm": "^3.1.0", "mdast-util-math": "^3.0.0", "mdast-util-mdx": "^3.0.0", "mdast-util-to-markdown": "^2.1.2", "mri": "^1.2.0", "picomatch": "^4.0.5", "remark-lint-emphasis-marker": "^4.0.1", "remark-lint-fenced-code-flag": "^4.2.0", "remark-lint-heading-increment": "^4.0.1", "remark-lint-no-duplicate-headings": "^4.0.1", "remark-lint-no-heading-punctuation": "^4.0.1", "remark-lint-no-literal-urls": "^4.0.1", "remark-lint-no-multiple-toplevel-headings": "^4.0.1", "remark-lint-unordered-list-marker-style": "^4.0.1", "satteri": "^0.10.5", "semver": "^7.8.5", "shiki": "^4.4.1", "tailwind-merge": "^3.5.0", "temml": "^0.14.0", "typescript": "^5.8.3", "unified": "^11.0.5", "vfile": "^6.0.3", "vite": "^8.1.6", "yaml": "^2.7.1" }, "peerDependencies": { "@modelcontextprotocol/server": ">=2.3.0 <3.0.0", "@readme/httpsnippet": ">=10.0.0", "@resvg/resvg-js": ">=2.6.2 <3.0.0", "@scalar/openapi-parser": ">=0.10.0 <1.0.0", "astro": ">=7.2.6 <8.0.0", "openapi-sampler": ">=1.5.0", "react": ">=19.0.0", "react-dom": ">=19.0.0", "satori": ">=0.26.0 <0.27.0" }, "optionalPeers": ["@modelcontextprotocol/server", "@readme/httpsnippet", "@resvg/resvg-js", "@scalar/openapi-parser", "openapi-sampler", "react", "react-dom", "satori"], "bin": { "nimbus-docs": "dist/cli/index.js" } }, "sha512-qlmwCcgI6sNdGAgbd8OGbH4asfxYy965DThKxrO6ek88JCnj5v/d+WxxYRghCkXEC1B6C4ZOcoPkMQHyHEOPCA=="],
 

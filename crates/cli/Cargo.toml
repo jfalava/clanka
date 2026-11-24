@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# `clanka web`. Without the defaults: no HTTP/2, forms, tracing or matched paths.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
 clanka-core = { path = "../core", features = ["fastembed"] }
 clap = { version = "4.6", features = ["derive"] }
 directories = "6"

@@ -3,6 +3,9 @@ __pycache__/
 .env
 node_modules
 dist
+# The page `clanka web` serves is built ahead of time and compiled into the
+# binary (crates/cli/build.rs), so its build is committed.
+!/web/dist/
 .astro
 .alchemy
 .env.*

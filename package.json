@@ -8,7 +8,8 @@
     "docs",
     "iac",
     "ingest",
-    "router"
+    "router",
+    "web"
   ],
   "scripts": {
     "ci:build": "bun run docs:check && bun run workers:check",
@@ -19,6 +20,8 @@
     "docs:check": "bun run --cwd docs lint && bun run --cwd docs typecheck && bun run --cwd iac typecheck",
     "docs:dev": "bun run --cwd docs dev",
     "plan": "bun run --cwd iac plan",
+    "web:build": "bun run --cwd web build",
+    "web:check": "bun run --cwd web typecheck && bun run --cwd web test",
     "workers:check": "bun run --cwd iac test && bun run --cwd router typecheck && bun run --cwd router test && bun run --cwd ingest typecheck && bun run --cwd ingest test && bun run --cwd admin typecheck && bun run --cwd admin test && bun run --cwd admin build"
   }
 }

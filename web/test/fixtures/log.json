@@ -1,0 +1,137 @@
+[
+  {
+    "action": "persona_accepted",
+    "actor": "cli",
+    "created_at": 1,
+    "id": 1,
+    "payload": {
+      "hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295"
+    },
+    "target": "persona",
+    "target_id": null
+  },
+  {
+    "action": "write",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 2,
+    "payload": {
+      "level": "normal",
+      "type": "user_fact"
+    },
+    "target": "memory",
+    "target_id": 1
+  },
+  {
+    "action": "write",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 3,
+    "payload": {
+      "level": "faint",
+      "type": "episode"
+    },
+    "target": "memory",
+    "target_id": 2
+  },
+  {
+    "action": "set_level",
+    "actor": "cli",
+    "created_at": 1,
+    "id": 4,
+    "payload": {
+      "from": "normal",
+      "to": "vivid"
+    },
+    "target": "memory",
+    "target_id": 1
+  },
+  {
+    "action": "write",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 5,
+    "payload": {
+      "level": "normal",
+      "type": "open_thread"
+    },
+    "target": "memory",
+    "target_id": 3
+  },
+  {
+    "action": "resolve_thread",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 6,
+    "payload": {},
+    "target": "memory",
+    "target_id": 3
+  },
+  {
+    "action": "write",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 7,
+    "payload": {
+      "level": "normal",
+      "type": "opinion"
+    },
+    "target": "memory",
+    "target_id": 4
+  },
+  {
+    "action": "write",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 8,
+    "payload": {
+      "level": "vivid",
+      "type": "opinion"
+    },
+    "target": "memory",
+    "target_id": 5
+  },
+  {
+    "action": "supersede",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 9,
+    "payload": {
+      "by": 5
+    },
+    "target": "memory",
+    "target_id": 4
+  },
+  {
+    "action": "set_mood",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 10,
+    "payload": {},
+    "target": "mood",
+    "target_id": 1
+  },
+  {
+    "action": "write_turn_note",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 11,
+    "payload": {
+      "turn": 1
+    },
+    "target": "turn_note",
+    "target_id": 1
+  },
+  {
+    "action": "write_section",
+    "actor": "writer",
+    "created_at": 1,
+    "id": 12,
+    "payload": {
+      "chars": 22,
+      "section": "about_user"
+    },
+    "target": "soul_section",
+    "target_id": 1
+  }
+]

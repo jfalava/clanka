@@ -1,0 +1,114 @@
+{
+  "found": [
+    {
+      "memory": {
+        "created_at": 1,
+        "dreamt": false,
+        "facts": {
+          "city": "Oslo",
+          "sister": "Marisol"
+        },
+        "id": 1,
+        "interpretation": "Their sister Marisol moved to Oslo",
+        "kind": "user_fact",
+        "last_recalled_session": null,
+        "level": "vivid",
+        "occurred_at": 1,
+        "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295",
+        "recall_count": 0,
+        "resolved_at": null,
+        "source_turns": [
+          1
+        ],
+        "status": "active",
+        "strength": null,
+        "superseded_by": null,
+        "updated_at": 1,
+        "urgency": null,
+        "valence": null
+      },
+      "relevance": 0.5,
+      "score": 0.5
+    },
+    {
+      "memory": {
+        "created_at": 1,
+        "dreamt": false,
+        "facts": {},
+        "id": 5,
+        "interpretation": "Oslo is far too cold",
+        "kind": "opinion",
+        "last_recalled_session": null,
+        "level": "vivid",
+        "occurred_at": null,
+        "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295",
+        "recall_count": 0,
+        "resolved_at": null,
+        "source_turns": [],
+        "status": "active",
+        "strength": 0.75,
+        "superseded_by": null,
+        "updated_at": 1,
+        "urgency": null,
+        "valence": null
+      },
+      "relevance": 0.5,
+      "score": 0.5
+    },
+    {
+      "memory": {
+        "created_at": 1,
+        "dreamt": false,
+        "facts": {},
+        "id": 3,
+        "interpretation": "I should ask how the move went",
+        "kind": "open_thread",
+        "last_recalled_session": null,
+        "level": "normal",
+        "occurred_at": 1,
+        "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295",
+        "recall_count": 0,
+        "resolved_at": 1,
+        "source_turns": [
+          1
+        ],
+        "status": "active",
+        "strength": null,
+        "superseded_by": null,
+        "updated_at": 1,
+        "urgency": "hot",
+        "valence": -0.25
+      },
+      "relevance": 0.5,
+      "score": 0.5
+    },
+    {
+      "memory": {
+        "created_at": 1,
+        "dreamt": false,
+        "facts": {},
+        "id": 2,
+        "interpretation": "We talked about the move",
+        "kind": "episode",
+        "last_recalled_session": null,
+        "level": "faint",
+        "occurred_at": null,
+        "persona_hash": "c2839f124469626ea10b17286523c2a2d921c4e017e2540648e2f6b796294295",
+        "recall_count": 0,
+        "resolved_at": null,
+        "source_turns": [],
+        "status": "active",
+        "strength": null,
+        "superseded_by": null,
+        "updated_at": 1,
+        "urgency": null,
+        "valence": null
+      },
+      "relevance": 0.5,
+      "score": 0.5
+    }
+  ],
+  "limit": 8,
+  "min_relevance": 0.25,
+  "min_score": 0.05
+}
