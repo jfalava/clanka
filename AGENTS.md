@@ -65,7 +65,10 @@ The Licenses page (`docs/src/content/docs/licenses.mdx`) lists every direct depe
 
 ## The `clanka web` page
 
-`web/` is the page `clanka web` serves (`crates/cli/src/web/`): a Foldkit app like `admin/`, with its own copies of the foldcn components and of `admin/src/styles.css`. It only reads: every route of the server is a GET and nothing in it calls a write of the core. Repairs stay in `clanka doctor` until the owner asks for them on the page.
+`web/` is the page `clanka web` serves (`crates/cli/src/web/`): a Foldkit app like `admin/`, with its own copies of the foldcn components and of `admin/src/styles.css`. Without `--doctor` it only reads: every route of the server is a GET and nothing they run calls a write of the core. `clanka web --doctor` adds POST routes for the repairs of `clanka doctor` (freeze, unfreeze, end-session, delete, rollback, reinterpret), each the core call its command makes. The owner's decisions: writes are opt-in, the page never freezes on its own, and `delete-all` is not on the page, which prints the command instead.
+
+- A repair that removes something shows the core's own plan first (`delete_plan`, `rollback_plan`), which the action then reports again; a core test holds the two equal. A new repair on the page gets a route, the test in `crates/cli/src/web/tests.rs` that it does what the command does, and a line in the table in `cli/web.mdx`.
+- A POST is answered only with this run's token, a local `Host` and an `Origin` that is the server's own. The page is sent with a `Content-Security-Policy` of `default-src 'self'`, so it has no inline script (the theme script is `web/public/theme.js`) and loads nothing from elsewhere.
 
 - Its build, `web/dist`, is committed, and `crates/cli/build.rs` compiles every file in it into the binary, so `cargo build` never runs Bun and `release.yml` needs none. After changing anything under `web/src`, run `bun run web:build` and commit `web/dist` with the change: the `web` job in `.github/workflows/ci.yml` fails when the committed build is not what the sources build. Vite gives the files fixed names, with no hash, so a rebuild changes them in place; the server sends an `ETag` instead.
 - Check: `bun run web:check` (typecheck and `bun test`).

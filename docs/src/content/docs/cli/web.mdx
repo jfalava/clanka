@@ -1,10 +1,10 @@
 ---
 title: web
-description: Look through what your companions remember in a browser, on this machine, without changing anything.
+description: Look through what your companions remember in a browser, on this machine, and repair it there with --doctor.
 ---
 
 ```sh
-clanka web [--port <port>] [--no-open]
+clanka web [--port <port>] [--no-open] [--doctor]
 ```
 
 Serves a page from this machine and opens it in your browser. The page lists
@@ -25,15 +25,21 @@ the companions set up here, and for the one you pick it shows:
 - **Log:** every write to the memory, as
   [`clanka doctor log`](/cli/doctor/#log) prints it. The times are in UTC, in
   the form [`clanka doctor rollback --to`](/cli/doctor/#rollback) takes.
+- **Doctor:** whether the companion is frozen and whether a conversation is
+  open. With `--doctor`, the repairs below.
 
 The search box finds words in a memory or its facts; `#12` finds the memory
 with that number.
 
-## It only reads
+The button at the left of the header closes the list of companions, to give
+the one you are reading the whole width, and opens it again. The browser
+remembers which you left it as.
 
-The page has nothing that changes a memory, and the server answers nothing
-but reads. Repairs stay in [`clanka doctor`](/cli/doctor/); a frozen
-companion shows a banner that says so.
+## It only reads, unless you ask
+
+Without `--doctor` the page has nothing that changes a memory, and the
+server answers nothing but reads. A frozen companion shows a banner that
+says so, and the Doctor tab says how to turn the repairs on.
 
 Opening a companion does what [`clanka memories`](/cli/memories/) does to
 its database: one from an older release is moved to the current schema. A
@@ -42,7 +48,48 @@ creates no database.
 
 What another process writes while the page is open shows after **Refresh**.
 
-## Who can read it
+## Repairing from the page
+
+`clanka web --doctor` adds the repairs of [`clanka doctor`](/cli/doctor/) to
+the page. Each does what its command does and is written to the log the
+same way.
+
+| On the page                                   | Command                                                              | Needs the freeze |
+| --------------------------------------------- | -------------------------------------------------------------------- | ---------------- |
+| **Freeze**, **Unfreeze** in the Doctor tab    | [`freeze`](/cli/doctor/#freeze), [`unfreeze`](/cli/doctor/#unfreeze) | No               |
+| **End the conversation** in the Doctor tab    | [`end-session`](/cli/doctor/#end-session)                            | No               |
+| **Delete** on ticked memories, or an open one | [`delete`](/cli/doctor/#delete)                                      | No               |
+| **Re-read** on ticked memories                | [`reinterpret`](/cli/doctor/#reinterpret)                            | Yes              |
+| **Roll back** on a row of the Log             | [`rollback`](/cli/doctor/#rollback)                                  | Yes              |
+
+The page never freezes on its own. A repair that needs the freeze is
+disabled until you freeze, and the frozen banner stays, with an **Unfreeze**
+button, until you unfreeze.
+
+Every repair but a freeze asks first:
+
+- **Delete** shows the memories, how many turns leave the transcript with
+  them, and which memories become current again because what replaced them
+  is going. If one of them is already gone, none is deleted.
+- **Roll back** undoes the write you picked and every write after it. It
+  shows which memories would be removed, restored and reopened, and the
+  seared ones it leaves as they are, and runs once you type the companion's
+  name. If the memory is written to between the question and your answer,
+  nothing is rolled back and the page says to look again.
+- **Re-read** lists the ticked memories it skips: seared ones, and ones
+  that cite no turns. It needs the `[model]` in `config.toml`, with its API
+  key in the environment `clanka web` was started in, and sends 20 memories
+  to the model at a time.
+
+There is no undo for a delete or a rollback, on the page or in the terminal.
+
+Two commands are not on the page.
+[`clanka doctor delete-all`](/cli/doctor/#delete-all) removes every memory,
+the transcript and the sessions; the Doctor tab prints the command for the
+companion you are reading instead of running it.
+[`clanka doctor reembed`](/cli/doctor/#reembed) needs the server stopped.
+
+## Who can read it, and repair
 
 The server listens on `127.0.0.1` only and runs until Ctrl-C. The address it
 prints ends in a token made for that run:
@@ -57,6 +104,15 @@ your browser cannot read your memories through the server. Anyone you give
 the whole address to can, for as long as that run lasts. A new run makes a
 new token, and a tab from the run before it stops working.
 
+With `--doctor`, whoever has the address can also repair: delete memories
+and roll the memory back. Run it for the repair and stop it after. The
+server takes a change only from its own page: the browser names the page
+each request comes from, and one from anywhere else is refused, token or
+not.
+
+The page loads nothing from outside the server and cannot be shown inside
+another site's frame.
+
 ## Options
 
 ### `--port <port>`
@@ -66,6 +122,11 @@ The port on `127.0.0.1` to listen on. Default: `7333`.
 ### `--no-open`
 
 Print the address without opening a browser.
+
+### `--doctor`
+
+Let the page repair the memory, not only read it. See
+[Repairing from the page](#repairing-from-the-page).
 
 ## A companion on another machine
 
