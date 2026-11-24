@@ -103,7 +103,7 @@ impl Ranking {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Recalled {
     pub memory: Memory,
     /// Cosine similarity plus the full-text bonus.

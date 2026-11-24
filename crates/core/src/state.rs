@@ -16,7 +16,7 @@ pub const PUSHBACK_SHARE: f64 = 0.25;
 /// every turn's context, so they must stay small.
 pub const SECTION_MAX_CHARS: usize = 2000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Mood {
     /// Good or bad mood, −1 to 1.
     pub valence: f64,
@@ -28,7 +28,7 @@ pub struct Mood {
     pub cause: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SectionVersion {
     pub id: i64,
     pub content: String,

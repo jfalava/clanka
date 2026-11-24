@@ -410,3 +410,88 @@ fn a_copy_is_refused_however_many_other_vectors_sit_as_near() {
         Err(Error::Duplicate { existing, .. }) if existing == fact
     ));
 }
+
+/// Looking through the whole memory: every memory with its own turns, the
+/// past included, then one memory's history and what was said for it.
+#[test]
+fn the_whole_memory_reads_back_with_its_past_and_what_was_said() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let session = c.open_session().unwrap();
+    let asked = c
+        .record_turn(
+            session,
+            Speaker::User,
+            "I live in Madrid ||she's in Lisbon||",
+        )
+        .unwrap();
+    let answered = c
+        .record_turn(session, Speaker::Companion, "Madrid suits you")
+        .unwrap();
+    let moved = with_turn(&mut c, "I moved to Lisbon");
+
+    let mut madrid = fact("city", "Madrid", "Sam loves Madrid", asked);
+    madrid.source_turns = vec![asked, answered];
+    let old = c.write(Actor::Writer, &madrid).unwrap();
+    // One that cites nothing sits between two that do.
+    let plain = c
+        .write(
+            Actor::Writer,
+            &draft(MemoryType::Episode, "Dad calls on Sundays"),
+        )
+        .unwrap();
+    let new = c
+        .supersede(
+            Actor::Writer,
+            old,
+            &fact(
+                "city",
+                "Lisbon",
+                "Sam left for Lisbon, maybe for Laura",
+                moved,
+            ),
+        )
+        .unwrap();
+    c.set_level(Actor::Writer, new, Level::Vivid).unwrap();
+
+    let all = c.memories().unwrap();
+    assert_eq!(
+        all.iter().map(|m| m.id).collect::<Vec<_>>(),
+        [old, plain, new]
+    );
+    for m in &all {
+        assert_eq!(*m, c.memory(m.id).unwrap(), "memory {}", m.id);
+    }
+    assert_eq!(all[0].source_turns, [asked, answered]);
+    assert!(all[1].source_turns.is_empty());
+    assert_eq!(all[2].source_turns, [moved]);
+
+    let history = c.memory_versions(new).unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .map(|v| (v.reason.as_str(), v.level))
+            .collect::<Vec<_>>(),
+        [("written", Level::Normal), ("escalated", Level::Vivid)]
+    );
+    assert!(history.iter().all(|v| v.drift_magnitude.is_none()));
+    assert!(c.memory_versions(plain + 100).unwrap().is_empty());
+
+    // What was said, whole: out of earshot too.
+    let said = c.source_turns(old).unwrap();
+    assert_eq!(
+        said.iter()
+            .map(|t| (t.id, t.speaker, t.content.as_str(), t.session))
+            .collect::<Vec<_>>(),
+        [
+            (
+                asked,
+                Speaker::User,
+                "I live in Madrid ||she's in Lisbon||",
+                session
+            ),
+            (answered, Speaker::Companion, "Madrid suits you", session),
+        ]
+    );
+    assert!(c.source_turns(plain).unwrap().is_empty());
+}

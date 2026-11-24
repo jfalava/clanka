@@ -9,11 +9,11 @@ use crate::companion::{ensure_doctor, ensure_embedder, log, meta, set_meta};
 use crate::deps::{ToolCall, ToolSpec};
 use crate::diagnostics::Pass;
 use crate::memory::{Rewrite, remove_memory, rewrite_interpretation};
-use crate::model::Level;
+use crate::model::{Level, Speaker};
 use crate::writer::args;
 use crate::{Companion, Error, Memory, Reflection, Result};
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -22,7 +22,7 @@ use std::time::Instant;
 const REINTERPRET_BATCH: usize = 20;
 
 /// One entry of the write log.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WriteEntry {
     pub id: i64,
     pub actor: String,
@@ -65,7 +65,7 @@ pub struct DeleteAll {
 }
 
 /// A fact that its source turns don't back up.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FactIssue {
     pub memory: i64,
     /// `None` when the memory has facts but cites no turns at all.
@@ -405,22 +405,19 @@ impl Companion {
     /// of the companion's earshot, for a model that must not learn it; a fact
     /// check reads it all, since an echo can reveal what was said there.
     pub(crate) fn source_text(&self, memory: &Memory, heard: bool) -> Result<String> {
-        let mut lines = Vec::new();
-        for turn in &memory.source_turns {
-            let (role, content): (String, String) = self.conn.query_row(
-                "SELECT role, content FROM turns WHERE id = ?1",
-                [turn],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
+        let lines = self.source_turns(memory.id)?.into_iter().map(|turn| {
             let content = if heard {
-                crate::memory::heard(&content)
+                crate::memory::heard(&turn.content)
             } else {
-                content
+                turn.content
             };
-            let who = if role == "user" { "user" } else { "you" };
-            lines.push(format!("({who}) {content}"));
-        }
-        Ok(lines.join("\n"))
+            let who = match turn.speaker {
+                Speaker::User => "user",
+                Speaker::Companion => "you",
+            };
+            format!("({who}) {content}")
+        });
+        Ok(lines.collect::<Vec<_>>().join("\n"))
     }
 
     fn run_reinterpret(

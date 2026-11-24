@@ -1,5 +1,5 @@
-//! Vocabulary shared by storage and the memory lifecycle. Each enum is stored as
-//! the text the schema's CHECK constraints expect.
+//! Vocabulary shared by storage and the memory lifecycle. Each enum is stored,
+//! and serialized, as the text the schema's CHECK constraints expect.
 
 macro_rules! text_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident = $text:literal),+ $(,)? }) => {
@@ -21,6 +21,12 @@ macro_rules! text_enum {
                     $($text => Some($name::$variant),)+
                     _ => None,
                 }
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.as_str())
             }
         }
 

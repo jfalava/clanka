@@ -9,6 +9,7 @@ use crate::companion::{ensure_embedder, ensure_writable, log};
 use crate::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Status, Urgency};
 use crate::{Companion, Error, Result};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 /// Cosine similarity at or above which a new memory counts as a copy of an
@@ -56,7 +57,7 @@ impl MemoryDraft {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Memory {
     pub id: i64,
     pub kind: MemoryType,
@@ -79,6 +80,33 @@ pub struct Memory {
     pub source_turns: Vec<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// One entry of a memory's history: how it read after a change.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MemoryVersion {
+    pub id: i64,
+    pub interpretation: String,
+    pub level: Level,
+    pub persona_hash: String,
+    /// What changed it: `written`, `drift`, `escalated`, `reinterpreted`,
+    /// `cli` or `rollback`.
+    pub reason: String,
+    /// How far a drift moved it.
+    pub drift_magnitude: Option<f64>,
+    pub created_at: i64,
+}
+
+/// A turn a memory cites, as it was said.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceTurn {
+    pub id: i64,
+    pub session: i64,
+    pub speaker: Speaker,
+    pub content: String,
+    /// A dream message shown as an echo of the past.
+    pub echo: bool,
+    pub created_at: i64,
 }
 
 /// What a hard delete removed besides the memory itself.
@@ -549,44 +577,47 @@ impl Companion {
         ids.into_iter().map(|id| self.memory(id)).collect()
     }
 
+    /// Every memory, superseded ones included, oldest first. For looking
+    /// through the whole memory at once, where [`Companion::memory`] per ID
+    /// would run two queries each.
+    pub fn memories(&self) -> Result<Vec<Memory>> {
+        let mut memories = self
+            .conn
+            .prepare(&format!(
+                "SELECT {MEMORY_COLUMNS} FROM memories ORDER BY id"
+            ))?
+            .query_map([], read_memory)?
+            .map(|row| with_facts(row?))
+            .collect::<Result<Vec<_>>>()?;
+        // Both lists are in ID order, so one pass hands each memory its turns.
+        let mut sources = self
+            .conn
+            .prepare("SELECT memory_id, turn_id FROM memory_sources ORDER BY memory_id, turn_id")?;
+        let mut rows = sources.query([])?;
+        let mut at = 0;
+        while let Some(row) = rows.next()? {
+            let (memory, turn): (i64, i64) = (row.get(0)?, row.get(1)?);
+            while memories.get(at).is_some_and(|m| m.id < memory) {
+                at += 1;
+            }
+            if let Some(m) = memories.get_mut(at).filter(|m| m.id == memory) {
+                m.source_turns.push(turn);
+            }
+        }
+        Ok(memories)
+    }
+
     pub fn memory(&self, id: i64) -> Result<Memory> {
-        let (mut memory, facts) = self
+        let mut memory = self
             .conn
             .query_row(
-                "SELECT id, type, level, facts, interpretation, status, superseded_by, occurred_at,
-                        persona_hash, strength, urgency, created_at, updated_at, valence,
-                        recall_count, last_recalled_session, resolved_at, dreamt
-                 FROM memories WHERE id = ?1",
+                &format!("SELECT {MEMORY_COLUMNS} FROM memories WHERE id = ?1"),
                 [id],
-                |r| {
-                    let memory = Memory {
-                        id: r.get(0)?,
-                        kind: r.get(1)?,
-                        level: r.get(2)?,
-                        facts: Map::new(),
-                        interpretation: r.get(4)?,
-                        status: r.get(5)?,
-                        superseded_by: r.get(6)?,
-                        occurred_at: r.get(7)?,
-                        persona_hash: r.get(8)?,
-                        strength: r.get(9)?,
-                        urgency: r.get(10)?,
-                        resolved_at: r.get(16)?,
-                        valence: r.get(13)?,
-                        dreamt: r.get(17)?,
-                        recall_count: r.get(14)?,
-                        last_recalled_session: r.get(15)?,
-                        source_turns: Vec::new(),
-                        created_at: r.get(11)?,
-                        updated_at: r.get(12)?,
-                    };
-                    Ok((memory, r.get::<_, String>(3)?))
-                },
+                read_memory,
             )
             .optional()?
-            .ok_or(Error::NotFound(id))?;
-        memory.facts = serde_json::from_str(&facts)
-            .map_err(|e| Error::Invalid(format!("memory {id} facts: {e}")))?;
+            .ok_or(Error::NotFound(id))
+            .and_then(with_facts)?;
         let mut sources = self
             .conn
             .prepare("SELECT turn_id FROM memory_sources WHERE memory_id = ?1 ORDER BY turn_id")?;
@@ -594,6 +625,50 @@ impl Companion {
             .query_map([id], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(memory)
+    }
+
+    /// A memory's history, oldest first: how it read when it was written and
+    /// after each change since.
+    pub fn memory_versions(&self, id: i64) -> Result<Vec<MemoryVersion>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT v.id, v.interpretation, v.level, v.persona_hash, v.reason, d.magnitude,
+                    v.created_at
+             FROM memory_versions v LEFT JOIN drift_events d ON d.id = v.drift_event_id
+             WHERE v.memory_id = ?1 ORDER BY v.id",
+        )?;
+        let rows = stmt.query_map([id], |r| {
+            Ok(MemoryVersion {
+                id: r.get(0)?,
+                interpretation: r.get(1)?,
+                level: r.get(2)?,
+                persona_hash: r.get(3)?,
+                reason: r.get(4)?,
+                drift_magnitude: r.get(5)?,
+                created_at: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The turns a memory cites, in the order they were said, with everything
+    /// in them: what was said out of the companion's earshot too.
+    pub fn source_turns(&self, id: i64) -> Result<Vec<SourceTurn>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.session_id, t.role, t.content, t.echo, t.created_at
+             FROM memory_sources s JOIN turns t ON t.id = s.turn_id
+             WHERE s.memory_id = ?1 ORDER BY t.id",
+        )?;
+        let rows = stmt.query_map([id], |r| {
+            Ok(SourceTurn {
+                id: r.get(0)?,
+                session: r.get(1)?,
+                speaker: r.get(2)?,
+                content: r.get(3)?,
+                echo: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// One vector as sqlite-vec's little-endian f32 blob.
@@ -618,6 +693,44 @@ impl Companion {
             .ok_or_else(|| Error::Embedder("expected one vector, got none".into()))?;
         crate::companion::blob(&vector, embedder.dimensions())
     }
+}
+
+/// A memory's columns, in the order [`read_memory`] reads them.
+const MEMORY_COLUMNS: &str = "id, type, level, facts, interpretation, status, superseded_by, \
+    occurred_at, persona_hash, strength, urgency, created_at, updated_at, valence, recall_count, \
+    last_recalled_session, resolved_at, dreamt";
+
+/// One row of [`MEMORY_COLUMNS`] as a memory without its facts and source
+/// turns, and the facts as the JSON text stored.
+fn read_memory(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Memory, String)> {
+    let memory = Memory {
+        id: r.get(0)?,
+        kind: r.get(1)?,
+        level: r.get(2)?,
+        facts: Map::new(),
+        interpretation: r.get(4)?,
+        status: r.get(5)?,
+        superseded_by: r.get(6)?,
+        occurred_at: r.get(7)?,
+        persona_hash: r.get(8)?,
+        strength: r.get(9)?,
+        urgency: r.get(10)?,
+        resolved_at: r.get(16)?,
+        valence: r.get(13)?,
+        dreamt: r.get(17)?,
+        recall_count: r.get(14)?,
+        last_recalled_session: r.get(15)?,
+        source_turns: Vec::new(),
+        created_at: r.get(11)?,
+        updated_at: r.get(12)?,
+    };
+    Ok((memory, r.get(3)?))
+}
+
+fn with_facts((mut memory, facts): (Memory, String)) -> Result<Memory> {
+    memory.facts = serde_json::from_str(&facts)
+        .map_err(|e| Error::Invalid(format!("memory {} facts: {e}", memory.id)))?;
+    Ok(memory)
 }
 
 /// What the companion heard of a turn: the text without its out-of-earshot

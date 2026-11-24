@@ -30,7 +30,7 @@ pub use doctor::DeleteAll;
 pub use dream::WakeReport;
 pub use error::{Error, Result};
 pub use lore::Lore;
-pub use memory::{Consolidated, Deleted, Memory, MemoryDraft};
+pub use memory::{Consolidated, Deleted, Memory, MemoryDraft, MemoryVersion, SourceTurn};
 pub use recall::{Ranking, Recalled};
 pub use sleep::SleepReport;
 pub use state::{Mood, SectionVersion};

@@ -157,6 +157,11 @@ impl Companion {
         &self.soul
     }
 
+    /// The soul.md this handle was opened from.
+    pub fn soul_path(&self) -> &Path {
+        &self.soul_path
+    }
+
     pub fn db_path(&self) -> &Path {
         &self.db_path
     }
