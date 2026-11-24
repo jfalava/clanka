@@ -1,29 +1,80 @@
-use super::common::{self, TOKEN};
-use super::{Console, router};
+use super::common::{self, Scripted, TOKEN};
+use super::{Console, Doctor, router};
 use clanka::setup::Paths;
-use clanka_core::model::{Actor, Level, MemoryType, Speaker};
+use clanka_core::deps::{LlmRequest, LlmResponse, ToolCall};
+use clanka_core::diagnostics::{Event, Recorder};
+use clanka_core::model::{Actor, Level, MemoryType, Speaker, Status};
 use clanka_core::{Companion, MemoryDraft, Mood};
 use serde_json::{Value, json};
 use std::net::Ipv4Addr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const RUN: &str = "this-runs-token";
 
-/// A console over the one companion `common::open` keeps in `dir`, served on
-/// a port of its own. Returns where it listens.
-fn serve(dir: &Path) -> String {
-    let all_in = |dir: &Path| Paths {
+fn all_in(dir: &Path) -> Paths {
+    Paths {
         config: dir.to_owned(),
         souls: dir.to_owned(),
         data: dir.to_owned(),
         models: dir.to_owned(),
-    };
-    let console = Console::new(all_in(dir), RUN.into(), |soul| {
-        Ok(common::open(
-            soul.parent().expect("a soul.md in a directory"),
+    }
+}
+
+fn beside(soul: &Path) -> &Path {
+    soul.parent().expect("a soul.md in a directory")
+}
+
+/// A console over the one companion `common::open` keeps in `dir`, served on
+/// a port of its own. Returns where it listens.
+fn serve(dir: &Path) -> String {
+    listen(Console::new(all_in(dir), RUN.into(), |soul| {
+        Ok(common::open(beside(soul)))
+    }))
+}
+
+/// [`serve`] for a run started with `--doctor`, with no `[model]`.
+fn serve_doctor(dir: &Path) -> String {
+    listen(
+        Console::new(all_in(dir), RUN.into(), |soul| {
+            Ok(common::open(beside(soul)))
+        })
+        .with_doctor(Doctor::new(None)),
+    )
+}
+
+/// A `[model]` that re-reads every memory in `rewrites` in its first reply and
+/// says nothing after.
+fn rereader(rewrites: Vec<(i64, &'static str)>) -> (String, super::Open) {
+    let open = move |soul: &Path| {
+        let rewrites = rewrites.clone();
+        Ok(common::open_with(
+            beside(soul),
+            Scripted::new(move |request: &LlmRequest| {
+                let tool_calls = if request.messages.len() == 1 {
+                    rewrites
+                        .iter()
+                        .map(|(id, text)| ToolCall {
+                            id: format!("re{id}"),
+                            name: "reinterpret".into(),
+                            arguments: json!({ "memory_id": id, "interpretation": text })
+                                .to_string(),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Ok(LlmResponse {
+                    text: String::new(),
+                    tool_calls,
+                })
+            }),
         ))
-    });
+    };
+    ("a-model".into(), Box::new(open))
+}
+
+fn listen(console: Console) -> String {
     let (port, listening) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -50,17 +101,36 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-/// The status and body of a GET that carries this run's token.
-fn get(base: &str, path: &str) -> (u16, Value) {
-    let mut response = agent()
-        .get(format!("{base}{path}"))
-        .header("Authorization", format!("Bearer {RUN}"))
-        .call()
-        .unwrap();
+fn answered(mut response: ureq::http::Response<ureq::Body>) -> (u16, Value) {
     let body = response.body_mut().read_to_string().unwrap();
     (
         response.status().as_u16(),
         serde_json::from_str(&body).unwrap_or(Value::String(body)),
+    )
+}
+
+/// The status and body of a GET that carries this run's token.
+fn get(base: &str, path: &str) -> (u16, Value) {
+    answered(
+        agent()
+            .get(format!("{base}{path}"))
+            .header("Authorization", format!("Bearer {RUN}"))
+            .call()
+            .unwrap(),
+    )
+}
+
+/// The status and body of a POST as the server's own page sends one: with
+/// this run's token, from the server's own address.
+fn post(base: &str, path: &str, body: Value) -> (u16, Value) {
+    answered(
+        agent()
+            .post(format!("{base}{path}"))
+            .header("Authorization", format!("Bearer {RUN}"))
+            .header("Origin", base)
+            .header("Content-Type", "application/json")
+            .send(body.to_string())
+            .unwrap(),
     )
 }
 
@@ -166,6 +236,12 @@ fn nothing_but_a_get_is_answered_and_nothing_is_written() {
         format!("{companion}/facts"),
         format!("{companion}/recall?q=Marisol"),
         format!("{companion}/log"),
+        // What a run with --doctor would answer.
+        format!("{companion}/freeze"),
+        format!("{companion}/end-session"),
+        format!("{companion}/delete"),
+        format!("{companion}/rollback"),
+        format!("{companion}/reinterpret"),
         "/".to_owned(),
     ] {
         let url = format!("{base}{path}");
@@ -195,6 +271,15 @@ fn nothing_but_a_get_is_answered_and_nothing_is_written() {
         assert_eq!(get(&base, &format!("{companion}{path}")).0, 200, "{path}");
     }
     assert_eq!(get(&base, &format!("{companion}/memories/{fact}")).0, 200);
+    // A POST as the page of a run with --doctor would send it, and that run's previews.
+    for path in ["/freeze", "/end-session"] {
+        assert_eq!(post(&base, &format!("{companion}{path}"), json!({})).0, 405);
+    }
+    let ids = json!({ "ids": [fact] });
+    assert_eq!(post(&base, &format!("{companion}/delete"), ids).0, 405);
+    assert_eq!(get(&base, &format!("{companion}/delete?ids={fact}")).0, 404);
+    assert_eq!(get(&base, &format!("{companion}/rollback?to=0")).0, 404);
+    assert_eq!(get(&base, &companion).1["can_repair"], false);
     let after = (
         c.memories().unwrap(),
         c.writes_since(i64::MIN).unwrap(),
@@ -399,6 +484,273 @@ fn what_is_not_there_is_a_404_and_looking_makes_no_database() {
     assert_eq!(get(&base, "/api/companions/not-an-id").0, 400);
 }
 
+/// A command as diagnostics note it: its name, how it went and why not.
+type Noted = (&'static str, &'static str, Option<&'static str>);
+
+/// Diagnostics that keep each command noted.
+#[derive(Clone, Default)]
+struct Commands(Arc<Mutex<Vec<Noted>>>);
+impl Recorder for Commands {
+    fn record(&self, _: Option<uuid::Uuid>, event: &Event) {
+        if let Event::Command {
+            name,
+            outcome,
+            error,
+            ..
+        } = event
+        {
+            self.0.lock().unwrap().push((name, outcome, *error));
+        }
+    }
+}
+
+#[test]
+fn a_change_is_taken_only_from_this_servers_own_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = common::open(dir.path());
+    let base = serve_doctor(dir.path());
+    let freeze = format!("{base}/api/companions/{}/freeze", id(&c));
+    let ask = |token: bool, origin: Option<&str>| {
+        let mut request = agent().post(&freeze);
+        if token {
+            request = request.header("Authorization", format!("Bearer {RUN}"));
+        }
+        if let Some(origin) = origin {
+            request = request.header("Origin", origin);
+        }
+        request.send_empty().unwrap().status().as_u16()
+    };
+    let port = base.rsplit_once(':').unwrap().1;
+
+    // Another site's page with the token in hand, or anything that names no page.
+    assert_eq!(ask(true, Some("http://evil.example")), 403);
+    assert_eq!(ask(true, Some(&format!("https://127.0.0.1:{port}"))), 403);
+    assert_eq!(
+        ask(true, Some(&format!("http://127.0.0.1:{port}.evil.example"))),
+        403
+    );
+    assert_eq!(ask(true, Some("null")), 403);
+    assert_eq!(ask(true, None), 403);
+    // The page under another name for this machine than the one it was asked at.
+    assert_eq!(ask(true, Some(&format!("http://localhost:{port}"))), 403);
+    // The right page without this run's token.
+    assert_eq!(ask(false, Some(&base)), 401);
+    assert!(!c.is_frozen().unwrap());
+
+    assert_eq!(ask(true, Some(&base)), 200);
+    assert!(c.is_frozen().unwrap());
+    // A read needs no page to name: the address bar sends none.
+    assert_eq!(get(&base, &format!("/api/companions/{}", id(&c))).0, 200);
+}
+
+#[test]
+fn the_page_repairs_as_the_doctor_commands_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = common::open(dir.path());
+    let (said, fact, episode) = seed(&mut c);
+    let commands = Commands::default();
+    let noting = commands.clone();
+    let base = listen(
+        Console::new(all_in(dir.path()), RUN.into(), move |soul| {
+            Ok(common::open_noting(
+                beside(soul),
+                common::Dummy,
+                noting.clone(),
+            ))
+        })
+        .with_doctor(Doctor::new(None)),
+    );
+    let companion = format!("/api/companions/{}", id(&c));
+    let at = |path: &str| format!("{companion}{path}");
+    let overview = || get(&base, &companion).1;
+    assert_eq!(
+        (&overview()["can_repair"], &overview()["model"]),
+        (&json!(true), &Value::Null)
+    );
+
+    // Freeze and unfreeze, logged as the doctor's.
+    assert_eq!(
+        post(&base, &at("/freeze"), json!({})),
+        (200, json!({ "frozen": true }))
+    );
+    assert!(c.is_frozen().unwrap());
+    assert_eq!(overview()["frozen"], true);
+    assert_eq!(
+        post(&base, &at("/unfreeze"), json!({})),
+        (200, json!({ "frozen": false }))
+    );
+    assert!(!c.is_frozen().unwrap());
+    let last = c.writes_since(i64::MIN).unwrap().pop().unwrap();
+    assert_eq!(
+        (last.actor.as_str(), last.action.as_str()),
+        ("doctor", "unfreeze")
+    );
+
+    // A rollback is refused until the freeze is on, in the core's own words.
+    let log = c.writes_since(i64::MIN).unwrap();
+    let raised = log.iter().find(|e| e.action == "set_level").unwrap();
+    let plan_path = at(&format!("/rollback?to={}", raised.created_at));
+    let (status, planned) = get(&base, &plan_path);
+    assert_eq!(status, 200, "{planned}");
+    assert_eq!(planned["seen"], c.write_log_head().unwrap());
+    let order = |seen: &Value| json!({ "to": raised.created_at, "seen": seen });
+    let (status, why) = post(&base, &at("/rollback"), order(&planned["seen"]));
+    assert_eq!(status, 409, "{why}");
+    assert!(
+        why["error"].as_str().unwrap().contains("freeze first"),
+        "{why}"
+    );
+    assert_eq!(c.memory(fact).unwrap().level, Level::Vivid);
+
+    // Frozen, a plan the memory has moved on from is refused too.
+    post(&base, &at("/freeze"), json!({}));
+    let (status, why) = post(&base, &at("/rollback"), order(&planned["seen"]));
+    assert_eq!(status, 409, "{why}");
+    assert!(
+        why["error"].as_str().unwrap().contains("written to after"),
+        "{why}"
+    );
+    assert_eq!(c.memory(fact).unwrap().level, Level::Vivid);
+
+    // The plan is what the rollback then answers and does: the level raised
+    // at that time is back, and what was written before it stays.
+    let (_, planned) = get(&base, &plan_path);
+    assert_eq!(
+        planned["plan"],
+        json!({
+            "removed": [], "restored": [fact], "reopened": [], "kept_seared": [],
+            "state_rows": 0
+        })
+    );
+    let (status, done) = post(&base, &at("/rollback"), order(&planned["seen"]));
+    assert_eq!((status, &done), (200, &planned["plan"]));
+    assert_eq!(c.memory(fact).unwrap().level, Level::Normal);
+    assert!(c.memory(episode).is_ok());
+    post(&base, &at("/unfreeze"), json!({}));
+
+    // Ending the conversation: once, and then there is none to end.
+    assert_eq!(overview()["session"], "conversation");
+    assert_eq!(
+        post(&base, &at("/end-session"), json!({})),
+        (200, json!({ "ended": "conversation" }))
+    );
+    assert_eq!(c.session_in_progress().unwrap(), None);
+    assert_eq!(overview()["session"], "none");
+    assert_eq!(
+        post(&base, &at("/end-session"), json!({})),
+        (200, json!({ "ended": "none" }))
+    );
+
+    // A delete with a memory that is not there deletes nothing.
+    let (status, _) = post(
+        &base,
+        &at("/delete"),
+        json!({ "ids": [episode, fact, 4040] }),
+    );
+    assert_eq!(status, 404);
+    assert_eq!(c.memories().unwrap().len(), 2);
+    assert_eq!(get(&base, &at("/delete?ids=4040")).0, 404);
+    assert_eq!(get(&base, &at("/delete?ids=one")).0, 409);
+
+    // Its plan is what it then answers and does: the turn only the fact cited goes.
+    let (status, planned) = get(&base, &at(&format!("/delete?ids={fact},{episode}")));
+    assert_eq!(
+        (status, &planned),
+        (200, &json!({ "turns": [said], "restored": [] }))
+    );
+    assert_eq!(c.memories().unwrap().len(), 2, "a plan deletes nothing");
+    assert_eq!(
+        post(&base, &at("/delete"), json!({ "ids": [fact, episode] })),
+        (200, planned)
+    );
+    assert!(c.memories().unwrap().is_empty());
+    assert!(c.source_turns(fact).unwrap().is_empty());
+    let last = c.writes_since(i64::MIN).unwrap().pop().unwrap();
+    assert_eq!(
+        (last.actor.as_str(), last.action.as_str()),
+        ("cli", "delete")
+    );
+
+    // Each is noted as the command it stands for, with the kind of refusal.
+    let noted = commands.0.lock().unwrap().clone();
+    for expected in [
+        ("doctor freeze", "ok", None),
+        ("doctor unfreeze", "ok", None),
+        ("doctor rollback", "error", Some("not_frozen")),
+        ("doctor rollback", "ok", None),
+        ("doctor end-session", "ok", None),
+        ("doctor delete", "error", Some("not_found")),
+        ("doctor delete", "ok", None),
+    ] {
+        assert!(
+            noted.contains(&expected),
+            "{expected:?} is not in {noted:?}"
+        );
+    }
+}
+
+#[test]
+fn memories_are_reread_on_the_model_a_batch_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = common::open(dir.path());
+    let (_, fact, episode) = seed(&mut c);
+    let companion = format!("/api/companions/{}", id(&c));
+    let reread = format!("{companion}/reinterpret");
+
+    // Without a [model], the refusal says where to put one.
+    let plain = serve_doctor(dir.path());
+    let (status, why) = post(&plain, &reread, json!({ "ids": [fact] }));
+    assert_eq!(status, 409, "{why}");
+    assert!(why["error"].as_str().unwrap().contains("[model]"), "{why}");
+
+    let base = listen(
+        Console::new(all_in(dir.path()), RUN.into(), |soul| {
+            Ok(common::open(beside(soul)))
+        })
+        .with_doctor(Doctor::new(Some(rereader(vec![(
+            fact,
+            "Marisol moved away, and they miss her",
+        )])))),
+    );
+    assert_eq!(get(&base, &companion).1["model"], "a-model");
+
+    let (status, why) = post(&base, &reread, json!({ "ids": [fact] }));
+    assert_eq!(status, 409, "{why}");
+    assert!(
+        why["error"].as_str().unwrap().contains("freeze first"),
+        "{why}"
+    );
+    c.set_frozen(true).unwrap();
+    // One that cites no turns has nothing to re-read.
+    assert_eq!(post(&base, &reread, json!({ "ids": [episode] })).0, 409);
+    let many: Vec<i64> = (1..=21).collect();
+    assert_eq!(post(&base, &reread, json!({ "ids": many })).0, 409);
+    assert_eq!(post(&base, &reread, json!({ "ids": [] })).0, 409);
+    assert_eq!(
+        c.memory(fact).unwrap().interpretation,
+        "Their sister Marisol moved to Oslo"
+    );
+
+    assert_eq!(
+        post(&base, &reread, json!({ "ids": [fact] })),
+        (
+            200,
+            json!({ "rewritten": 1, "model_calls": 1, "refused": [] })
+        )
+    );
+    let m = c.memory(fact).unwrap();
+    assert_eq!(
+        (m.interpretation.as_str(), m.status),
+        ("Marisol moved away, and they miss her", Status::Active)
+    );
+    // The reads' own handle, which has no model, sees it at once.
+    let (_, detail) = get(&base, &format!("{companion}/memories/{fact}"));
+    assert_eq!(
+        detail["versions"].as_array().unwrap().last().unwrap()["reason"],
+        "reinterpreted"
+    );
+}
+
 /// Where the page's tests read what the server sends.
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/test/fixtures");
 
@@ -454,7 +806,7 @@ fn the_answers_are_the_ones_the_page_was_built_to_read() {
     let opinion = c.write(Actor::Writer, &opinion).unwrap();
     let mut firmer = MemoryDraft::new(MemoryType::Opinion, Level::Vivid, "Oslo is far too cold");
     firmer.strength = Some(0.75);
-    c.supersede(Actor::Writer, opinion, &firmer).unwrap();
+    let firmer = c.supersede(Actor::Writer, opinion, &firmer).unwrap();
     c.set_mood(
         Actor::Writer,
         &Mood {
@@ -473,11 +825,32 @@ fn the_answers_are_the_ones_the_page_was_built_to_read() {
         "Has a sister, Marisol.",
     )
     .unwrap();
-    let base = serve(dir.path());
+    // A run with --doctor and a [model], so the repairs' answers are here too.
+    // The model re-reads the fact and one memory it was not asked about.
+    let base = listen(
+        Console::new(all_in(dir.path()), RUN.into(), |soul| {
+            Ok(common::open(beside(soul)))
+        })
+        .with_doctor(Doctor::new(Some(rereader(vec![
+            (fact, "Marisol moved away"),
+            (thread, "Not mine to re-read"),
+        ])))),
+    );
     let companion = format!("/api/companions/{}", id(&c));
 
     let update = std::env::var_os("CLANKA_UPDATE_FIXTURES").is_some();
     let mut stale = Vec::new();
+    let mut keep = |name: &'static str, (status, mut answer): (u16, Value)| {
+        assert_eq!(status, 200, "{name}: {answer}");
+        settled(&mut answer, &id(&c), &dir.path().display().to_string());
+        let sent = serde_json::to_string_pretty(&answer).unwrap() + "\n";
+        let file = Path::new(FIXTURES).join(format!("{name}.json"));
+        if update {
+            std::fs::write(&file, sent).unwrap();
+        } else if std::fs::read_to_string(&file).ok().as_deref() != Some(sent.as_str()) {
+            stale.push(name);
+        }
+    };
     for (name, path) in [
         ("companions", "/api/companions".to_owned()),
         ("overview", companion.clone()),
@@ -487,17 +860,39 @@ fn the_answers_are_the_ones_the_page_was_built_to_read() {
         ("recall", format!("{companion}/recall?q=Marisol")),
         ("log", format!("{companion}/log")),
     ] {
-        let (status, mut answer) = get(&base, &path);
-        assert_eq!(status, 200, "{path}: {answer}");
-        settled(&mut answer, &id(&c), &dir.path().display().to_string());
-        let sent = serde_json::to_string_pretty(&answer).unwrap() + "\n";
-        let file = Path::new(FIXTURES).join(format!("{name}.json"));
-        if update {
-            std::fs::write(&file, sent).unwrap();
-        } else if std::fs::read_to_string(&file).ok().as_deref() != Some(sent.as_str()) {
-            stale.push(name);
-        }
+        keep(name, get(&base, &path));
     }
+    // The repairs, in an order each can run in: the plan of a delete, then
+    // frozen, a re-read, and a rollback to before the level was raised.
+    let at = |path: &str| format!("{companion}{path}");
+    keep(
+        "deletion",
+        get(&base, &at(&format!("/delete?ids={fact},{firmer}"))),
+    );
+    keep("frozen", post(&base, &at("/freeze"), json!({})));
+    keep(
+        "reread",
+        post(&base, &at("/reinterpret"), json!({ "ids": [fact] })),
+    );
+    let raised = c
+        .writes_since(i64::MIN)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.action == "set_level")
+        .unwrap()
+        .created_at;
+    let planned = get(&base, &at(&format!("/rollback?to={raised}")));
+    let seen = planned.1["seen"].clone();
+    keep("rollback_plan", planned);
+    keep(
+        "rollback",
+        post(
+            &base,
+            &at("/rollback"),
+            json!({ "to": raised, "seen": seen }),
+        ),
+    );
+    keep("ended", post(&base, &at("/end-session"), json!({})));
     assert!(
         stale.is_empty(),
         "the server no longer sends what web/test/fixtures holds for {stale:?}; if that is \

@@ -3,7 +3,16 @@ import "./styles.css";
 import { Effect } from "effect";
 import { Runtime } from "foldkit";
 
-import { Flags, Message, Model, Theme, applyTheme, init, update } from "./main";
+import {
+  COMPANIONS_KEY,
+  Flags,
+  Message,
+  Model,
+  Theme,
+  applyTheme,
+  init,
+  update,
+} from "./main";
 import { view } from "./view";
 
 /** The theme jfa.dev apps keep in the `jfa-theme` cookie; index.html painted it already. */
@@ -45,5 +54,11 @@ Runtime.run(
     container: document.getElementById("root"),
     devTools: { Message },
   }),
-  { flags: Effect.succeed({ theme, token }) },
+  {
+    flags: Effect.succeed({
+      theme,
+      token,
+      isCompanionsOpen: localStorage.getItem(COMPANIONS_KEY) !== "closed",
+    }),
+  },
 );

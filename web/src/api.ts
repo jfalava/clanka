@@ -1,7 +1,8 @@
 // What the page asks `clanka web` for. The server is Rust (crates/cli/src/web/mod.rs) and answers
 // with the core's own types as JSON, so the names here are the Rust fields', snake case and all.
 // test/api.test.ts decodes what the server really sends with these Schemas: a field renamed on one
-// side fails there or in the server's own tests. Every request is a GET; the page changes nothing.
+// side fails there or in the server's own tests. A GET changes nothing. The POSTs are the repairs
+// of `clanka doctor`, which the server takes only when it was started with `--doctor`.
 import { Effect, Schema } from "effect";
 
 const Time = Schema.Finite;
@@ -67,6 +68,10 @@ export const Overview = Schema.Struct({
       versions: Schema.Array(SectionVersion),
     }),
   ),
+  /** Whether `clanka web` was started with `--doctor`, so the page can repair. */
+  can_repair: Schema.Boolean,
+  /** The `[model]` that re-reads memories on such a run; null when config.toml has none. */
+  model: Schema.NullOr(Schema.String),
 });
 export type Overview = typeof Overview.Type;
 
@@ -146,29 +151,76 @@ export const WriteEntry = Schema.Struct({
 });
 export type WriteEntry = typeof WriteEntry.Type;
 
+export const Frozen = Schema.Struct({ frozen: Schema.Boolean });
+
+/** What ending the conversation ended. */
+export const Ended = Schema.Struct({ ended: Schema.Literals(["dream", "conversation", "none"]) });
+
+/** What deleting memories removes besides them: the plan before, the report after. */
+export const Deletion = Schema.Struct({
+  /** Turns no other memory cites, which leave the transcript. */
+  turns: Schema.Array(Id),
+  /** Memories the deleted ones had replaced, current again. */
+  restored: Schema.Array(Id),
+});
+export type Deletion = typeof Deletion.Type;
+
+export const Rollback = Schema.Struct({
+  removed: Schema.Array(Id),
+  restored: Schema.Array(Id),
+  reopened: Schema.Array(Id),
+  /** Seared memories written or changed since, which a rollback leaves as they are. */
+  kept_seared: Schema.Array(Id),
+  /** Mood, note, soul section and pushback entries dropped. */
+  state_rows: Schema.Finite,
+});
+export type Rollback = typeof Rollback.Type;
+
+/** What a rollback would do, and the newest log entry it was worked out against. */
+export const RollbackPlan = Schema.Struct({ plan: Rollback, seen: Id });
+export type RollbackPlan = typeof RollbackPlan.Type;
+
+export const Reread = Schema.Struct({
+  rewritten: Schema.Finite,
+  model_calls: Schema.Finite,
+  /** Calls of the model that were refused, as `clanka doctor reinterpret` prints them. */
+  refused: Schema.Array(Schema.String),
+});
+export type Reread = typeof Reread.Type;
+
+/** The most memories one request re-reads: the core's `REINTERPRET_BATCH`. */
+export const REREAD_BATCH = 20;
+
 const Refusal = Schema.Struct({ error: Schema.String });
 const refusal = Schema.decodeUnknownOption(Refusal);
 
 /**
- * A GET of the API with this run's token, decoded. Fails with a sentence to show: the server's own
- * `error`, or what went wrong reaching it.
+ * A request of the API with this run's token, decoded. Fails with a sentence to show: the
+ * server's own `error`, or what went wrong reaching it.
  */
-export const get = <A>(
+const request = <A>(
   token: string,
   path: string,
   schema: Schema.Codec<A, unknown>,
+  body?: unknown,
 ): Effect.Effect<A, string> =>
   Effect.tryPromise({
     try: async () => {
-      const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
-      const body: unknown = await response.json().catch(() => null);
+      const response = await fetch(path, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
+      });
+      const answer: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        const said = refusal(body);
+        const said = refusal(answer);
         throw new Error(
           said._tag === "Some" ? said.value.error : `clanka web answered ${response.status}.`,
         );
       }
-      return body;
+      return answer;
     },
     catch: (cause) =>
       cause instanceof TypeError
@@ -186,6 +238,18 @@ export const get = <A>(
     ),
   );
 
+/** A GET: it changes nothing. */
+export const get = <A>(token: string, path: string, schema: Schema.Codec<A, unknown>) =>
+  request(token, path, schema);
+
+/** A POST: one of the doctor's repairs. */
+export const post = <A>(
+  token: string,
+  path: string,
+  schema: Schema.Codec<A, unknown>,
+  body: unknown = {},
+) => request(token, path, schema, body);
+
 const companion = (id: string) => `/api/companions/${id}`;
 
 export const paths = {
@@ -197,4 +261,15 @@ export const paths = {
   recall: (id: string, query: string) => `${companion(id)}/recall?q=${encodeURIComponent(query)}`,
   log: (id: string, since: number | null) =>
     since === null ? `${companion(id)}/log` : `${companion(id)}/log?since=${since}`,
+  freeze: (id: string) => `${companion(id)}/freeze`,
+  unfreeze: (id: string) => `${companion(id)}/unfreeze`,
+  endSession: (id: string) => `${companion(id)}/end-session`,
+  /** POST to delete; `deletePlan` is the GET that says what it would remove. */
+  delete: (id: string) => `${companion(id)}/delete`,
+  deletePlan: (id: string, memories: ReadonlyArray<number>) =>
+    `${companion(id)}/delete?ids=${memories.join(",")}`,
+  /** POST to roll back; `rollbackPlan` is the GET that says what it would do. */
+  rollback: (id: string) => `${companion(id)}/rollback`,
+  rollbackPlan: (id: string, to: number) => `${companion(id)}/rollback?to=${to}`,
+  reinterpret: (id: string) => `${companion(id)}/reinterpret`,
 };

@@ -1,0 +1,7 @@
+{
+  "model_calls": 2,
+  "refused": [
+    "reinterpret: error: invalid write: memory 3 isn't one of the memories to re-read"
+  ],
+  "rewritten": 1
+}

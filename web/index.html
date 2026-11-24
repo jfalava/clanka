@@ -7,18 +7,7 @@
     <meta name="referrer" content="no-referrer" />
     <title>Memories | clanka</title>
     <link rel="icon" href="data:," />
-    <script>
-      // jfa.dev's theme-init.js: paint the saved theme before the first frame.
-      (function () {
-        var match = document.cookie.match(/(?:^|;\s*)jfa-theme=(light|dark|system)/);
-        var theme = match ? match[1] : "system";
-        var dark =
-          theme === "dark" ||
-          (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.classList.toggle("dark", dark);
-        document.documentElement.style.colorScheme = dark ? "dark" : "light";
-      })();
-    </script>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

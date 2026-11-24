@@ -282,16 +282,22 @@ enum Command {
     /// each one its mood and soul sections, every memory with its history and the turns it
     /// was written from, what a query brings up, the write log and the facts that were
     /// never said. It shows what `clanka memories`, `clanka recall`, `clanka doctor log` and
-    /// `clanka doctor check-facts` print, and like them it only reads: the page has nothing
-    /// that changes a memory, and the doctor's repairs stay in `clanka doctor`. (A companion
-    /// that was never opened is listed, and is not opened.)
+    /// `clanka doctor check-facts` print, and like them it only reads: without --doctor the
+    /// page has nothing that changes a memory. (A companion that was never opened is listed,
+    /// and is not opened.)
+    ///
+    /// With --doctor the page also repairs, as `clanka doctor` does: freeze and unfreeze, end
+    /// the open conversation, roll back to before a write in the log, and delete or
+    /// re-interpret the memories you tick. A rollback and a delete first show what they would
+    /// remove. `clanka doctor delete-all` and `reembed` stay in the terminal.
     ///
     /// The server listens on 127.0.0.1 only and runs until Ctrl-C. The address it prints
     /// ends in a token made for this run, and the page's requests are refused without it,
-    /// so another site open in your browser cannot read your memories through it. Anyone
-    /// you give the address to can, for as long as this runs. For a companion on another
-    /// machine, run it there with --no-open and forward the port over SSH.
+    /// so another site open in your browser cannot read your memories through it, or change
+    /// them. Anyone you give the address to can, for as long as this runs. For a companion
+    /// on another machine, run it there with --no-open and forward the port over SSH.
     #[command(after_long_help = "Example:\n  clanka web\n\n\
+        To repair from the page:\n  clanka web --doctor\n\n\
         On another machine:\n  \
         ssh -L 7333:127.0.0.1:7333 other-machine clanka web --no-open\n  \
         # then open the address it prints, here")]
@@ -302,6 +308,12 @@ enum Command {
         /// Print the address without opening a browser.
         #[arg(long)]
         no_open: bool,
+        /// Let the page repair a memory, not only read it.
+        ///
+        /// Re-interpreting memories needs the [model] in config.toml and its API key in the
+        /// environment `clanka web` runs in.
+        #[arg(long)]
+        doctor: bool,
     },
     /// Download the embedding model config.toml names, if it is not here yet.
     ///
@@ -932,7 +944,11 @@ fn run(command: Command) -> Result<bool> {
             Ok(())
         }
         Command::Memories { soul } => memories(&paths, &soul),
-        Command::Web { port, no_open } => web::serve(paths, port, !no_open),
+        Command::Web {
+            port,
+            no_open,
+            doctor,
+        } => web::serve(paths, port, !no_open, doctor),
         Command::Tics { replies, json } => tics(&replies, json),
         Command::Hermes {
             command: HermesCommand::Profile { profile, soul },

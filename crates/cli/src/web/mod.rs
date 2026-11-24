@@ -1,8 +1,13 @@
 //! `clanka web`: a page on this machine for looking through what companions
-//! remember. The server only reads: every route is a GET, and nothing here
-//! calls a write of the core. It listens on 127.0.0.1 alone, and the API
-//! answers only requests that carry the token made for this run, because
-//! what it serves is what was said to a companion.
+//! remember. Unless it was started with `--doctor` the server only reads:
+//! every route is a GET, and nothing they run calls a write of the core. It
+//! listens on 127.0.0.1 alone, and the API answers only requests that carry
+//! the token made for this run, because what it serves is what was said to a
+//! companion.
+//!
+//! `--doctor` adds the repairs of `clanka doctor` as POST routes, each the
+//! core call its command makes. `delete-all` and `reembed` are not among
+//! them. A POST is answered only to the page this server sent.
 //!
 //! The page itself is `web/` in the repository, built ahead of time and put
 //! into the binary by `build.rs`.
@@ -12,14 +17,16 @@ use axum::extract::{Path as Route, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
-use clanka::setup::{self, Paths, SharedEmbedder};
-use clanka_core::doctor::{FactIssue, WriteEntry};
-use clanka_core::model::Section;
+use clanka::setup::{self, Config, Paths, SharedEmbedder};
+use clanka_core::diagnostics::{Event, ms_since};
+use clanka_core::doctor::{FactIssue, REINTERPRET_BATCH, WriteEntry};
+use clanka_core::model::{Section, SessionEnd};
 use clanka_core::soul::Soul;
 use clanka_core::{
-    Companion, Memory, MemoryVersion, Mood, PersonaStatus, Recalled, SectionVersion, SourceTurn,
+    Companion, Deletion, Memory, MemoryVersion, Mood, PersonaStatus, Recalled, Rollback,
+    SectionVersion, SourceTurn,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -41,6 +48,7 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 pub const PORT: u16 = 7333;
 
 type Open = Box<dyn Fn(&Path) -> Result<Companion> + Send + Sync>;
+type Handles = Mutex<HashMap<Uuid, Arc<Mutex<Companion>>>>;
 
 /// What the server reads from: the companions set up here, each opened the
 /// first time the page asks for it and kept open after.
@@ -48,7 +56,27 @@ pub struct Console {
     paths: Paths,
     open: Open,
     token: String,
-    opened: Mutex<HashMap<Uuid, Arc<Mutex<Companion>>>>,
+    opened: Handles,
+    /// What `--doctor` adds; `None` on a run that only reads.
+    doctor: Option<Doctor>,
+}
+
+/// The part of a run that repairs. Its routes use the handles the reads use,
+/// which have no model; re-reading memories opens a second one on the
+/// `[model]`, so a read never waits behind a call to it.
+pub struct Doctor {
+    /// The `[model]` in config.toml, by name, and a companion opened on it.
+    model: Option<(String, Open)>,
+    rereaders: Handles,
+}
+
+impl Doctor {
+    pub fn new(model: Option<(String, Open)>) -> Self {
+        Self {
+            model,
+            rereaders: Mutex::new(HashMap::new()),
+        }
+    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -66,7 +94,14 @@ impl Console {
             open: Box::new(open),
             token,
             opened: Mutex::new(HashMap::new()),
+            doctor: None,
         }
+    }
+
+    /// The same console, able to repair.
+    pub fn with_doctor(mut self, doctor: Doctor) -> Self {
+        self.doctor = Some(doctor);
+        self
     }
 
     fn database(&self, id: Uuid) -> PathBuf {
@@ -102,7 +137,17 @@ impl Console {
     /// The handle to a companion, opened if this is the first time. One that
     /// was never opened has no database, and looking at it must not make one.
     fn companion(&self, id: Uuid) -> Result<Arc<Mutex<Companion>>, Failure> {
-        if let Some(handle) = lock(&self.opened).get(&id) {
+        self.handle(id, &self.opened, &self.open)
+    }
+
+    /// A handle from `kept`, or one `open` makes and `kept` keeps.
+    fn handle(
+        &self,
+        id: Uuid,
+        kept: &Handles,
+        open: &Open,
+    ) -> Result<Arc<Mutex<Companion>>, Failure> {
+        if let Some(handle) = lock(kept).get(&id) {
             return Ok(handle.clone());
         }
         let soul = self
@@ -118,8 +163,8 @@ impl Console {
                 soul.display()
             )));
         }
-        let companion = (self.open)(&soul).map_err(broken)?;
-        Ok(lock(&self.opened)
+        let companion = open(&soul).map_err(broken)?;
+        Ok(lock(kept)
             .entry(id)
             .or_insert_with(|| Arc::new(Mutex::new(companion)))
             .clone())
@@ -132,15 +177,93 @@ impl Console {
         read: impl FnOnce(&Companion) -> clanka_core::Result<T>,
     ) -> Result<T, Failure> {
         let handle = self.companion(id)?;
-        let mut companion = lock(&handle);
-        if let Err(e) = companion.refresh() {
-            // Its database was replaced or its soul.md no longer loads: the
-            // next request opens it again from what is there.
-            lock(&self.opened).remove(&id);
-            return Err(e.into());
-        }
+        let companion = caught_up(id, &handle, &self.opened)?;
         Ok(read(&companion)?)
     }
+
+    /// Runs a repair on a companion that has caught up with the disk, and
+    /// notes it in the diagnostics as the `clanka doctor` command it stands for.
+    fn repair<T>(
+        &self,
+        id: Uuid,
+        command: &'static str,
+        work: impl FnOnce(&mut Companion) -> clanka_core::Result<T>,
+    ) -> Result<T, Failure> {
+        let handle = self.companion(id)?;
+        let mut companion = caught_up(id, &handle, &self.opened)?;
+        noted(&mut companion, command, work)
+    }
+
+    /// Has the companion re-read these memories, on a handle that has the model.
+    fn reread(&self, id: Uuid, ids: &[i64]) -> Result<Reread, Failure> {
+        let doctor = self
+            .doctor
+            .as_ref()
+            .ok_or_else(|| Failure::Missing("this clanka web only reads".into()))?;
+        let Some((_, open)) = &doctor.model else {
+            return Err(Failure::Refused(format!(
+                "no companion model configured to re-read the memories; add a [model] section \
+                 to {} and start `clanka web --doctor` again",
+                self.paths.config_file().display()
+            )));
+        };
+        if ids.is_empty() || ids.len() > REINTERPRET_BATCH {
+            return Err(Failure::Refused(format!(
+                "between 1 and {REINTERPRET_BATCH} memories are re-read at a time"
+            )));
+        }
+        let handle = self.handle(id, &doctor.rereaders, open)?;
+        let mut companion = caught_up(id, &handle, &doctor.rereaders)?;
+        let reflection = noted(&mut companion, "doctor reinterpret", |c| c.reinterpret(ids))?;
+        Ok(Reread {
+            rewritten: reflection
+                .calls
+                .iter()
+                .filter(|call| call.ok && call.name == "reinterpret")
+                .count(),
+            model_calls: reflection.rounds,
+            refused: reflection
+                .calls
+                .iter()
+                .filter(|call| !call.ok)
+                .map(|call| format!("{}: {}", call.name, call.result))
+                .collect(),
+        })
+    }
+}
+
+/// The companion behind a handle, caught up with the disk.
+fn caught_up<'a>(
+    id: Uuid,
+    handle: &'a Mutex<Companion>,
+    kept: &Handles,
+) -> Result<MutexGuard<'a, Companion>, Failure> {
+    let mut companion = lock(handle);
+    if let Err(e) = companion.refresh() {
+        // Its database was replaced or its soul.md no longer loads: the
+        // next request opens it again from what is there.
+        lock(kept).remove(&id);
+        return Err(e.into());
+    }
+    Ok(companion)
+}
+
+/// Runs `work` and notes how it went as a `command` event: its name, how long
+/// it took and the kind of error, as a run of the command itself is noted.
+fn noted<T>(
+    companion: &mut Companion,
+    command: &'static str,
+    work: impl FnOnce(&mut Companion) -> clanka_core::Result<T>,
+) -> Result<T, Failure> {
+    let started = std::time::Instant::now();
+    let done = work(companion);
+    companion.diagnose(&Event::Command {
+        name: command,
+        ms: ms_since(started),
+        outcome: if done.is_ok() { "ok" } else { "error" },
+        error: done.as_ref().err().map(clanka_core::Error::code),
+    });
+    Ok(done?)
 }
 
 /// A refusal, as the status and the `{"error": …}` the page shows.
@@ -148,7 +271,11 @@ impl Console {
 enum Failure {
     Unauthorized,
     Forbidden,
+    /// A change asked for by something other than this server's own page.
+    Foreign,
     Missing(String),
+    /// The core will not do it as things stand: not frozen, seared, archived.
+    Refused(String),
     Broken(String),
 }
 
@@ -160,6 +287,13 @@ impl From<clanka_core::Error> for Failure {
     fn from(error: clanka_core::Error) -> Self {
         match error {
             clanka_core::Error::NotFound(_) => Failure::Missing(error.to_string()),
+            clanka_core::Error::NotFrozen
+            | clanka_core::Error::Frozen
+            | clanka_core::Error::Archived
+            | clanka_core::Error::PersonaUnresolved
+            | clanka_core::Error::SessionClosed(_)
+            | clanka_core::Error::Seared(_)
+            | clanka_core::Error::Invalid(_) => Failure::Refused(error.to_string()),
             _ => Failure::Broken(error.to_string()),
         }
     }
@@ -177,7 +311,12 @@ impl IntoResponse for Failure {
                 StatusCode::FORBIDDEN,
                 "clanka web answers only as 127.0.0.1 or localhost.".into(),
             ),
+            Failure::Foreign => (
+                StatusCode::FORBIDDEN,
+                "clanka web changes a memory only when its own page asks.".into(),
+            ),
             Failure::Missing(error) => (StatusCode::NOT_FOUND, error),
+            Failure::Refused(error) => (StatusCode::CONFLICT, error),
             Failure::Broken(error) => (StatusCode::INTERNAL_SERVER_ERROR, error),
         };
         (status, Json(json!({ "error": error }))).into_response()
@@ -212,6 +351,10 @@ struct Overview {
     /// The note the companion left itself for its next reply.
     note: Option<String>,
     sections: Vec<SectionHistory>,
+    /// Whether this run was started with `--doctor`, so the page can repair.
+    can_repair: bool,
+    /// The `[model]` that re-reads memories on such a run, if there is one.
+    model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -244,6 +387,56 @@ struct RecallQuery {
 struct LogQuery {
     /// Milliseconds since the epoch; writes at or after it. Everything when absent.
     since: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct Frozen {
+    frozen: bool,
+}
+
+#[derive(Serialize)]
+struct Ended {
+    /// What was open and no longer is: `dream`, `conversation` or `none`.
+    ended: &'static str,
+}
+
+#[derive(Deserialize)]
+struct Ids {
+    ids: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct IdsQuery {
+    /// Memory IDs with commas between them.
+    ids: String,
+}
+
+#[derive(Deserialize)]
+struct RollbackQuery {
+    /// Milliseconds since the epoch; writes at or after it are undone.
+    to: i64,
+}
+
+/// What a rollback would do, and the newest entry of the write log it was
+/// worked out against. The page sends `seen` back with the rollback itself.
+#[derive(Serialize)]
+struct RollbackPlan {
+    plan: Rollback,
+    seen: i64,
+}
+
+#[derive(Deserialize)]
+struct RollbackOrder {
+    to: i64,
+    seen: i64,
+}
+
+#[derive(Serialize)]
+struct Reread {
+    rewritten: usize,
+    model_calls: usize,
+    /// Calls of the model that were refused, as `clanka doctor reinterpret` prints them.
+    refused: Vec<String>,
 }
 
 type Shared = State<Arc<Console>>;
@@ -291,11 +484,21 @@ fn overview_of(c: &Companion) -> clanka_core::Result<Overview> {
         mood: c.mood()?,
         note: c.last_turn_note()?.map(|(_, note)| note),
         sections,
+        can_repair: false,
+        model: None,
     })
 }
 
 async fn overview(State(console): Shared, Route(id): Route<Uuid>) -> Answer<Overview> {
-    blocking(move || console.read(id, overview_of)).await
+    blocking(move || {
+        let mut overview = console.read(id, overview_of)?;
+        if let Some(doctor) = &console.doctor {
+            overview.can_repair = true;
+            overview.model = doctor.model.as_ref().map(|(name, _)| name.clone());
+        }
+        Ok(overview)
+    })
+    .await
 }
 
 async fn memories(State(console): Shared, Route(id): Route<Uuid>) -> Answer<Vec<Memory>> {
@@ -354,6 +557,124 @@ async fn log(
     .await
 }
 
+async fn freeze(State(console): Shared, Route(id): Route<Uuid>) -> Answer<Frozen> {
+    blocking(move || {
+        console.repair(id, "doctor freeze", |c| c.set_frozen(true))?;
+        Ok(Frozen { frozen: true })
+    })
+    .await
+}
+
+async fn unfreeze(State(console): Shared, Route(id): Route<Uuid>) -> Answer<Frozen> {
+    blocking(move || {
+        console.repair(id, "doctor unfreeze", |c| c.set_frozen(false))?;
+        Ok(Frozen { frozen: false })
+    })
+    .await
+}
+
+/// `clanka doctor end-session`: an open dream is dropped, else the open
+/// conversation ends without a night.
+async fn end_session(State(console): Shared, Route(id): Route<Uuid>) -> Answer<Ended> {
+    blocking(move || {
+        let ended = console.repair(id, "doctor end-session", |c| {
+            if c.drop_dream()?.is_some() {
+                return Ok("dream");
+            }
+            match c.session_in_progress()? {
+                Some(session) => {
+                    c.end_session(session, SessionEnd::Doctor)?;
+                    Ok("conversation")
+                }
+                None => Ok("none"),
+            }
+        })?;
+        Ok(Ended { ended })
+    })
+    .await
+}
+
+async fn delete_plan(
+    State(console): Shared,
+    Route(id): Route<Uuid>,
+    Query(query): Query<IdsQuery>,
+) -> Answer<Deletion> {
+    blocking(move || {
+        let ids = query
+            .ids
+            .split(',')
+            .map(|id| id.trim().parse::<i64>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| Failure::Refused(format!("{:?} is not a list of memories", query.ids)))?;
+        console.read(id, |c| c.delete_plan(&ids))
+    })
+    .await
+}
+
+async fn delete(
+    State(console): Shared,
+    Route(id): Route<Uuid>,
+    Json(order): Json<Ids>,
+) -> Answer<Deletion> {
+    blocking(move || {
+        console.repair(id, "doctor delete", |c| {
+            // All of them or none: one that is gone refuses before any goes.
+            c.delete_plan(&order.ids)?;
+            c.delete_memories(&order.ids)
+        })
+    })
+    .await
+}
+
+async fn rollback_plan(
+    State(console): Shared,
+    Route(id): Route<Uuid>,
+    Query(query): Query<RollbackQuery>,
+) -> Answer<RollbackPlan> {
+    blocking(move || {
+        console.read(id, |c| {
+            Ok(RollbackPlan {
+                // `rollback_to` is exclusive, as `clanka doctor rollback` knows.
+                plan: c.rollback_plan(query.to - 1)?,
+                seen: c.write_log_head()?,
+            })
+        })
+    })
+    .await
+}
+
+async fn rollback(
+    State(console): Shared,
+    Route(id): Route<Uuid>,
+    Json(order): Json<RollbackOrder>,
+) -> Answer<Rollback> {
+    blocking(move || {
+        console
+            .repair(id, "doctor rollback", |c| {
+                if c.write_log_head()? != order.seen {
+                    return Ok(None);
+                }
+                c.rollback_to(order.to - 1).map(Some)
+            })?
+            .ok_or_else(|| {
+                Failure::Refused(
+                    "The memory was written to after this rollback was worked out. Look at \
+                     what it would do now."
+                        .into(),
+                )
+            })
+    })
+    .await
+}
+
+async fn reinterpret(
+    State(console): Shared,
+    Route(id): Route<Uuid>,
+    Json(order): Json<Ids>,
+) -> Answer<Reread> {
+    blocking(move || console.reread(id, &order.ids)).await
+}
+
 /// A browser on this machine reaches the server as 127.0.0.1 or localhost,
 /// whatever port a tunnel gave it. Any other name is another site's page
 /// pointing its own domain here to read the answers.
@@ -386,14 +707,24 @@ fn refusal(console: &Console, request: &Request) -> Option<Failure> {
             .get(name)
             .and_then(|value: &HeaderValue| value.to_str().ok())
     };
-    if !header(header::HOST).is_some_and(local) {
+    let host = header(header::HOST).filter(|host| local(host));
+    let Some(host) = host else {
         return Some(Failure::Forbidden);
-    }
+    };
     if request.uri().path().starts_with("/api/") {
         let token = header(header::AUTHORIZATION).and_then(|value| value.strip_prefix("Bearer "));
         if !token.is_some_and(|token| same(token, &console.token)) {
             return Some(Failure::Unauthorized);
         }
+    }
+    // A browser names the page a POST comes from. On a run that repairs, only
+    // this server's own page may ask for a change, token or no token.
+    let reads = matches!(*request.method(), Method::GET | Method::HEAD);
+    if console.doctor.is_some()
+        && !reads
+        && header(header::ORIGIN) != Some(format!("http://{host}").as_str())
+    {
+        return Some(Failure::Foreign);
     }
     None
 }
@@ -420,15 +751,21 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
+/// What the page may load and where it may be shown: its own files and this
+/// server, in no frame. The tab holds a token that reads every memory, and on
+/// a `--doctor` run deletes them, so nothing from elsewhere runs beside it.
+const POLICY: &str = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; \
+    base-uri 'none'; form-action 'none'";
+
 /// Everything that is not the API: the page's files. A path that names no
 /// file is a place inside the page, which the page's own routing reads.
 async fn asset(method: Method, uri: Uri, headers: HeaderMap) -> Response {
     let path = uri.path();
-    if path.starts_with("/api/") {
-        return Failure::Missing(format!("no {path} in this clanka")).into_response();
-    }
     if method != Method::GET && method != Method::HEAD {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    if path.starts_with("/api/") {
+        return Failure::Missing(format!("no {path} in this clanka")).into_response();
     }
     let file = |path: &str| ASSETS.iter().find(|(route, ..)| *route == path);
     let is_place = !path
@@ -449,6 +786,7 @@ async fn asset(method: Method, uri: Uri, headers: HeaderMap) -> Response {
         // The files keep their names across builds, so the browser asks each time.
         (header::CACHE_CONTROL, "no-cache"),
         (header::CONTENT_TYPE, content_type(route)),
+        (header::CONTENT_SECURITY_POLICY, POLICY),
     ];
     if headers
         .get(header::IF_NONE_MATCH)
@@ -460,14 +798,31 @@ async fn asset(method: Method, uri: Uri, headers: HeaderMap) -> Response {
 }
 
 pub fn router(console: Arc<Console>) -> Router {
-    Router::new()
+    let reads = Router::new()
         .route("/api/companions", get(companions))
         .route("/api/companions/{id}", get(overview))
         .route("/api/companions/{id}/memories", get(memories))
         .route("/api/companions/{id}/memories/{memory}", get(memory))
         .route("/api/companions/{id}/facts", get(facts))
         .route("/api/companions/{id}/recall", get(recall))
-        .route("/api/companions/{id}/log", get(log))
+        .route("/api/companions/{id}/log", get(log));
+    // A GET of a repair says what it would do; a POST does it.
+    let repairs = Router::new()
+        .route("/api/companions/{id}/freeze", post(freeze))
+        .route("/api/companions/{id}/unfreeze", post(unfreeze))
+        .route("/api/companions/{id}/end-session", post(end_session))
+        .route("/api/companions/{id}/delete", get(delete_plan).post(delete))
+        .route(
+            "/api/companions/{id}/rollback",
+            get(rollback_plan).post(rollback),
+        )
+        .route("/api/companions/{id}/reinterpret", post(reinterpret));
+    let routes = if console.doctor.is_some() {
+        reads.merge(repairs)
+    } else {
+        reads
+    };
+    routes
         .fallback(asset)
         .layer(middleware::from_fn_with_state(console.clone(), guard))
         .with_state(console)
@@ -495,23 +850,41 @@ fn open_in_browser(url: &str) {
         .spawn();
 }
 
-/// Serves the page until the process is stopped.
-pub fn serve(paths: Paths, port: u16, browser: bool) -> Result<()> {
+/// Serves the page until the process is stopped. With `doctor` the page can
+/// also repair.
+pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool) -> Result<()> {
     let token = setup::random_hex(32);
     // The embedding model loads with the first companion opened, not before
     // the page is up, and once for all of them.
-    let embedder: Mutex<Option<SharedEmbedder>> = Mutex::new(None);
-    let opener = Paths::get()?;
-    let console = Arc::new(Console::new(paths, token.clone(), move |soul| {
-        let embedder = {
-            let mut loaded = lock(&embedder);
-            match &*loaded {
-                Some(embedder) => embedder.clone(),
-                None => loaded.insert(SharedEmbedder::load(&opener)?).clone(),
-            }
-        };
-        setup::open(&opener, soul, embedder, None)
-    }));
+    let embedder: Arc<Mutex<Option<SharedEmbedder>>> = Arc::default();
+    let opener = |model: Option<setup::ModelConfig>| -> Result<Open> {
+        let paths = Paths::get()?;
+        let embedder = embedder.clone();
+        Ok(Box::new(move |soul: &Path| {
+            let embedder = {
+                let mut loaded = lock(&embedder);
+                match &*loaded {
+                    Some(embedder) => embedder.clone(),
+                    None => loaded.insert(SharedEmbedder::load(&paths)?).clone(),
+                }
+            };
+            setup::open(&paths, soul, embedder, model.as_ref())
+        }))
+    };
+    let model = if doctor {
+        Config::load(&paths)?.model
+    } else {
+        None
+    };
+    let rereader = match model {
+        Some(model) => Some((model.model.clone(), opener(Some(model))?)),
+        None => None,
+    };
+    let mut console = Console::new(paths, token.clone(), opener(None)?);
+    if doctor {
+        console = console.with_doctor(Doctor::new(rereader));
+    }
+    let console = Arc::new(console);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -524,7 +897,15 @@ pub fn serve(paths: Paths, port: u16, browser: bool) -> Result<()> {
             })?;
         let url = address(listener.local_addr()?.port(), &token);
         println!("clanka web is at {url}");
-        println!("It only reads. Whoever has this address can read every memory here.");
+        if doctor {
+            println!(
+                "It can repair: freeze, end a conversation, roll back, and delete or re-read \
+                 memories. Whoever has this address can read every memory here and do the same."
+            );
+        } else {
+            println!("It only reads. Whoever has this address can read every memory here.");
+            println!("To repair from the page too, run `clanka web --doctor`.");
+        }
         println!("Stop it with Ctrl-C.");
         if browser {
             open_in_browser(&url);
