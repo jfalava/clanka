@@ -15,6 +15,13 @@ export const crates = [
     "excerpt": "Apache License\nVersion 2.0, January 2004\nhttp://www.apache.org/licenses/\nTERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n1. Definitions."
   },
   {
+    "name": "axum",
+    "version": "0.8.9",
+    "license": "MIT",
+    "licenseUrl": "https://github.com/tokio-rs/axum/blob/main/axum/LICENSE",
+    "excerpt": "Copyright (c) 2019 axum Contributors\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without"
+  },
+  {
     "name": "base64",
     "version": "0.23.1",
     "license": "MIT OR Apache-2.0",

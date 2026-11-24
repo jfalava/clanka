@@ -67,6 +67,9 @@
     "/cli/upgrade",
     "/cli/upgrade/index.md",
     "/cli/upgrade/index.mdx",
+    "/cli/web",
+    "/cli/web/index.md",
+    "/cli/web/index.mdx",
     "/configuration",
     "/configuration/index.md",
     "/configuration/index.mdx",
@@ -137,6 +140,7 @@
     "/og/cli/soul.png",
     "/og/cli/tics.png",
     "/og/cli/upgrade.png",
+    "/og/cli/web.png",
     "/og/configuration.png",
     "/og/conversations/dreams.png",
     "/og/conversations/notation.png",
@@ -182,5 +186,5 @@
     "docs": ""
   },
   "opaqueNamespaces": [],
-  "builtAt": "2026-11-22T21:11:52.536Z"
+  "builtAt": "2026-11-24T14:32:34.916Z"
 }

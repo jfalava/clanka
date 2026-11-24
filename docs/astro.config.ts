@@ -55,6 +55,7 @@ const nimbusConfig = defineNimbusConfig({
           "cli/mcp",
           "cli/hermes",
           "cli/memories",
+          "cli/web",
           "cli/lore",
           "cli/recall",
           "cli/eval",

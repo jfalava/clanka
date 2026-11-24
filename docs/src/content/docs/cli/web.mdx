@@ -1,0 +1,78 @@
+---
+title: web
+description: Look through what your companions remember in a browser, on this machine, without changing anything.
+---
+
+```sh
+clanka web [--port <port>] [--no-open]
+```
+
+Serves a page from this machine and opens it in your browser. The page lists
+the companions set up here, and for the one you pick it shows:
+
+- **Overview:** its mood and why, the note it left itself for the next
+  reply, the soul sections it wrote with their earlier versions, its open
+  threads, and how many memories it holds of each type and level.
+- **Memories:** every memory, with filters by type, level and status and a
+  search box. Opening one shows its facts, the turns it was written from,
+  its history (each rewrite, with how far a drift moved it) and what it
+  replaced or was replaced by. A fact that was never said in those turns is
+  marked, as [`clanka doctor check-facts`](/cli/doctor/#check-facts) lists
+  it.
+- **Recall:** what a query brings up, with the relevance and score behind
+  the order, as [`clanka recall`](/cli/recall/) prints it. Nothing is marked
+  as recalled.
+- **Log:** every write to the memory, as
+  [`clanka doctor log`](/cli/doctor/#log) prints it. The times are in UTC, in
+  the form [`clanka doctor rollback --to`](/cli/doctor/#rollback) takes.
+
+The search box finds words in a memory or its facts; `#12` finds the memory
+with that number.
+
+## It only reads
+
+The page has nothing that changes a memory, and the server answers nothing
+but reads. Repairs stay in [`clanka doctor`](/cli/doctor/); a frozen
+companion shows a banner that says so.
+
+Opening a companion does what [`clanka memories`](/cli/memories/) does to
+its database: one from an older release is moved to the current schema. A
+companion that was never opened is listed and is not opened, so looking
+creates no database.
+
+What another process writes while the page is open shows after **Refresh**.
+
+## Who can read it
+
+The server listens on `127.0.0.1` only and runs until Ctrl-C. The address it
+prints ends in a token made for that run:
+
+```text
+clanka web is at http://127.0.0.1:7333/#t=3fa9…
+```
+
+The page keeps the token for the tab and takes it out of the address bar.
+Every request for a memory is refused without it, so another site open in
+your browser cannot read your memories through the server. Anyone you give
+the whole address to can, for as long as that run lasts. A new run makes a
+new token, and a tab from the run before it stops working.
+
+## Options
+
+### `--port <port>`
+
+The port on `127.0.0.1` to listen on. Default: `7333`.
+
+### `--no-open`
+
+Print the address without opening a browser.
+
+## A companion on another machine
+
+Run it there without a browser and forward the port over SSH:
+
+```sh
+ssh -L 7333:127.0.0.1:7333 other-machine clanka web --no-open
+```
+
+Then open the address it prints in a browser on this machine.
