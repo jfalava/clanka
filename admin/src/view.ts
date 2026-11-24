@@ -47,7 +47,7 @@ const header = (model: Model, h: Builder): Html =>
             [
               h.span(
                 [h.Class("shrink-0 text-sm font-bold tracking-tight text-primary")],
-                ["/CLANKA", h.span([h.Class("pl-0.5 text-xs tracking-tight")], ["by JFA"])],
+                ["CLANKA", h.span([h.Class("pl-0.5 text-xs tracking-tight")], ["by JFA"])],
               ),
               h.span([h.Class("hidden text-xs text-muted-foreground/75 sm:inline")], ["/"]),
               h.span(
@@ -182,10 +182,7 @@ const days = (overview: Overview, h: Builder): Html => {
             h.Title(`${day}: ${count(total)} events, ${count(errors)} failures`),
           ],
           [
-            h.div([
-              h.Class("bg-destructive"),
-              h.Style({ height: `${(errors / highest) * 100}%` }),
-            ]),
+            h.div([h.Class("bg-destructive"), h.Style({ height: `${(errors / highest) * 100}%` })]),
             h.div([
               h.Class("rounded-t-sm bg-primary"),
               h.Style({ height: `${((total - errors) / highest) * 100}%` }),
@@ -211,7 +208,17 @@ const nothing = (text: string, h: Builder) =>
   h.p([h.Class("rounded-lg border border-dashed border-border p-4 type-meta")], [text]);
 
 const head = (labels: ReadonlyArray<string>, h: Builder) =>
-  Table.header({}, [Table.row({}, labels.map((label) => Table.head({}, [label], h)), h)], h);
+  Table.header(
+    {},
+    [
+      Table.row(
+        {},
+        labels.map((label) => Table.head({}, [label], h)),
+        h,
+      ),
+    ],
+    h,
+  );
 
 const mono = "font-mono text-xs";
 
@@ -232,14 +239,24 @@ const byEvent = (overview: Overview, h: Builder): Html =>
                     {},
                     [
                       Table.cell({ className: mono }, [row.event], h),
-                      Table.cell({ className: `${mono} text-muted-foreground` }, [word(row.detail)], h),
+                      Table.cell(
+                        { className: `${mono} text-muted-foreground` },
+                        [word(row.detail)],
+                        h,
+                      ),
                       Table.cell({ className: mono }, [count(row.count)], h),
                       Table.cell(
-                        { className: `${mono} ${row.errors > 0 ? "text-destructive" : "text-muted-foreground"}` },
+                        {
+                          className: `${mono} ${row.errors > 0 ? "text-destructive" : "text-muted-foreground"}`,
+                        },
                         [count(row.errors)],
                         h,
                       ),
-                      Table.cell({ className: `${mono} text-muted-foreground` }, [ms(row.avgMs)], h),
+                      Table.cell(
+                        { className: `${mono} text-muted-foreground` },
+                        [ms(row.avgMs)],
+                        h,
+                      ),
                     ],
                     h,
                   ),
@@ -297,7 +314,10 @@ const installs = (overview: Overview, h: Builder): Html =>
           Table(
             {},
             [
-              head(["Sender", "Install", "Host", "Version", "Platform", "Events", "Failures", "Last"], h),
+              head(
+                ["Sender", "Install", "Host", "Version", "Platform", "Events", "Failures", "Last"],
+                h,
+              ),
               Table.body(
                 {},
                 overview.installs.map((row) =>
@@ -305,7 +325,11 @@ const installs = (overview: Overview, h: Builder): Html =>
                     {},
                     [
                       Table.cell({}, [badge({ variant: "outline" }, [row.sender], h)], h),
-                      Table.cell({ className: `${mono} text-muted-foreground` }, [row.install.slice(0, 12)], h),
+                      Table.cell(
+                        { className: `${mono} text-muted-foreground` },
+                        [row.install.slice(0, 12)],
+                        h,
+                      ),
                       Table.cell({ className: mono }, [word(row.host)], h),
                       Table.cell({ className: mono }, [word(row.version)], h),
                       Table.cell(
@@ -315,7 +339,9 @@ const installs = (overview: Overview, h: Builder): Html =>
                       ),
                       Table.cell({ className: mono }, [count(row.events)], h),
                       Table.cell(
-                        { className: `${mono} ${row.errors > 0 ? "text-destructive" : "text-muted-foreground"}` },
+                        {
+                          className: `${mono} ${row.errors > 0 ? "text-destructive" : "text-muted-foreground"}`,
+                        },
                         [count(row.errors)],
                         h,
                       ),
@@ -355,10 +381,18 @@ const eventRows = (model: Model, row: EventRow, h: Builder): ReadonlyArray<Html>
       ),
       Table.cell({ className: "type-meta" }, [when(row.at)], h),
       Table.cell({ className: mono }, [row.event], h),
-      Table.cell({ className: `${mono} text-muted-foreground` }, [word(row.pass ?? row.companion)], h),
+      Table.cell(
+        { className: `${mono} text-muted-foreground` },
+        [word(row.pass ?? row.companion)],
+        h,
+      ),
       Table.cell(
         {},
-        [row.error === null ? h.span([h.Class("type-meta")], ["—"]) : badge({ variant: "destructive" }, [row.error], h)],
+        [
+          row.error === null
+            ? h.span([h.Class("type-meta")], ["—"])
+            : badge({ variant: "destructive" }, [row.error], h),
+        ],
         h,
       ),
       Table.cell({ className: `${mono} text-muted-foreground` }, [ms(row.ms)], h),
@@ -384,7 +418,11 @@ const eventRows = (model: Model, row: EventRow, h: Builder): ReadonlyArray<Html>
               ],
             ),
             h.pre(
-              [h.Class("overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-xs")],
+              [
+                h.Class(
+                  "overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-xs",
+                ),
+              ],
               [JSON.stringify(JSON.parse(row.body), null, 2)],
             ),
           ],
@@ -411,14 +449,21 @@ const recent = (model: Model, h: Builder): Html =>
                     {},
                     [
                       head(["", "When", "Event", "About", "Error", "Took", "Sender"], h),
-                      Table.body({}, listed.events.flatMap((row) => eventRows(model, row, h)), h),
+                      Table.body(
+                        {},
+                        listed.events.flatMap((row) => eventRows(model, row, h)),
+                        h,
+                      ),
                     ],
                     h,
                   ),
                   h,
                 ),
                 listed.next === null
-                  ? h.p([h.Class("type-meta")], [`${count(listed.events.length)} events, all shown.`])
+                  ? h.p(
+                      [h.Class("type-meta")],
+                      [`${count(listed.events.length)} events, all shown.`],
+                    )
                   : button(
                       {
                         onClick: Message.ClickedLoadMore(),
@@ -464,7 +509,9 @@ const loading = (h: Builder): Html =>
     [
       h.div(
         [h.Class("grid grid-cols-2 gap-3 md:grid-cols-5")],
-        [1, 2, 3, 4, 5].map((index) => h.keyed("div")(String(index), [], [skeleton({ className: "h-20" }, [], h)])),
+        [1, 2, 3, 4, 5].map((index) =>
+          h.keyed("div")(String(index), [], [skeleton({ className: "h-20" }, [], h)]),
+        ),
       ),
       skeleton({ className: "h-32" }, [], h),
     ],
