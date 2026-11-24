@@ -134,6 +134,11 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
         .unwrap();
     c.set_level(Actor::Writer, to_sear, Level::Seared).unwrap();
     c.resolve_thread(Actor::Writer, thread).unwrap();
+    // A thread opened and closed after the point goes; it is not reopened.
+    let mut late = draft(MemoryType::OpenThread, Level::Normal, "Who is the cousin?");
+    late.urgency = Some(Urgency::Simmering);
+    let late = c.write(Actor::Writer, &late).unwrap();
+    c.resolve_thread(Actor::Writer, late).unwrap();
     c.set_mood(Actor::Writer, &mood("after")).unwrap();
     c.write_section(Actor::Writer, Section::AboutUser, "Has a cousin")
         .unwrap();
@@ -160,6 +165,8 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
             "write",
             "set_level",
             "resolve_thread",
+            "write",
+            "resolve_thread",
             "set_mood",
             "write_section",
             "pushback",
@@ -171,8 +178,18 @@ fn rollback_restores_the_past_and_leaves_seared_alone() {
     let turns = count(&db, "SELECT count(*) FROM turns");
 
     c.set_frozen(true).unwrap();
+    // The plan is the report, made before anything is written.
+    let before = (c.memories().unwrap(), c.write_log_head().unwrap());
+    let plan = c.rollback_plan(point).unwrap();
+    assert_eq!(
+        before,
+        (c.memories().unwrap(), c.write_log_head().unwrap()),
+        "a plan writes nothing"
+    );
     let report = c.rollback_to(point).unwrap();
-    assert_eq!(report.removed, [cousin, new]);
+    assert_eq!(plan, report);
+    assert!(c.write_log_head().unwrap() > before.1);
+    assert_eq!(report.removed, [late, cousin, new]);
     assert_eq!(report.restored, [raised]);
     assert_eq!(report.reopened, [thread]);
     assert_eq!(report.kept_seared, [to_sear, born_seared]);

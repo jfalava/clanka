@@ -2,7 +2,7 @@ mod common;
 
 use clanka_core::model::Section;
 use clanka_core::model::{Actor, Level, MemoryType, SessionEnd, Speaker, Status, Urgency};
-use clanka_core::{Companion, Deleted, Error, MemoryDraft, Mood};
+use clanka_core::{Companion, Deleted, Deletion, Error, MemoryDraft, Mood};
 use common::{count, fixture, open, raw};
 use rusqlite::Connection;
 use serde_json::json;
@@ -381,6 +381,93 @@ fn delete_removes_everything_but_shared_turns_and_restores_the_past() {
         "SELECT memory_id FROM memory_vectors WHERE embedding MATCH '[1, 0, 0, 0.1]' AND k = 1",
     );
     assert_ne!(nearest, lisbon);
+}
+
+/// The plan a front end shows before a delete is the delete's own report:
+/// together, memories take the turns only they cite, and what one of them
+/// brought back on its way out is not back once it is deleted too.
+#[test]
+fn a_delete_plan_is_what_the_delete_then_removes() {
+    let f = fixture();
+    let mut c = open(&f, "k").unwrap();
+    let t_madrid = with_turn(&mut c, "I live in Madrid");
+    let t_lisbon = with_turn(&mut c, "I moved to Lisbon");
+    let t_porto = with_turn(&mut c, "Porto now");
+    let t_pair = with_turn(&mut c, "Laura helped me move");
+    let t_kept = with_turn(&mut c, "My dad stayed behind");
+
+    let old = c
+        .write(
+            Actor::Writer,
+            &fact("city", "Madrid", "Sam lives in Madrid", t_madrid),
+        )
+        .unwrap();
+    let mid = c
+        .supersede(
+            Actor::Writer,
+            old,
+            &fact("city", "Lisbon", "Sam lives in Lisbon", t_lisbon),
+        )
+        .unwrap();
+    let mut porto = fact("city", "Porto", "Sam lives in Porto", t_porto);
+    porto.source_turns.extend([t_pair, t_kept]);
+    let new = c.supersede(Actor::Writer, mid, &porto).unwrap();
+    let mut helped = draft(MemoryType::Episode, "Laura helped with the move");
+    helped.source_turns = vec![t_pair];
+    let helped = c.write(Actor::Writer, &helped).unwrap();
+    let mut stayed = draft(MemoryType::Relationship, "Sam's dad stayed behind");
+    stayed.source_turns = vec![t_kept];
+    let stayed = c.write(Actor::Writer, &stayed).unwrap();
+
+    // Alone, the newest takes only its own turn and brings back the one before it.
+    assert_eq!(
+        c.delete_plan(&[new]).unwrap(),
+        Deletion {
+            turns: vec![t_porto],
+            restored: vec![mid]
+        }
+    );
+    assert!(matches!(
+        c.delete_plan(&[new, 4040]),
+        Err(Error::NotFound(4040))
+    ));
+
+    let set = [mid, helped, new];
+    let before = (c.memories().unwrap(), c.write_log_head().unwrap());
+    let plan = c.delete_plan(&set).unwrap();
+    assert_eq!(
+        before,
+        (c.memories().unwrap(), c.write_log_head().unwrap()),
+        "a plan writes nothing"
+    );
+    assert_eq!(
+        plan,
+        Deletion {
+            turns: vec![t_lisbon, t_porto, t_pair],
+            restored: vec![old]
+        }
+    );
+    assert_eq!(c.delete_memories(&set).unwrap(), plan);
+
+    let left: Vec<_> = c
+        .memories()
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.id, m.status, m.superseded_by))
+        .collect();
+    assert_eq!(
+        left,
+        [(old, Status::Active, None), (stayed, Status::Active, None)]
+    );
+    let db = raw(c.db_path(), "k");
+    let turns: Vec<i64> = db
+        .prepare("SELECT id FROM turns ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(turns, [t_madrid, t_kept]);
 }
 
 /// The nearest few of all vectors can all be memories the check must ignore

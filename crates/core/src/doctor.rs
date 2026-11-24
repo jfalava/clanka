@@ -12,14 +12,15 @@ use crate::memory::{Rewrite, remove_memory, rewrite_interpretation};
 use crate::model::{Level, Speaker};
 use crate::writer::args;
 use crate::{Companion, Error, Memory, Reflection, Result};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-/// Memories re-interpreted per model call during a persona update.
-const REINTERPRET_BATCH: usize = 20;
+/// Memories re-interpreted per model call during a persona update, and the
+/// most a front end should hand [`Companion::reinterpret`] at once.
+pub const REINTERPRET_BATCH: usize = 20;
 
 /// One entry of the write log.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -33,7 +34,7 @@ pub struct WriteEntry {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Rollback {
     /// Memories written after the point, now gone.
     pub removed: Vec<i64>,
@@ -115,42 +116,52 @@ impl Companion {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The ID of the newest entry in the write log, or 0 when it is empty. A
+    /// front end that showed a plan sends it back with the action, to learn
+    /// that the memory was written to in between.
+    pub fn write_log_head(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("SELECT coalesce(max(id), 0) FROM write_log", [], |r| {
+                r.get(0)
+            })?)
+    }
+
+    /// What [`Companion::rollback_to`] would do, without doing it: its report
+    /// for the memory as it is now. A read, so it does not ask for the freeze;
+    /// without one the memory may change before the rollback runs.
+    pub fn rollback_plan(&self, to: i64) -> Result<Rollback> {
+        let mut report = undo(&self.conn, to)?.report();
+        report.reopened = reopening(&self.conn, to)?;
+        for table in ROLLED_BACK_STATE {
+            let rows: i64 = self.conn.query_row(
+                &format!("SELECT count(*) FROM {table} WHERE created_at > ?1"),
+                [to],
+                |r| r.get(0),
+            )?;
+            report.state_rows += rows as usize;
+        }
+        Ok(report)
+    }
+
     /// Puts the companion's memory back as it was at `to`. The transcript and the write
     /// log are never touched, and seared memories are left as they are.
     pub fn rollback_to(&mut self, to: i64) -> Result<Rollback> {
         ensure_doctor(&self.conn)?;
-        let mut report = Rollback::default();
-
-        let born: Vec<(i64, Level)> = self
-            .conn
-            .prepare("SELECT id, level FROM memories WHERE created_at > ?1 ORDER BY id DESC")?
-            .query_map([to], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        // Memories from before the point that changed after it, with their last earlier version.
-        let changed: Vec<(i64, Level, String, String, Level)> = self
-            .conn
-            .prepare(
-                "SELECT m.id, m.level, m.interpretation, v.interpretation, v.level
-                 FROM memories m JOIN memory_versions v ON v.id =
-                   (SELECT max(id) FROM memory_versions WHERE memory_id = m.id AND created_at <= ?1)
-                 WHERE m.created_at <= ?1
-                   AND EXISTS (SELECT 1 FROM memory_versions WHERE memory_id = m.id AND created_at > ?1)",
-            )?
-            .query_map([to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
-            .collect::<rusqlite::Result<_>>()?;
+        let undo = undo(&self.conn, to)?;
+        let mut report = undo.report();
         // Embeddings first: the model never runs inside the write lock.
         let mut restore = Vec::new();
-        for (id, level, now_text, then_text, then_level) in changed {
-            if level == Level::Seared {
-                report.kept_seared.push(id);
+        for changed in &undo.changed {
+            if changed.level == Level::Seared {
                 continue;
             }
-            let embedding = if now_text == then_text {
+            let embedding = if changed.now == changed.then {
                 None
             } else {
-                Some(self.embed(&then_text)?)
+                Some(self.embed(&changed.then)?)
             };
-            restore.push((id, then_text, then_level, embedding));
+            restore.push((changed, embedding));
         }
 
         let now = self.deps.clock.now_ms();
@@ -158,15 +169,11 @@ impl Companion {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_embedder(&tx, self.deps.embedder.model_id())?;
-        for (id, level) in born {
-            if level == Level::Seared {
-                report.kept_seared.push(id);
-            } else {
-                remove_memory(&tx, id, now)?;
-                report.removed.push(id);
-            }
+        for &id in &report.removed {
+            remove_memory(&tx, id, now)?;
         }
-        for (id, text, level, embedding) in restore {
+        for (changed, embedding) in restore {
+            let id = changed.id;
             tx.execute(
                 "DELETE FROM memory_versions WHERE memory_id = ?1 AND created_at > ?2",
                 params![id, to],
@@ -177,7 +184,7 @@ impl Companion {
             )?;
             tx.execute(
                 "UPDATE memories SET interpretation = ?1, level = ?2, updated_at = ?3 WHERE id = ?4",
-                params![text, level, now, id],
+                params![changed.then, changed.then_level, now, id],
             )?;
             if let Some(embedding) = embedding {
                 tx.execute("DELETE FROM memory_vectors WHERE memory_id = ?1", [id])?;
@@ -186,26 +193,16 @@ impl Companion {
                     params![id, embedding],
                 )?;
             }
-            report.restored.push(id);
         }
-        report.reopened = tx
-            .prepare("SELECT id FROM memories WHERE resolved_at > ?1 ORDER BY id")?
-            .query_map([to], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+        report.reopened = reopening(&tx, to)?;
         tx.execute(
             "UPDATE memories SET resolved_at = NULL, updated_at = ?1 WHERE resolved_at > ?2",
             params![now, to],
         )?;
-        for table in [
-            "mood_states",
-            "turn_notes",
-            "soul_section_versions",
-            "pushbacks",
-        ] {
+        for table in ROLLED_BACK_STATE {
             report.state_rows +=
                 tx.execute(&format!("DELETE FROM {table} WHERE created_at > ?1"), [to])?;
         }
-        report.kept_seared.sort_unstable();
         let summary = json!({
             "to": to, "removed": report.removed.len(), "restored": report.restored.len(),
             "reopened": report.reopened.len(), "kept_seared": report.kept_seared,
@@ -486,6 +483,99 @@ impl Companion {
         tx.commit()?;
         Ok(format!("memory {} re-interpreted", a.memory_id))
     }
+}
+
+/// The tables a rollback drops the later rows of: the mood, the turn notes,
+/// the soul sections and the pushbacks.
+const ROLLED_BACK_STATE: [&str; 4] = [
+    "mood_states",
+    "turn_notes",
+    "soul_section_versions",
+    "pushbacks",
+];
+
+/// A memory from before the point of a rollback that changed after it.
+struct Changed {
+    id: i64,
+    level: Level,
+    /// Its text now, and in its last version from before the point.
+    now: String,
+    then: String,
+    then_level: Level,
+}
+
+/// What a rollback finds to undo. [`Companion::rollback_plan`] reports it
+/// and [`Companion::rollback_to`] acts on it, so the two cannot disagree.
+struct Undo {
+    /// Memories written after the point, newest first, with their level.
+    born: Vec<(i64, Level)>,
+    changed: Vec<Changed>,
+}
+
+fn undo(conn: &Connection, to: i64) -> Result<Undo> {
+    let born = conn
+        .prepare("SELECT id, level FROM memories WHERE created_at > ?1 ORDER BY id DESC")?
+        .query_map([to], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    // Memories from before the point that changed after it, with their last earlier version.
+    let changed = conn
+        .prepare(
+            "SELECT m.id, m.level, m.interpretation, v.interpretation, v.level
+             FROM memories m JOIN memory_versions v ON v.id =
+               (SELECT max(id) FROM memory_versions WHERE memory_id = m.id AND created_at <= ?1)
+             WHERE m.created_at <= ?1
+               AND EXISTS (SELECT 1 FROM memory_versions WHERE memory_id = m.id AND created_at > ?1)
+             ORDER BY m.id",
+        )?
+        .query_map([to], |r| {
+            Ok(Changed {
+                id: r.get(0)?,
+                level: r.get(1)?,
+                now: r.get(2)?,
+                then: r.get(3)?,
+                then_level: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(Undo { born, changed })
+}
+
+impl Undo {
+    /// Which memories go, which get their earlier text back and which are
+    /// seared and stay: the report, but for what only the database can count.
+    fn report(&self) -> Rollback {
+        let mut report = Rollback::default();
+        for &(id, level) in &self.born {
+            if level == Level::Seared {
+                report.kept_seared.push(id);
+            } else {
+                report.removed.push(id);
+            }
+        }
+        for changed in &self.changed {
+            if changed.level == Level::Seared {
+                report.kept_seared.push(changed.id);
+            } else {
+                report.restored.push(changed.id);
+            }
+        }
+        report.kept_seared.sort_unstable();
+        report
+    }
+}
+
+/// Threads closed after the point, which a rollback opens again. A thread
+/// the rollback removes is not one of them, before it is removed or after.
+fn reopening(conn: &Connection, to: i64) -> Result<Vec<i64>> {
+    let ids = conn
+        .prepare(
+            "SELECT id FROM memories
+             WHERE resolved_at > ?1 AND NOT (created_at > ?1 AND level != 'seared')
+             ORDER BY id",
+        )?
+        .query_map([to], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
 }
 
 fn instructions(name: &str) -> String {

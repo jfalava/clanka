@@ -118,6 +118,35 @@ pub struct Deleted {
     pub restored: Option<i64>,
 }
 
+/// What deleting a set of memories removes besides them: the answer of
+/// [`Companion::delete_plan`] before, and of [`Companion::delete_memories`] after.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Deletion {
+    /// Source turns no memory outside the set cites, gone from the transcript.
+    pub turns: Vec<i64>,
+    /// Memories outside the set that one in it had superseded, current again.
+    pub restored: Vec<i64>,
+}
+
+/// The turns these memories cite that no other memory does: what deleting
+/// them takes from the transcript. Together, two memories take a turn only
+/// the two of them cite, which neither would take alone.
+fn turns_only_cited_by(conn: &Connection, ids: &[i64]) -> Result<Vec<i64>> {
+    let set = json!(ids).to_string();
+    let turns = conn
+        .prepare(
+            "SELECT DISTINCT s.turn_id FROM memory_sources s
+             WHERE s.memory_id IN (SELECT value FROM json_each(?1))
+               AND NOT EXISTS (SELECT 1 FROM memory_sources o
+                               WHERE o.turn_id = s.turn_id
+                                 AND o.memory_id NOT IN (SELECT value FROM json_each(?1)))
+             ORDER BY s.turn_id",
+        )?
+        .query_map([set], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(turns)
+}
+
 impl Companion {
     /// The open session, or a new one if the last one ended. Sessions end only
     /// at sleep or by the doctor, so every process shares the same open session.
@@ -536,14 +565,7 @@ impl Companion {
             .optional()?;
         found.ok_or(Error::NotFound(id))?;
 
-        let own_turns: Vec<i64> = tx
-            .prepare(
-                "SELECT s.turn_id FROM memory_sources s WHERE s.memory_id = ?1
-                 AND NOT EXISTS (SELECT 1 FROM memory_sources o
-                                 WHERE o.turn_id = s.turn_id AND o.memory_id != ?1)",
-            )?
-            .query_map([id], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let own_turns = turns_only_cited_by(&tx, &[id])?;
         let restored = remove_memory(&tx, id, now)?;
         for turn in &own_turns {
             tx.execute("DELETE FROM turns WHERE id = ?1", [turn])?;
@@ -564,6 +586,52 @@ impl Companion {
             turns: own_turns,
             restored,
         })
+    }
+
+    /// What [`Companion::delete_memories`] would remove besides these
+    /// memories, without removing anything. Refuses a memory that is not there.
+    pub fn delete_plan(&self, ids: &[i64]) -> Result<Deletion> {
+        for &id in ids {
+            self.conn
+                .query_row("SELECT 1 FROM memories WHERE id = ?1", [id], |_| Ok(()))
+                .optional()?
+                .ok_or(Error::NotFound(id))?;
+        }
+        let set = json!(ids).to_string();
+        let restored = self
+            .conn
+            .prepare(
+                "SELECT id FROM memories
+                 WHERE superseded_by IN (SELECT value FROM json_each(?1))
+                   AND id NOT IN (SELECT value FROM json_each(?1))
+                 ORDER BY id",
+            )?
+            .query_map([set], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(Deletion {
+            turns: turns_only_cited_by(&self.conn, ids)?,
+            restored,
+        })
+    }
+
+    /// [`Companion::delete_memory`] for several, newest first, so a memory
+    /// goes before the one it had replaced. A memory that is not there stops
+    /// it, and the ones deleted before it stay deleted.
+    pub fn delete_memories(&mut self, ids: &[i64]) -> Result<Deletion> {
+        let mut doomed = ids.to_vec();
+        doomed.sort_unstable_by(|a, b| b.cmp(a));
+        doomed.dedup();
+        let mut report = Deletion::default();
+        for &id in &doomed {
+            let deleted = self.delete_memory(id)?;
+            report.turns.extend(deleted.turns);
+            report.restored.extend(deleted.restored);
+        }
+        // One restored on the way and then deleted itself is not current again.
+        report.restored.retain(|id| !doomed.contains(id));
+        report.turns.sort_unstable();
+        report.restored.sort_unstable();
+        Ok(report)
     }
 
     /// Everything the companion currently holds, oldest first: active memories,
