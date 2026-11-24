@@ -199,7 +199,7 @@ const header = (model: Model, h: Builder): Html =>
                 [
                   h.span(
                     [h.Class("shrink-0 text-sm font-bold tracking-tight text-primary")],
-                    ["/CLANKA", h.span([h.Class("pl-0.5 text-xs tracking-tight")], ["by JFA"])],
+                    ["CLANKA", h.span([h.Class("pl-0.5 text-xs tracking-tight")], ["by JFA"])],
                   ),
                   h.span([h.Class("hidden text-xs text-muted-foreground/75 sm:inline")], ["/"]),
                   h.span(
