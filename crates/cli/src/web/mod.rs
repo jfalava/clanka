@@ -1045,6 +1045,24 @@ pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool, tailnet: bool
             );
         }
         println!("Stop it with Ctrl-C.");
+        // At rest while it serves: the tab names the page, without its
+        // token, instead of what an earlier run left there. Ctrl-C reports
+        // it stopped.
+        let what = if doctor {
+            "Reads and repairs"
+        } else {
+            "Reads only"
+        };
+        let reach = if tailnet.is_empty() {
+            ""
+        } else {
+            ", and on the tailnet"
+        };
+        clanka::status::session().report(
+            clanka::status::State::Idle,
+            &format!("web on port {port}"),
+            Some(&format!("{what}; on 127.0.0.1:{port}{reach}")),
+        );
         if browser {
             open_in_browser(&url);
         }

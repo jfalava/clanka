@@ -285,13 +285,17 @@ impl Session {
         }
     }
 
-    /// The run's last report. Only the first close counts.
+    /// The run's last report. Only the first close counts. It gives the
+    /// window title back to the terminal: the record keeps what the run said,
+    /// and a title left behind would name the tab after clanka until some
+    /// other program set one.
     pub fn close(&self, outcome: Outcome) {
         let mut s = self.lock();
         if !s.live() {
             s.closed = true;
             return;
         }
+        s.closed = true;
         s.retry = None;
         let summary = s.summary.take();
         match outcome {
@@ -299,7 +303,6 @@ impl Session {
             Outcome::Idle => s.set(State::Idle, "Stopped", None),
             Outcome::Error(why) => s.set(State::Error, "Failed", Some(&why)),
         }
-        s.closed = true;
     }
 }
 
@@ -322,7 +325,9 @@ impl Inner {
     }
 
     /// Reports the root record. A report replaces its record, so each carries
-    /// everything. The window title says the same: Rex labels the root from it.
+    /// everything. The window title says the same while the run lasts (Rex
+    /// labels the root from it), and the last report empties it, which hands
+    /// the title back to the terminal.
     fn root(&mut self) {
         self.draw();
         let percent = self
@@ -340,7 +345,11 @@ impl Inner {
             .or(self.detail.as_ref())
             .unwrap_or(&self.label);
         let record = record(self.state, None, &title, msg, percent);
-        self.write(format!("\x1b]2;{title}\x1b\\{record}"));
+        if self.closed {
+            self.write(format!("{record}\x1b]2;\x1b\\"));
+        } else {
+            self.write(format!("\x1b]2;{title}\x1b\\{record}"));
+        }
     }
 
     /// The live row: up while a step is working, unless the step went quiet.
@@ -532,10 +541,11 @@ mod tests {
         // A finished run carries no percentage, and nothing follows it.
         s.summary("12 memories re-read");
         s.close(Outcome::Done);
+        // It gives the title back: an empty one is the terminal's own.
         assert_eq!(
             written.take(),
-            "\x1b]2;clanka: Done\x1b\\\x1b]7501;state=done:app=clanka:title=Y2xhbmthOiBEb25l:\
-             msg=MTIgbWVtb3JpZXMgcmUtcmVhZA==\x1b\\"
+            "\x1b]7501;state=done:app=clanka:title=Y2xhbmthOiBEb25l:\
+             msg=MTIgbWVtb3JpZXMgcmUtcmVhZA==\x1b\\\x1b]2;\x1b\\"
         );
         s.phase("More");
         s.close(Outcome::Error("late".into()));
@@ -562,8 +572,8 @@ mod tests {
         let reports = written.take();
         assert!(
             reports.ends_with(
-                "\x1b]2;clanka: Failed\x1b\\\x1b]7501;state=error:app=clanka:\
-                 title=Y2xhbmthOiBGYWlsZWQ=:msg=SFRUUCA0MDQgbm90IGZvdW5k\x1b\\"
+                "\x1b]7501;state=error:app=clanka:\
+                 title=Y2xhbmthOiBGYWlsZWQ=:msg=SFRUUCA0MDQgbm90IGZvdW5k\x1b\\\x1b]2;\x1b\\"
             ),
             "{reports:?}"
         );
@@ -572,8 +582,8 @@ mod tests {
         s.report(State::Idle, "Chatting with Nova", None);
         s.close(Outcome::Idle);
         assert!(written.take().ends_with(
-            "\x1b]2;clanka: Stopped\x1b\\\x1b]7501;state=idle:app=clanka:\
-                 title=Y2xhbmthOiBTdG9wcGVk:msg=U3RvcHBlZA==\x1b\\"
+            "\x1b]7501;state=idle:app=clanka:\
+                 title=Y2xhbmthOiBTdG9wcGVk:msg=U3RvcHBlZA==\x1b\\\x1b]2;\x1b\\"
         ));
     }
 

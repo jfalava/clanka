@@ -111,8 +111,8 @@ colored.
 
 On a terminal, the commands that take a while say what they are doing over
 the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status)
-(OSC 7501), and set the window title to match. Rex shows it on the tab and
-in the session picker. A terminal that doesn't know the sequence ignores it.
+(OSC 7501), and set the window title to match while they run. Rex shows it on
+the tab and in the session picker. A terminal that doesn't know the sequence ignores it.
 
 | Command                                         | What it reports                                                       |
 | ----------------------------------------------- | --------------------------------------------------------------------- |
@@ -124,10 +124,11 @@ in the session picker. A terminal that doesn't know the sequence ignores it.
 | `init`, `embedding`                             | The share of each model file downloaded.                              |
 | `upgrade`                                       | The share of the release downloaded.                                  |
 | `hermes profile`, `nightshade` and `refresh`    | The `hermes` call under way. `refresh` adds the share of profiles.    |
+| `web`                                           | `idle` while it serves, with its port and whether it can repair.      |
 
 A run ends as `done` with one line of what it did, as `error` with the
-reason, or as `idle` after Ctrl-C. A model request that waits to be retried
-shows why.
+reason, or as `idle` after Ctrl-C, and gives the window title back to the
+terminal. A model request that waits to be retried shows why.
 
 Nothing is reported when stderr is not a terminal, when `TERM` is `dumb`, or
 with [`CLANKA_PROGRAM_STATUS=0`](/configuration/#clanka_program_status).
