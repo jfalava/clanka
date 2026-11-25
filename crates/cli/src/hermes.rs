@@ -438,6 +438,10 @@ fn set_up_companion(
         // description, or (the desktop app) only a note to look at it with
         // vision_analyze, a tool a companion doesn't have.
         ("model.supports_vision", "true"),
+        // Hermes swaps a hook's context over 10,000 characters for its first
+        // and last 500 and a file path. A companion's first turn carries more
+        // than that, memory and lore, and the model went looking for the file.
+        ("hooks.output_spill.enabled", "false"),
         ("platform_hints.cli.replace", CLI_HINT),
         ("platform_hints.telegram.replace", TELEGRAM_HINT),
         ("platform_hints.api_server.replace", API_HINT),

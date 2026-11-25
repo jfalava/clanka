@@ -32,6 +32,9 @@ Makes a Hermes profile that is one companion and nothing else:
 - Photos go to the model as images (`model.supports_vision`), not as a note
   to look at them with a tool the profile doesn't have. Memory records each
   as `*shows you a photo*`. Give the companion a model that takes images.
+- Memory and lore reach the model whole (`hooks.output_spill.enabled`
+  false). Hermes otherwise cuts a hook's context over 10,000 characters to
+  its first and last 500 and a file path.
 - `SOUL.md` is the persona.
 
 Each turn then carries the persona and the conversation instead of Hermes's
