@@ -501,10 +501,8 @@ const overviewTab = (loaded: Loaded, h: Builder): Html =>
     [h.Class("flex flex-col gap-8")],
     [
       stats(loaded, h),
-      h.div(
-        [h.Class("grid gap-8 xl:grid-cols-2")],
-        [mood(loaded.overview, h), openThreads(loaded, h)],
-      ),
+      mood(loaded.overview, h),
+      openThreads(loaded, h),
       h.div([h.Class("grid gap-8 xl:grid-cols-2")], soulSections(loaded.overview, h)),
       byKind(loaded, h),
     ],
