@@ -5,7 +5,7 @@ members = ["crates/core", "crates/cli", "crates/py"]
 [workspace.package]
 # One version for the workspace and hermes/clanka/plugin.yaml; a release is the
 # tag v<version> (AGENTS.md, Releases).
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
