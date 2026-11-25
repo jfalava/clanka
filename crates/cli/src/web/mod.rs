@@ -9,6 +9,9 @@
 //! core call its command makes. `delete-all` and `reembed` are not among
 //! them. A POST is answered only to the page this server sent.
 //!
+//! `--tailnet` lets the page be reached through Tailscale Serve as well,
+//! under the names Serve forwards to this port, still with the run's token.
+//!
 //! The page itself is `web/` in the repository, built ahead of time and put
 //! into the binary by `build.rs`.
 
@@ -29,7 +32,7 @@ use clanka_core::{
     SectionVersion, SourceTurn,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
@@ -59,6 +62,9 @@ pub struct Console {
     opened: Handles,
     /// What `--doctor` adds; `None` on a run that only reads.
     doctor: Option<Doctor>,
+    /// The names Tailscale Serve reaches this server at, without a port;
+    /// empty unless the run was started with `--tailnet`.
+    tailnet: Vec<String>,
 }
 
 /// The part of a run that repairs. Its routes use the handles the reads use,
@@ -95,6 +101,7 @@ impl Console {
             token,
             opened: Mutex::new(HashMap::new()),
             doctor: None,
+            tailnet: Vec::new(),
         }
     }
 
@@ -102,6 +109,34 @@ impl Console {
     pub fn with_doctor(mut self, doctor: Doctor) -> Self {
         self.doctor = Some(doctor);
         self
+    }
+
+    /// The same console, answering also at these names, which Tailscale Serve
+    /// sends on over HTTPS.
+    pub fn with_tailnet(mut self, names: Vec<String>) -> Self {
+        self.tailnet = names;
+        self
+    }
+
+    /// The scheme a browser reaches the server with at `host`: `http` on this
+    /// machine, `https` through Tailscale Serve. `None` for any other name,
+    /// which is another site's page pointing its own domain here to read the
+    /// answers. The port does not matter: a tunnel or Serve may give another.
+    fn scheme(&self, host: &str) -> Option<&'static str> {
+        let name = host.rsplit_once(':').map_or(host, |(name, port)| {
+            if port.bytes().all(|b| b.is_ascii_digit()) {
+                name
+            } else {
+                host
+            }
+        });
+        if name == "127.0.0.1" || name.eq_ignore_ascii_case("localhost") {
+            Some("http")
+        } else if self.tailnet.iter().any(|t| name.eq_ignore_ascii_case(t)) {
+            Some("https")
+        } else {
+            None
+        }
     }
 
     fn database(&self, id: Uuid) -> PathBuf {
@@ -309,7 +344,8 @@ impl IntoResponse for Failure {
             ),
             Failure::Forbidden => (
                 StatusCode::FORBIDDEN,
-                "clanka web answers only as 127.0.0.1 or localhost.".into(),
+                "clanka web answers only as 127.0.0.1, localhost or the tailnet name it printed."
+                    .into(),
             ),
             Failure::Foreign => (
                 StatusCode::FORBIDDEN,
@@ -675,20 +711,6 @@ async fn reinterpret(
     blocking(move || console.reread(id, &order.ids)).await
 }
 
-/// A browser on this machine reaches the server as 127.0.0.1 or localhost,
-/// whatever port a tunnel gave it. Any other name is another site's page
-/// pointing its own domain here to read the answers.
-fn local(host: &str) -> bool {
-    let name = host.rsplit_once(':').map_or(host, |(name, port)| {
-        if port.bytes().all(|b| b.is_ascii_digit()) {
-            name
-        } else {
-            host
-        }
-    });
-    name == "127.0.0.1" || name.eq_ignore_ascii_case("localhost")
-}
-
 /// Whether two texts are the same, in time that depends only on their lengths.
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len()
@@ -707,8 +729,9 @@ fn refusal(console: &Console, request: &Request) -> Option<Failure> {
             .get(name)
             .and_then(|value: &HeaderValue| value.to_str().ok())
     };
-    let host = header(header::HOST).filter(|host| local(host));
-    let Some(host) = host else {
+    let Some((host, scheme)) =
+        header(header::HOST).and_then(|host| Some((host, console.scheme(host)?)))
+    else {
         return Some(Failure::Forbidden);
     };
     if request.uri().path().starts_with("/api/") {
@@ -722,7 +745,7 @@ fn refusal(console: &Console, request: &Request) -> Option<Failure> {
     let reads = matches!(*request.method(), Method::GET | Method::HEAD);
     if console.doctor.is_some()
         && !reads
-        && header(header::ORIGIN) != Some(format!("http://{host}").as_str())
+        && header(header::ORIGIN) != Some(format!("{scheme}://{host}").as_str())
     {
         return Some(Failure::Foreign);
     }
@@ -830,8 +853,107 @@ pub fn router(console: Arc<Console>) -> Router {
 
 /// The address to open: the token rides in the fragment, which a browser
 /// keeps to itself, so it is in no request line and no `Referer`.
-fn address(port: u16, token: &str) -> String {
-    format!("http://127.0.0.1:{port}/#t={token}")
+fn address(base: &str, token: &str) -> String {
+    format!("{base}/#t={token}")
+}
+
+/// What `tailscale serve status --json` says Serve does here.
+fn serve_status() -> Result<Value> {
+    let mut clis = vec![PathBuf::from("tailscale")];
+    if cfg!(target_os = "macos") {
+        // The app does not always put its command on PATH.
+        clis.push("/Applications/Tailscale.app/Contents/MacOS/Tailscale".into());
+    }
+    for cli in clis {
+        let output = match std::process::Command::new(&cli)
+            .args(["serve", "status", "--json"])
+            .stdin(std::process::Stdio::null())
+            .output()
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            output => output.with_context(|| format!("running {}", cli.display()))?,
+        };
+        if !output.status.success() {
+            anyhow::bail!(
+                "`tailscale serve status --json` failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        if output.stdout.trim_ascii().is_empty() {
+            return Ok(Value::Null);
+        }
+        return serde_json::from_slice(&output.stdout)
+            .context("reading what `tailscale serve status --json` printed");
+    }
+    anyhow::bail!("--tailnet needs Tailscale, and there is no tailscale command on PATH")
+}
+
+/// Where Tailscale Serve sends a browser on to `port` here, from what
+/// `tailscale serve status --json` printed: each as the name the browser asks
+/// for and the address it opens. Refused when Serve sends it on over plain
+/// HTTP, or when Funnel puts it on the internet.
+fn forwards(status: &Value, port: u16) -> Result<Vec<(String, String)>> {
+    let targets = [
+        format!("http://127.0.0.1:{port}"),
+        format!("http://localhost:{port}"),
+    ];
+    // A `--bg` setting is at the top; one run in the foreground is under its session.
+    let foreground = status.get("Foreground").and_then(Value::as_object);
+    let configs = std::iter::once(status).chain(foreground.into_iter().flat_map(|f| f.values()));
+    let mut found = Vec::new();
+    for config in configs {
+        let Some(web) = config.get("Web").and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, entry) in web {
+            let proxy = entry
+                .get("Handlers")
+                .and_then(|handlers| handlers.get("/"))
+                .and_then(|handler| handler.get("Proxy"))
+                .and_then(Value::as_str);
+            if !proxy.is_some_and(|proxy| targets.iter().any(|t| proxy.trim_end_matches('/') == t))
+            {
+                continue;
+            }
+            let Some((name, served)) = key.rsplit_once(':') else {
+                continue;
+            };
+            let https = config
+                .get("TCP")
+                .and_then(|tcp| tcp.get(served))
+                .and_then(|listener| listener.get("HTTPS"))
+                .and_then(Value::as_bool);
+            if https != Some(true) {
+                anyhow::bail!(
+                    "Tailscale Serve sends {key} on to port {port} without HTTPS. Serve it with \
+                     `tailscale serve --bg --https={served} http://127.0.0.1:{port}`."
+                );
+            }
+            let funnel = config
+                .get("AllowFunnel")
+                .and_then(|funnel| funnel.get(key))
+                .and_then(Value::as_bool);
+            if funnel == Some(true) {
+                anyhow::bail!(
+                    "Tailscale Funnel puts {key} on the internet, and clanka web stays on the \
+                     tailnet. Turn it off with `tailscale funnel --https={served} off`."
+                );
+            }
+            let base = if served == "443" {
+                format!("https://{name}")
+            } else {
+                format!("https://{key}")
+            };
+            found.push((name.to_owned(), base));
+        }
+    }
+    if found.is_empty() {
+        anyhow::bail!(
+            "Tailscale Serve sends nothing on to 127.0.0.1:{port}. Have it do so with \
+             `tailscale serve --bg --https={port} http://127.0.0.1:{port}`, then run this again."
+        );
+    }
+    Ok(found)
 }
 
 fn open_in_browser(url: &str) {
@@ -851,8 +973,13 @@ fn open_in_browser(url: &str) {
 }
 
 /// Serves the page until the process is stopped. With `doctor` the page can
-/// also repair.
-pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool) -> Result<()> {
+/// also repair; with `tailnet` it answers through Tailscale Serve too.
+pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool, tailnet: bool) -> Result<()> {
+    let tailnet = if tailnet {
+        forwards(&serve_status()?, port)?
+    } else {
+        Vec::new()
+    };
     let token = setup::random_hex(32);
     // The embedding model loads with the first companion opened, not before
     // the page is up, and once for all of them.
@@ -880,7 +1007,8 @@ pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool) -> Result<()>
         Some(model) => Some((model.model.clone(), opener(Some(model))?)),
         None => None,
     };
-    let mut console = Console::new(paths, token.clone(), opener(None)?);
+    let mut console = Console::new(paths, token.clone(), opener(None)?)
+        .with_tailnet(tailnet.iter().map(|(name, _)| name.clone()).collect());
     if doctor {
         console = console.with_doctor(Doctor::new(rereader));
     }
@@ -895,8 +1023,12 @@ pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool) -> Result<()>
             .with_context(|| {
                 format!("listening on 127.0.0.1:{port}; pick another port with --port")
             })?;
-        let url = address(listener.local_addr()?.port(), &token);
+        let port = listener.local_addr()?.port();
+        let url = address(&format!("http://127.0.0.1:{port}"), &token);
         println!("clanka web is at {url}");
+        for (_, base) in &tailnet {
+            println!("On your tailnet: {}", address(base, &token));
+        }
         if doctor {
             println!(
                 "It can repair: freeze, end a conversation, roll back, and delete or re-read \
@@ -905,6 +1037,12 @@ pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool) -> Result<()>
         } else {
             println!("It only reads. Whoever has this address can read every memory here.");
             println!("To repair from the page too, run `clanka web --doctor`.");
+        }
+        if !tailnet.is_empty() {
+            println!(
+                "Any device on your tailnet that Tailscale lets reach this machine can use the \
+                 tailnet address."
+            );
         }
         println!("Stop it with Ctrl-C.");
         if browser {

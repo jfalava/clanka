@@ -202,6 +202,8 @@ fn the_api_answers_only_this_runs_token_at_a_local_name() {
     assert_eq!(ask(Some(&bearer), Some("evil.example")), 403);
     assert_eq!(ask(Some(&bearer), Some("127.0.0.1.evil.example:80")), 403);
     assert_eq!(ask(Some(&bearer), Some("localhost.evil.example")), 403);
+    // A Serve forward kept on this machine reaches a run without --tailnet.
+    assert_eq!(ask(Some(&bearer), Some("box.example.ts.net:7333")), 403);
 
     // The page's files are no secret, but they answer to a local name only.
     let page = |host: Option<&str>| {
@@ -213,6 +215,137 @@ fn the_api_answers_only_this_runs_token_at_a_local_name() {
     };
     assert!(matches!(page(None), 200 | 404), "{}", page(None));
     assert_eq!(page(Some("evil.example")), 403);
+}
+
+#[test]
+fn with_tailnet_it_answers_at_the_names_serve_forwards_and_no_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = common::open(dir.path());
+    let base = listen(
+        Console::new(all_in(dir.path()), RUN.into(), |soul| {
+            Ok(common::open(beside(soul)))
+        })
+        .with_tailnet(vec!["box.example.ts.net".into()])
+        .with_doctor(Doctor::new(None)),
+    );
+    let ask = |token: bool, host: &str| {
+        let mut request = agent()
+            .get(format!("{base}/api/companions"))
+            .header("Host", host);
+        if token {
+            request = request.header("Authorization", format!("Bearer {RUN}"));
+        }
+        request.call().unwrap().status().as_u16()
+    };
+
+    assert_eq!(ask(true, "box.example.ts.net:7333"), 200);
+    assert_eq!(ask(true, "box.example.ts.net"), 200);
+    assert_eq!(ask(true, "BOX.Example.TS.net:443"), 200);
+    assert_eq!(ask(true, "localhost:7333"), 200);
+    assert_eq!(ask(false, "box.example.ts.net:7333"), 401);
+
+    // Names that are not the one Serve forwards: another machine or another
+    // tailnet on ts.net, the short name, and another site wearing it.
+    assert_eq!(ask(true, "other.example.ts.net:7333"), 403);
+    assert_eq!(ask(true, "box.other.ts.net:7333"), 403);
+    assert_eq!(ask(true, "box:7333"), 403);
+    assert_eq!(ask(true, "x.box.example.ts.net:7333"), 403);
+    assert_eq!(ask(true, "box.example.ts.net.evil.example:7333"), 403);
+
+    // Through Serve the page is HTTPS, so a change must name that page.
+    let freeze = format!("{base}/api/companions/{}/freeze", id(&c));
+    let change = |host: &str, origin: &str| {
+        agent()
+            .post(&freeze)
+            .header("Host", host)
+            .header("Authorization", format!("Bearer {RUN}"))
+            .header("Origin", origin)
+            .send_empty()
+            .unwrap()
+            .status()
+            .as_u16()
+    };
+    let serve = "box.example.ts.net:7333";
+    assert_eq!(change(serve, "http://box.example.ts.net:7333"), 403);
+    assert_eq!(change(serve, &base), 403);
+    assert_eq!(change(serve, "https://box.example.ts.net:8443"), 403);
+    let port = base.rsplit_once(':').unwrap().1;
+    // On this machine the page is still plain HTTP.
+    assert_eq!(
+        change(
+            &format!("127.0.0.1:{port}"),
+            &format!("https://127.0.0.1:{port}")
+        ),
+        403
+    );
+    assert!(!c.is_frozen().unwrap());
+    assert_eq!(change(serve, "https://box.example.ts.net:7333"), 200);
+    assert!(c.is_frozen().unwrap());
+}
+
+/// What `tailscale serve status --json` prints on a machine like oci-box: a
+/// forward to a Unix socket, one to another app, one to clanka's port under
+/// a path, and clanka's own going to `clanka`.
+fn serve_status(clanka: &str) -> Value {
+    json!({
+        "TCP": {
+            "443": { "HTTPS": true },
+            "3773": { "HTTPS": true },
+            "7333": { "HTTPS": true },
+            "8085": { "HTTPS": true },
+        },
+        "Web": {
+            "box.example.ts.net:443": { "Handlers": { "/": { "Proxy": "unix:/run/rex/serve.sock" } } },
+            "box.example.ts.net:3773": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:3773" } } },
+            "box.example.ts.net:8085": { "Handlers": { "/opds": { "Proxy": "http://127.0.0.1:7333" } } },
+            "box.example.ts.net:7333": { "Handlers": { "/": { "Proxy": clanka } } },
+        }
+    })
+}
+
+#[test]
+fn the_tailnet_names_are_the_ones_serve_forwards_to_this_port() {
+    let found = super::forwards(&serve_status("http://127.0.0.1:7333"), 7333).unwrap();
+    assert_eq!(
+        found,
+        vec![(
+            "box.example.ts.net".to_string(),
+            "https://box.example.ts.net:7333".to_string()
+        )]
+    );
+    assert!(super::forwards(&serve_status("http://localhost:7333"), 7333).is_ok());
+
+    // Nothing forwards to another port, nor to this one under a path.
+    let none = super::forwards(&serve_status("http://127.0.0.1:7333"), 7334).unwrap_err();
+    assert!(none.to_string().contains("--https=7334"), "{none}");
+    assert!(super::forwards(&Value::Null, 7333).is_err());
+    assert!(super::forwards(&serve_status("http://127.0.0.1:73330"), 7333).is_err());
+
+    // Served on 443, the address needs no port.
+    let mut on_443 = serve_status("http://127.0.0.1:9999");
+    on_443["Web"]["box.example.ts.net:443"]["Handlers"]["/"]["Proxy"] =
+        json!("http://127.0.0.1:7333");
+    on_443["Web"]["box.example.ts.net:7333"]["Handlers"]["/"]["Proxy"] =
+        json!("http://127.0.0.1:9999");
+    assert_eq!(
+        super::forwards(&on_443, 7333).unwrap()[0].1,
+        "https://box.example.ts.net"
+    );
+
+    // A forward run in the foreground is under its session.
+    let foreground =
+        json!({ "Foreground": { "session-1": serve_status("http://127.0.0.1:7333") } });
+    assert_eq!(super::forwards(&foreground, 7333).unwrap().len(), 1);
+
+    // Funnel would put it on the internet; plain HTTP would send the token in the clear.
+    let mut funnel = serve_status("http://127.0.0.1:7333");
+    funnel["AllowFunnel"] = json!({ "box.example.ts.net:7333": true });
+    let refused = super::forwards(&funnel, 7333).unwrap_err();
+    assert!(refused.to_string().contains("Funnel"), "{refused}");
+    let mut plain = serve_status("http://127.0.0.1:7333");
+    plain["TCP"]["7333"] = json!({ "HTTP": true });
+    let refused = super::forwards(&plain, 7333).unwrap_err();
+    assert!(refused.to_string().contains("without HTTPS"), "{refused}");
 }
 
 #[test]

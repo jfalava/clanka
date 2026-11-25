@@ -295,12 +295,16 @@ enum Command {
     /// ends in a token made for this run, and the page's requests are refused without it,
     /// so another site open in your browser cannot read your memories through it, or change
     /// them. Anyone you give the address to can, for as long as this runs. For a companion
-    /// on another machine, run it there with --no-open and forward the port over SSH.
+    /// on another machine, run it there with --no-open and forward the port over SSH, or
+    /// reach it over your tailnet with --tailnet.
     #[command(after_long_help = "Example:\n  clanka web\n\n\
         To repair from the page:\n  clanka web --doctor\n\n\
         On another machine:\n  \
         ssh -L 7333:127.0.0.1:7333 other-machine clanka web --no-open\n  \
-        # then open the address it prints, here")]
+        # then open the address it prints, here\n\n\
+        Over your tailnet, once Tailscale Serve forwards the port:\n  \
+        tailscale serve --bg --https=7333 http://127.0.0.1:7333\n  \
+        clanka web --tailnet --no-open")]
     Web {
         /// The port on 127.0.0.1 to listen on.
         #[arg(long, default_value_t = web::PORT)]
@@ -314,6 +318,13 @@ enum Command {
         /// environment `clanka web` runs in.
         #[arg(long)]
         doctor: bool,
+        /// Answer through Tailscale Serve too, at the names it forwards to this port.
+        ///
+        /// Serve must already send HTTPS on to http://127.0.0.1:<port>, and not through
+        /// Funnel. The page still needs this run's token; the address printed for the
+        /// tailnet carries it.
+        #[arg(long)]
+        tailnet: bool,
     },
     /// Download the embedding model config.toml names, if it is not here yet.
     ///
@@ -948,7 +959,8 @@ fn run(command: Command) -> Result<bool> {
             port,
             no_open,
             doctor,
-        } => web::serve(paths, port, !no_open, doctor),
+            tailnet,
+        } => web::serve(paths, port, !no_open, doctor, tailnet),
         Command::Tics { replies, json } => tics(&replies, json),
         Command::Hermes {
             command: HermesCommand::Profile { profile, soul },

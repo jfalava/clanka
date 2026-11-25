@@ -1,10 +1,10 @@
 ---
 title: web
-description: Look through what your companions remember in a browser, on this machine, and repair it there with --doctor.
+description: Look through what your companions remember in a browser, on this machine or over your tailnet, and repair it there with --doctor.
 ---
 
 ```sh
-clanka web [--port <port>] [--no-open] [--doctor]
+clanka web [--port <port>] [--no-open] [--doctor] [--tailnet]
 ```
 
 Serves a page from this machine and opens it in your browser. The page lists
@@ -91,8 +91,10 @@ companion you are reading instead of running it.
 
 ## Who can read it, and repair
 
-The server listens on `127.0.0.1` only and runs until Ctrl-C. The address it
-prints ends in a token made for that run:
+The server listens on `127.0.0.1` only and runs until Ctrl-C. With
+[`--tailnet`](#over-your-tailnet) it also answers what Tailscale Serve sends
+on from your tailnet. The address it prints ends in a token made for that
+run:
 
 ```text
 clanka web is at http://127.0.0.1:7333/#t=3fa9…
@@ -128,6 +130,11 @@ Print the address without opening a browser.
 Let the page repair the memory, not only read it. See
 [Repairing from the page](#repairing-from-the-page).
 
+### `--tailnet`
+
+Answer through Tailscale Serve too, at the names it forwards to this port.
+See [Over your tailnet](#over-your-tailnet).
+
 ## A companion on another machine
 
 Run it there without a browser and forward the port over SSH:
@@ -137,3 +144,39 @@ ssh -L 7333:127.0.0.1:7333 other-machine clanka web --no-open
 ```
 
 Then open the address it prints in a browser on this machine.
+
+## Over your tailnet
+
+To open the page from another device on your
+[tailnet](https://tailscale.com/kb/1312/serve), such as your phone, have
+Tailscale Serve forward a port to it once. `--bg` keeps the forward across
+restarts:
+
+```sh
+tailscale serve --bg --https=7333 http://127.0.0.1:7333
+```
+
+Then start it with `--tailnet`:
+
+```sh
+clanka web --tailnet --no-open
+```
+
+It asks Tailscale which names Serve forwards to its port and prints an
+address for each, with the same token:
+
+```text
+clanka web is at http://127.0.0.1:7333/#t=3fa9…
+On your tailnet: https://my-machine.example.ts.net:7333/#t=3fa9…
+```
+
+Open that address on the other device. The server answers only at the
+names Serve forwards to it, so another site cannot reach it under its own
+name, and with `--doctor` it takes a change only from the page at that
+address. Any device on your tailnet that Tailscale lets reach this machine
+can use the address, for as long as the run lasts.
+
+`--tailnet` refuses to start when Serve forwards nothing to the port, when
+it forwards without HTTPS, and when Tailscale Funnel puts the forward on the
+internet. Without `--tailnet` the server answers nothing that comes through
+Serve, so a forward you leave in place exposes nothing between runs.
