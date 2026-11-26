@@ -316,6 +316,11 @@ fn a_failed_open_names_its_companion_and_why() {
             (json!(false), json!("io")),
         ]
     );
+
+    // A config.toml with an error is its own kind, which the Hermes plugin
+    // tells the user.
+    std::fs::write(paths.config_file(), "[keys]\nstore = \"fiel\"\n").unwrap();
+    assert_eq!(error_code(&to_talk().err().unwrap()), "config_invalid");
 }
 
 /// Lore a companion reads with an error in it refuses the companion to a

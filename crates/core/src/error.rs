@@ -77,6 +77,9 @@ pub enum Error {
         .0.join("\n")
     )]
     LoreInvalid(Vec<String>),
+    /// config.toml that doesn't parse, or that sets something it can't.
+    #[error("config.toml has an error: {0}")]
+    ConfigInvalid(String),
     #[error("key source: {0}")]
     Key(String),
     #[error("embedder: {0}")]

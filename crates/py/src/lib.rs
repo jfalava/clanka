@@ -63,12 +63,12 @@ impl Llm for HostModel {
     }
 }
 
-/// A Python error with the message, and the kind of error as its `code` (the
-/// word diagnostics keep): the plugin tells the user the kind and logs the
-/// message, which can name files on this machine.
+/// A Python error with the message and every cause under it, and the kind of
+/// error as its `code` (the word diagnostics keep): the plugin tells the user
+/// the kind and logs the message, which can name files on this machine.
 fn err(e: impl Into<anyhow::Error>) -> PyErr {
     let e = e.into();
-    let error = PyRuntimeError::new_err(e.to_string());
+    let error = PyRuntimeError::new_err(format!("{e:#}"));
     Python::attach(|py| {
         // Without the code the plugin says `other`.
         let _ = error.value(py).setattr("code", error_code(&e));
@@ -401,9 +401,20 @@ fn send_diagnostics(py: Python<'_>) -> PyResult<usize> {
     py.detach(|| {
         let paths = Paths::get().map_err(err)?;
         let config = Config::load(&paths).map_err(err)?;
-        let sent = clanka::diagnostics::send_after_conversation(&paths, &config)
-            .map_err(|e| err(anyhow::anyhow!("{e:#}")))?;
+        let sent = clanka::diagnostics::send_after_conversation(&paths, &config).map_err(err)?;
         Ok(sent.events)
+    })
+}
+
+/// Reads config.toml as an open would now. A companion keeps the settings it
+/// opened with, so an edit that broke the file shows only here until the host
+/// restarts and the companion no longer opens.
+#[pyfunction]
+fn check_config(py: Python<'_>) -> PyResult<()> {
+    py.detach(|| {
+        let paths = Paths::get().map_err(err)?;
+        Config::load(&paths).map_err(err)?;
+        Ok(())
     })
 }
 
@@ -420,6 +431,7 @@ fn _clanka(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompanion>()?;
     m.add_function(wrap_pyfunction!(note, m)?)?;
     m.add_function(wrap_pyfunction!(send_diagnostics, m)?)?;
+    m.add_function(wrap_pyfunction!(check_config, m)?)?;
     m.add_function(wrap_pyfunction!(without_dashes, m)?)?;
     m.add_function(wrap_pyfunction!(read_lore_tool, m)?)?;
     m.add_function(wrap_pyfunction!(wake_up_tool, m)?)

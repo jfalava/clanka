@@ -471,7 +471,9 @@ impl Config {
     pub fn load(paths: &Paths) -> Result<Self> {
         let path = paths.config_file();
         match std::fs::read_to_string(&path) {
-            Ok(text) => Self::parse(&text).with_context(|| format!("reading {}", path.display())),
+            Ok(text) => Self::parse(&text)
+                .map_err(|e| clanka_core::Error::ConfigInvalid(format!("{e:#}")))
+                .with_context(|| format!("reading {}", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
         }

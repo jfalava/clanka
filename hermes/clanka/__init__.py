@@ -59,6 +59,10 @@ A general plugin on Hermes's public plugin API only:
   the conversation as ``/sleep`` does (a dream wakes), deleting it as ``/new``
   does (a dream is dropped). The iOS and Desktop apps have no other end a
   plugin can tell apart. Other chats, and Hermes's own prunes, leave it awake.
+- A config.toml with an error blocks every turn while memory cannot open.
+  One that an edit broke while memory was open is found before each sleep
+  and told once, as a line after the next reply: memory carries on with the
+  settings it opened with until Hermes restarts.
 - ``plugins.entries.clanka.settings.session_tokens`` sets how much
   conversation this companion holds before it tires, in estimated tokens;
   it wins over ``[session] tokens`` in clanka's config.toml.
@@ -178,7 +182,23 @@ _WHY = {
     "`clanka lore lint`, fix what it lists, then say that again.",
     "database_gone": "The memory's database was deleted or replaced while it was open, so "
     "nothing was sent. Put it back, or restart Hermes to start with an empty memory.",
+    "config_invalid": "config.toml has an error, so nothing was sent. "
+    "`clanka diagnostics` shows it; fix it, then say that again.",
 }
+
+# Told after the next reply when the check before a sleep finds config.toml
+# broken since memory opened. ``post_message`` doesn't reach every chat (the
+# Desktop app has no gateway), and a reply does.
+CONFIG_WARNING = (
+    "config.toml has an error. Memory keeps the settings it opened with until Hermes "
+    "restarts, and then cannot open. `clanka diagnostics` shows the error."
+)
+# Added to the context of the turn after that warning, which Hermes replays
+# from then on as part of the reply before it.
+WARNING_HINT = (
+    "The line at the end of your last reply that starts with `clanka:` was added by your "
+    "memory for the user. You did not write it, so never mention, explain or apologise for it."
+)
 
 
 def _block(message):
@@ -231,13 +251,6 @@ def _said(history, final):
     return "\n\n".join(p for p in parts if p)
 
 
-def _dashless(response_text="", **_):
-    from . import _clanka
-
-    plain = _clanka.without_dashes(response_text or "")
-    return plain if plain != response_text else None
-
-
 class _Plugin:
     def __init__(self, ctx):
         self._ctx = ctx
@@ -249,6 +262,12 @@ class _Plugin:
         # The Hermes chat the companion's last turn came from: the one its
         # open conversation is in.
         self._live_chat = None
+        # A warning for the next reply; the line it added to this turn's
+        # reply, which memory doesn't keep as the companion's words; and
+        # whether the next turn's context explains it.
+        self._warning = None
+        self._warned = None
+        self._explain_warning = False
 
     # The companion opens on first use, so a slow Secret Service or model load
     # never counts against Hermes's plugin load timeout. It opens on a thread
@@ -387,6 +406,9 @@ class _Plugin:
         # Once, on the turn after a notice: Hermes replays it from then on.
         if notices and notices[-1]:
             parts.append(NOTICE_HINT)
+        if self._explain_warning:
+            self._explain_warning = False
+            parts.append(WARNING_HINT)
         if kind in ("goodnight", "waking"):
             parts.append(GO_TO_SLEEP)
         return {"context": "\n\n".join(parts)} if parts else None
@@ -407,6 +429,10 @@ class _Plugin:
         if opening is None or not opening.done() or opening.exception() is not None:
             return
         companion = opening.result()
+        # Hermes hands over the reply as transform_llm_output left it.
+        warned, self._warned = self._warned, None
+        if warned and (assistant_response or "").endswith(warned):
+            assistant_response = assistant_response[: -len(warned)]
         ended = companion.end_turn(_said(conversation_history, assistant_response))
         asked, self._sleep_requested = self._sleep_requested, False
         turns, consolidate = None, False
@@ -578,6 +604,7 @@ class _Plugin:
                 except Exception:
                     logger.exception("clanka: reflection on %s failed", turns)
             if consolidate:
+                self._check_config()
                 # Every night and dream that ended and waits, this one last.
                 try:
                     for line in c.consolidate():
@@ -597,6 +624,31 @@ class _Plugin:
                         logger.info("clanka: sent %d diagnostics events", sent)
                 except Exception as e:
                     logger.warning("clanka: diagnostics were not sent: %s", e)
+
+    def _check_config(self):
+        # The open companion keeps the settings it opened with, so an edit
+        # that broke config.toml shows nowhere until Hermes restarts and
+        # memory no longer opens.
+        try:
+            from . import _clanka
+
+            _clanka.check_config()
+            self._warning = None
+        except Exception as e:
+            logger.warning("clanka: %s", e)
+            self._warning = CONFIG_WARNING
+
+    def transform_llm_output(self, response_text="", **_):
+        from . import _clanka
+
+        text = response_text or ""
+        reply = _clanka.without_dashes(text)
+        warning, self._warning = self._warning, None
+        if warning:
+            self._warned = "\n\n" + NOTICE + warning
+            self._explain_warning = True
+            reply += self._warned
+        return reply if reply != text else None
 
     def _post(self, line):
         # Into the chat this turn or reset is for, through its adapter: Hermes
@@ -695,7 +747,7 @@ def register(ctx):
         defaults={"timeout": MEMORY_TIMEOUT},
     )
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
-    ctx.register_hook("transform_llm_output", _dashless)
+    ctx.register_hook("transform_llm_output", plugin.transform_llm_output)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
     ctx.register_hook("api_request_error", plugin.api_request_error)
     ctx.register_hook("on_session_reset", plugin.on_session_reset)

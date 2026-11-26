@@ -231,6 +231,13 @@ With an older plugin, every turn says "the persona changed" until whatever
 has the companion open restarts. Editing only the traits still needs that
 restart.
 
+**A config.toml with an error.** While memory can't open, every turn is
+blocked with a `clanka:` notice instead of a reply. Memory that is already
+open keeps the settings it opened with, so a file an edit broke shows only at
+the next sleep: a `clanka:` line after the next reply says so, and the
+companion stops opening when Hermes restarts. `clanka diagnostics` prints the
+error, as any `clanka` command does, and Hermes's log has it too.
+
 **Photos need a model with vision.** A companion profile sends each photo to
 the model as an image (`model.supports_vision`), never as a description, so a
 model that can't take images can't see it. Profiles made before 0.1.3 get

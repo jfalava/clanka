@@ -312,6 +312,7 @@ impl Error {
             Error::Rule(rule, _) => rule,
             Error::Lore(_) => "lore",
             Error::LoreInvalid(_) => "lore_invalid",
+            Error::ConfigInvalid(_) => "config_invalid",
             Error::Key(_) => "key",
             Error::Embedder(_) => "embedder",
             Error::Llm(_) => "llm",
