@@ -264,7 +264,7 @@ pub fn run(paths: &Paths, command: DoctorCommand) -> Result<()> {
         }
         DoctorCommand::Reinterpret { soul, ids } => {
             let config = Config::load(paths)?;
-            let Some(model) = &config.model else {
+            let Some(model) = &config.model_of(&soul)? else {
                 bail!(
                     "no companion model configured to re-read the memories; add a [model] \
                      section to {}",

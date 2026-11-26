@@ -32,7 +32,7 @@ pub fn persona_continue(paths: &Paths, soul: &Path) -> Result<()> {
 
 pub fn persona_update(paths: &Paths, soul: &Path) -> Result<()> {
     let config = Config::load(paths)?;
-    let Some(model) = &config.model else {
+    let Some(model) = &config.model_of(soul)? else {
         bail!(
             "no companion model configured to re-read the memories; add a [model] section to {}, \
              or use `clanka soul continue`",

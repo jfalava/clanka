@@ -159,7 +159,7 @@ fn delay(backoff: Duration, attempt: u32, retry_after: Option<Duration>) -> Dura
 
 impl Llm for OpenAiModel {
     fn complete(&self, request: &LlmRequest) -> Result<LlmResponse> {
-        let mut response = self.send(&body(&self.config.model, request)?)?;
+        let mut response = self.send(&body(&self.config, request)?)?;
         parse(&read(&mut response)?)
     }
 
@@ -173,7 +173,7 @@ impl Llm for OpenAiModel {
             }
             return Ok(response);
         }
-        let mut body = body(&self.config.model, request)?;
+        let mut body = body(&self.config, request)?;
         body["stream"] = true.into();
         let response = self.send(&body)?;
         let mut text = String::new();
@@ -267,7 +267,7 @@ fn event(line: &str) -> Result<Event> {
     })
 }
 
-fn body(model: &str, request: &LlmRequest) -> Result<Value> {
+fn body(config: &ModelConfig, request: &LlmRequest) -> Result<Value> {
     let mut messages = vec![json!({ "role": "system", "content": request.system })];
     for m in &request.messages {
         messages.push(match m.role {
@@ -292,11 +292,16 @@ fn body(model: &str, request: &LlmRequest) -> Result<Value> {
         });
     }
     let mut body = json!({
-        "model": model,
+        "model": config.model,
         "messages": messages,
         "temperature": request.temperature,
         "max_tokens": MAX_TOKENS,
     });
+    // Named only when set: an endpoint may refuse the field for a model that
+    // doesn't reason.
+    if let Some(effort) = config.effort {
+        body["reasoning_effort"] = effort.as_str().into();
+    }
     if !request.tools.is_empty() {
         let tools = request
             .tools
@@ -405,7 +410,10 @@ mod tests {
             }],
             temperature: 0.2,
         };
-        let body = body("m", &request).unwrap();
+        let body = body(&config("http://unused".into()), &request).unwrap();
+        assert_eq!(body["model"], "m");
+        // No effort set: the endpoint is left to the model's own.
+        assert!(body.get("reasoning_effort").is_none(), "{body}");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][2]["content"], Value::Null);
         assert_eq!(
@@ -469,16 +477,33 @@ mod tests {
         )
     }
 
+    fn config(base_url: String) -> ModelConfig {
+        ModelConfig {
+            base_url,
+            model: "m".into(),
+            // Any variable that is always set: the fake provider ignores the key.
+            api_key_env: "PATH".into(),
+            effort: None,
+        }
+    }
+
     fn model(base_url: String) -> OpenAiModel {
         OpenAiModel {
             backoff: Duration::from_millis(1),
-            ..OpenAiModel::new(ModelConfig {
-                base_url,
-                model: "m".into(),
-                // Any variable that is always set: the fake provider ignores the key.
-                api_key_env: "PATH".into(),
-            })
+            ..OpenAiModel::new(config(base_url))
         }
+    }
+
+    #[test]
+    fn a_set_effort_is_named_in_the_request() {
+        let config = ModelConfig {
+            effort: Some(crate::setup::Effort::Xhigh),
+            ..config("http://unused".into())
+        };
+        assert_eq!(
+            body(&config, &hello()).unwrap()["reasoning_effort"],
+            "xhigh"
+        );
     }
 
     fn hello() -> LlmRequest {

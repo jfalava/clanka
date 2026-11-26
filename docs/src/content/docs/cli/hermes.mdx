@@ -18,7 +18,7 @@ shell and from an agent's terminal inside Hermes.
 ## profile
 
 ```sh
-clanka hermes profile <profile> <soul>
+clanka hermes profile [--provider <provider>] [--model <model>] [--effort <effort>] <profile> <soul>
 ```
 
 Makes a Hermes profile that is one companion and nothing else:
@@ -62,6 +62,57 @@ The companion's `soul.md`, as printed by `clanka init`.
 clanka hermes profile nova ~/.config/clanka/souls/<id>.md
 hermes -p nova chat
 ```
+
+### `--model <model>`
+
+The model this companion runs on, as its provider names it
+(`model.default`). It writes the replies and the memory.
+
+- Default: the model the profile has, which on a new profile is the root's
+
+### `--provider <provider>`
+
+The Hermes provider that model is asked at (`model.provider`), when it is not
+the profile's: a built-in one such as `anthropic`, or one of the root's
+`providers:`, which are copied in first.
+
+- Default: the provider the profile has
+
+Hermes drops a `model.base_url` the provider before left in the profile when
+it knows whose it is. One it can't place, such as a proxy, stays, and the
+command warns that the new provider's requests go there.
+
+### `--effort <effort>`
+
+How hard the model thinks, before a reply and when it writes memory: `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh` or `max`. A model takes the levels
+it knows, and Hermes rounds the rest to one it does.
+
+- Default: the effort the profile has
+
+The flag sets two keys. `agent.reasoning_effort` is for the replies.
+`auxiliary.clanka_memory.reasoning_effort` is for the memory: Hermes passes a
+plugin's model call none of the profile's effort, so the plugin writes memory
+through an auxiliary task of its own, `clanka_memory`, which follows the chat
+model and has this one setting.
+
+Without the flag, a memory task that has no effort takes the one the replies
+have, so an `agent.reasoning_effort` you set by hand reaches the memory the
+next time this command or [`clanka hermes refresh`](#refresh) runs. An effort
+the task already has is kept, whatever the replies' is.
+
+An effort set for that one model in `agent.reasoning_overrides` wins over the
+flag for the replies, not for the memory, and the command warns when there is
+one.
+
+```sh
+clanka hermes profile nova ~/.config/clanka/souls/<id>.md \
+  --provider anthropic --model claude-haiku-5-5 --effort low
+```
+
+Without the flags the profile keeps what it has, so running the command
+again, or [`clanka hermes refresh`](#refresh), never moves a companion to
+another model or changes an effort it has.
 
 ## nightshade
 
@@ -111,7 +162,9 @@ it, because each profile runs a copy of the plugin and a running gateway
 keeps the build it loaded.
 
 - A profile with a soul in its clanka settings gets what
-  `clanka hermes profile` does with that soul.
+  `clanka hermes profile` does with that soul, on the model and the effort
+  it has. If its replies have an effort and its memory task has none, the
+  task gets the replies'.
 - A profile whose `SOUL.md` is Nightshade's gets what
   `clanka hermes nightshade` does, on the model it has.
 - Any other profile is left alone.

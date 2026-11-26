@@ -4,6 +4,7 @@
 //! and from an agent's terminal tool.
 
 use anyhow::{Context, Result, bail};
+use clanka::setup::Effort;
 use clanka::status;
 use clanka_core::soul::Soul;
 use std::ffi::OsStr;
@@ -160,11 +161,7 @@ fn share_providers(home: &Path, profile: &str, dir: &Path) -> Result<()> {
             1,
         ),
         ("model.aliases", config_get(home, None, "model.aliases")?, 1),
-        (
-            "agent.reasoning_overrides",
-            config_get(home, None, "agent.reasoning_overrides")?,
-            1,
-        ),
+        (EFFORT_BY_MODEL, config_get(home, None, EFFORT_BY_MODEL)?, 1),
         // Provider, then model, then setting. Every custom endpoint is the
         // one provider `custom` here, so a profile's own models under it
         // must survive the root's.
@@ -356,9 +353,10 @@ fn without_clanka(toolsets: Option<&serde_json::Value>) -> Vec<&'static str> {
 /// platform's list after the first run; Hermes's own memory, user
 /// profile, coding brief, toolchain probe and agent-style guidance are off; the
 /// terminal and Telegram notes are a line each; and SOUL.md is the persona. The
-/// root's own providers, model aliases and their keys are shared with it.
+/// root's own providers, model aliases and their keys are shared with it, and
+/// `runs` puts it on a model of its own.
 /// Safe to run again, and the way to refresh SOUL.md after editing the persona.
-pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
+pub fn profile(profile: &str, soul_path: &Path, runs: Runs) -> Result<()> {
     let soul = Soul::load(soul_path)?;
     let soul_path = soul_path
         .canonicalize()
@@ -376,7 +374,7 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         &home,
         profile,
         created,
-        set_up_companion(&home, profile, &dir, &source, &soul, &soul_path),
+        set_up_companion(&home, profile, &dir, &source, &soul, &soul_path, runs),
     )?;
     // Above the row: `refresh` has more profiles to do.
     clanka::ui::success(&format!(
@@ -384,6 +382,121 @@ pub fn profile(profile: &str, soul_path: &Path) -> Result<()> {
         soul.traits.name
     ));
     status::summary(&format!("Profile {profile} is {}", soul.traits.name));
+    Ok(())
+}
+
+/// What a companion's profile runs on, for its replies and its memory alike.
+/// What is `None` stays as the profile has it, which on a new profile is the
+/// root's. The model writes the memory too: `ctx.llm` is the profile's active
+/// model. The effort is set twice, since Hermes gives a plugin's model call
+/// none of the profile's: for the replies, and for the plugin's memory task.
+/// Without one here, a memory task that has none takes the replies'.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Runs<'a> {
+    /// The Hermes provider the model is asked at.
+    pub provider: Option<&'a str>,
+    /// The model, as that provider names it.
+    pub model: Option<&'a str>,
+    pub effort: Option<Effort>,
+}
+
+/// Where Hermes keeps the effort a profile's models think at, and the efforts
+/// set for one model each, which win over it.
+const EFFORT: &str = "agent.reasoning_effort";
+const EFFORT_BY_MODEL: &str = "agent.reasoning_overrides";
+/// Where Hermes keeps the effort of the auxiliary task the plugin writes
+/// memory through (`MEMORY_TASK` in hermes/clanka/__init__.py).
+const MEMORY_EFFORT: &str = "auxiliary.clanka_memory.reasoning_effort";
+
+/// The effort as `hermes config set` takes it. It reads `none` as an empty
+/// value, which Hermes takes for no choice at all, so no thinking is `false`.
+fn effort_value(effort: Effort) -> &'static str {
+    match effort {
+        Effort::None => "false",
+        effort => effort.as_str(),
+    }
+}
+
+/// Puts the profile on the model `runs` names.
+fn set_model(home: &Path, profile: &str, runs: Runs) -> Result<()> {
+    let h = |args: &[&str]| hermes(home, Some(profile), args);
+    let get = |key: &str| -> Result<Option<String>> {
+        let value = config_get(home, Some(profile), key)?;
+        Ok(value
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned))
+    };
+    if let Some(provider) = runs.provider {
+        let before = get("model.provider")?;
+        h(&["config", "set", "model.provider", provider])?;
+        // Hermes drops the endpoint the provider before left in the profile
+        // when it knows it for another's, and keeps one it can't place (a
+        // proxy, a machine on the network): the new provider's model and key
+        // then go there, and it says so only on output nobody sees here.
+        let moved = before.is_none_or(|before| !before.eq_ignore_ascii_case(provider));
+        if moved && let Some(url) = get("model.base_url")? {
+            clanka::ui::warning(&format!(
+                "the {profile} profile still has model.base_url {url} from before, so \
+                 {provider}'s model and key go there; if that is not {provider}'s endpoint, \
+                 run `hermes -p {profile} config unset model.base_url` and the same for \
+                 model.api_mode"
+            ));
+        }
+    }
+    if let Some(model) = runs.model {
+        h(&["config", "set", "model.default", model])?;
+    }
+    let Some(effort) = runs.effort else {
+        return memory_follows_replies(home, profile);
+    };
+    h(&["config", "set", EFFORT, effort_value(effort)])?;
+    h(&["config", "set", MEMORY_EFFORT, effort_value(effort)])?;
+    let by_model = config_get(home, Some(profile), EFFORT_BY_MODEL)?;
+    if let Some(model) = get("model.default")?
+        && by_model.is_some_and(|efforts| efforts.get(&model).is_some())
+    {
+        clanka::ui::warning(&format!(
+            "{EFFORT_BY_MODEL} sets an effort for {model} in the {profile} profile, and \
+             Hermes uses that one for its replies instead of --effort; memory is written \
+             at --effort"
+        ));
+    }
+    Ok(())
+}
+
+/// Gives the memory task the effort the profile's replies have, unless it has
+/// one of its own: an effort set by hand, or before the plugin had the task,
+/// is otherwise one memory is not written at.
+fn memory_follows_replies(home: &Path, profile: &str) -> Result<()> {
+    use serde_json::Value;
+    // As `hermes config set` takes it back. Empty or null is no choice.
+    let level = |key: &str| -> Result<Option<String>> {
+        Ok(match config_get(home, Some(profile), key)? {
+            Some(Value::Bool(false)) => Some(effort_value(Effort::None).to_owned()),
+            Some(Value::String(level)) => match level.trim() {
+                "" => None,
+                // A `none` written into the file is no thinking, and `config
+                // set` would store it back as nothing.
+                level if level.eq_ignore_ascii_case("none") => {
+                    Some(effort_value(Effort::None).to_owned())
+                }
+                level => Some(level.to_owned()),
+            },
+            _ => None,
+        })
+    };
+    let Some(effort) = level(EFFORT)? else {
+        return Ok(());
+    };
+    if level(MEMORY_EFFORT)?.is_none() {
+        hermes(
+            home,
+            Some(profile),
+            &["config", "set", MEMORY_EFFORT, &effort],
+        )?;
+    }
     Ok(())
 }
 
@@ -395,6 +508,7 @@ fn set_up_companion(
     source: &Path,
     soul: &Soul,
     soul_path: &Path,
+    runs: Runs,
 ) -> Result<()> {
     // A profile sees only its own plugins directory. The extension is renamed
     // into place: a running gateway keeps its mapped copy of the old file, and
@@ -408,7 +522,9 @@ fn set_up_companion(
     std::fs::copy(source.join(EXTENSION), &staged)?;
     std::fs::rename(&staged, plugin.join(EXTENSION))?;
 
+    // After the root's providers are in: one of them may be the one named.
     share_providers(home, profile, dir)?;
+    set_model(home, profile, runs)?;
     let h = |args: &[&str]| hermes(home, Some(profile), args);
     h(&["plugins", "enable", "clanka"])?;
     let soul_str = soul_path
@@ -519,7 +635,7 @@ fn set_up_nightshade(
 /// Brings every profile clanka set up to the plugin in the root's
 /// `plugins/clanka`, the only copy `hermes/install.sh` replaces: a profile
 /// runs its own. A profile with a soul in its clanka settings is a companion's
-/// and gets what `profile` does; one whose SOUL.md opens as Nightshade's does
+/// and gets what `profile` does, on the model it has; one whose SOUL.md opens as Nightshade's does
 /// gets what `nightshade` does, on the model it has. Any other is left alone.
 /// A profile that fails is named and the rest are still done. With `restart`,
 /// whatever has the plugin loaded is then restarted, since it runs the build
@@ -541,7 +657,7 @@ pub fn refresh(restart: bool) -> Result<()> {
         status::progress(done, names.len());
         let result = config_get(&home, Some(name), SOUL_SETTING).and_then(|soul| {
             match soul.as_ref().and_then(|soul| soul.as_str()) {
-                Some(soul) => profile(name, Path::new(soul)).map(|()| true),
+                Some(soul) => profile(name, Path::new(soul), Runs::default()).map(|()| true),
                 None if is_nightshade(&profiles.join(name)) => {
                     nightshade(name, None).map(|()| true)
                 }
@@ -636,6 +752,16 @@ fn restart_gateway(home: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_plugin_writes_memory_through_the_task_whose_effort_is_set() {
+        let plugin = include_str!("../../../hermes/clanka/__init__.py");
+        let task = MEMORY_EFFORT
+            .strip_prefix("auxiliary.")
+            .and_then(|key| key.strip_suffix(".reasoning_effort"))
+            .unwrap();
+        assert!(plugin.contains(&format!("MEMORY_TASK = \"{task}\"")));
+    }
 
     #[test]
     fn a_profile_directory_resolves_to_the_root_above_it() {

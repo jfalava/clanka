@@ -45,7 +45,7 @@ fn serve_doctor(dir: &Path) -> String {
 
 /// A `[model]` that re-reads every memory in `rewrites` in its first reply and
 /// says nothing after.
-fn rereader(rewrites: Vec<(i64, &'static str)>) -> (String, super::Open) {
+fn rereader(rewrites: Vec<(i64, &'static str)>) -> (super::ModelName, super::Open) {
     let open = move |soul: &Path| {
         let rewrites = rewrites.clone();
         Ok(common::open_with(
@@ -71,7 +71,7 @@ fn rereader(rewrites: Vec<(i64, &'static str)>) -> (String, super::Open) {
             }),
         ))
     };
-    ("a-model".into(), Box::new(open))
+    (Box::new(|_| Some("a-model".into())), Box::new(open))
 }
 
 fn listen(console: Console) -> String {

@@ -10,6 +10,7 @@ use clanka_core::diagnostics::{Event, Recorder, ms_since};
 use clanka_core::soul::Soul;
 use clanka_core::{Companion, Deps, PersonaStatus, Ranking};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -179,6 +180,10 @@ impl Paths {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub model: Option<ModelConfig>,
+    /// What one companion runs on instead of `[model]`'s, by its id:
+    /// `[companions.<id>]`.
+    #[serde(default)]
+    pub companions: HashMap<Uuid, CompanionConfig>,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
     /// Recall's tuning: any of [`Ranking`]'s fields; the rest keep their defaults.
@@ -348,19 +353,125 @@ pub struct ModelConfig {
     /// Environment variable holding the API key.
     #[serde(default = "default_key_env")]
     pub api_key_env: String,
+    /// How hard the model thinks before it answers. Unset, the request names
+    /// no effort and the endpoint uses the model's own.
+    pub effort: Option<Effort>,
 }
 
 fn default_key_env() -> String {
     "CLANKA_MODEL_API_KEY".into()
 }
 
+/// How hard a model thinks before it answers: the levels of the
+/// OpenAI-compatible `reasoning_effort`, which are Hermes's too. A model takes
+/// the ones it knows; which those are is between it and its endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    /// No thinking, on a model that can go without.
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl Effort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+}
+
+/// `[companions.<id>]`: what one companion sets instead of `[model]`'s, any of
+/// it: another model on the same endpoint, or an endpoint of its own.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionConfig {
+    /// An endpoint of its own, up to and including `/v1`. It comes with
+    /// `api_key_env`: see [`Config::check`].
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    /// Environment variable holding the key this companion's requests carry.
+    pub api_key_env: Option<String>,
+    pub effort: Option<Effort>,
+}
+
 impl Config {
+    /// config.toml's text as settings, refused when [`Self::check`] refuses it.
+    pub fn parse(text: &str) -> Result<Self> {
+        let config: Self = toml::from_str(text)?;
+        config.check()?;
+        Ok(config)
+    }
+
+    /// Refuses a `[companions.<id>]` that names an endpoint without the key
+    /// for it, or that has no endpoint to be asked at.
+    fn check(&self) -> Result<()> {
+        for (id, own) in &self.companions {
+            // `[model]`'s key is never sent to an endpoint it wasn't named for.
+            if own.base_url.is_some() && own.api_key_env.is_none() {
+                bail!(
+                    "[companions.{id}] sets base_url without api_key_env; name the environment \
+                     variable that holds that endpoint's key"
+                );
+            }
+            if self.model.is_some() {
+                continue;
+            }
+            match (&own.base_url, &own.model) {
+                (Some(_), None) => bail!(
+                    "[companions.{id}] sets base_url but no model, and there is no [model] to \
+                     take one from"
+                ),
+                (None, _) if own.model.is_some() || own.api_key_env.is_some() => bail!(
+                    "[companions.{id}] needs a base_url: there is no [model] to take the \
+                     endpoint from"
+                ),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The model one companion talks and remembers with: `[model]`, with
+    /// whatever its own `[companions.<id>]` sets instead. `None` when neither
+    /// names an endpoint.
+    pub fn model_for(&self, companion: Uuid) -> Option<ModelConfig> {
+        let Some(own) = self.companions.get(&companion) else {
+            return self.model.clone();
+        };
+        let shared = self.model.as_ref();
+        Some(ModelConfig {
+            base_url: (own.base_url.clone()).or_else(|| shared.map(|m| m.base_url.clone()))?,
+            model: (own.model.clone()).or_else(|| shared.map(|m| m.model.clone()))?,
+            api_key_env: (own.api_key_env.clone())
+                .or_else(|| shared.map(|m| m.api_key_env.clone()))?,
+            effort: own.effort.or(shared.and_then(|m| m.effort)),
+        })
+    }
+
+    /// [`Self::model_for`] the companion whose soul.md this is.
+    pub fn model_of(&self, soul: &Path) -> Result<Option<ModelConfig>> {
+        if self.model.is_none() && self.companions.is_empty() {
+            return Ok(None);
+        }
+        Ok(self.model_for(Soul::load(soul)?.traits.id))
+    }
+
     pub fn load(paths: &Paths) -> Result<Self> {
         let path = paths.config_file();
         match std::fs::read_to_string(&path) {
-            Ok(text) => {
-                toml::from_str(&text).with_context(|| format!("reading {}", path.display()))
-            }
+            Ok(text) => Self::parse(&text).with_context(|| format!("reading {}", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
         }
@@ -851,6 +962,85 @@ mod tests {
         assert!(toml::from_str::<Config>("[ui]\nglyphs = \"emoji\"\n").is_err());
         // A misspelt setting is an error, not silently ignored.
         assert!(toml::from_str::<Config>("[recall]\nlimits = 3\n").is_err());
+    }
+
+    #[test]
+    fn a_companion_sets_its_own_model_and_effort_over_the_shared_one() {
+        let named = Uuid::from_u128(1);
+        let thinker = Uuid::from_u128(2);
+        let elsewhere = Uuid::from_u128(3);
+        let model = "[model]\nbase_url = \"https://api.example.com/v1\"\nmodel = \"shared\"\n\
+                     api_key_env = \"A_KEY\"\neffort = \"low\"\n";
+        let own = format!(
+            "[companions.{named}]\nmodel = \"its-own\"\n\
+             [companions.{thinker}]\neffort = \"high\"\n"
+        );
+        let other = format!(
+            "[companions.{elsewhere}]\nbase_url = \"https://other.example.com/v1\"\n\
+             model = \"theirs\"\napi_key_env = \"OTHER_KEY\"\n"
+        );
+        let config = Config::parse(&format!("{model}{own}{other}")).unwrap();
+        let of = |id| {
+            let m = config.model_for(id).unwrap();
+            (m.base_url, m.api_key_env, m.model, m.effort)
+        };
+        let shared = |name: &str, effort| {
+            let url = "https://api.example.com/v1".to_owned();
+            (url, "A_KEY".to_owned(), name.to_owned(), Some(effort))
+        };
+        // Each keeps what it doesn't set, the endpoint and its key included.
+        assert_eq!(of(named), shared("its-own", Effort::Low));
+        assert_eq!(of(thinker), shared("shared", Effort::High));
+        assert_eq!(of(Uuid::from_u128(4)), shared("shared", Effort::Low));
+        // An endpoint of its own is asked with its own key, never [model]'s.
+        let theirs = (
+            "https://other.example.com/v1".to_owned(),
+            "OTHER_KEY".to_owned(),
+        );
+        assert_eq!(
+            of(elsewhere),
+            (
+                theirs.0.clone(),
+                theirs.1.clone(),
+                "theirs".to_owned(),
+                Some(Effort::Low)
+            )
+        );
+
+        // Without a [model], a companion with a whole endpoint still has one,
+        // and the others have none.
+        let alone = Config::parse(&other).unwrap();
+        assert_eq!(
+            alone
+                .model_for(elsewhere)
+                .map(|m| (m.base_url, m.api_key_env, m.model, m.effort)),
+            Some((theirs.0, theirs.1, "theirs".to_owned(), None))
+        );
+        assert!(alone.model_for(named).is_none());
+
+        let url = "base_url = \"https://other.example.com/v1\"\n";
+        for (bad, why) in [
+            // [model]'s key would go to an endpoint it wasn't named for.
+            (format!("{model}[companions.{named}]\n{url}"), "api_key_env"),
+            // No endpoint to ask its model at.
+            (own.clone(), "needs a base_url"),
+            (
+                format!("[companions.{named}]\n{url}api_key_env = \"K\"\n"),
+                "no model",
+            ),
+        ] {
+            let error = Config::parse(&bad).unwrap_err().to_string();
+            assert!(error.contains(why), "{bad}: {error}");
+        }
+        // An effort nobody takes, a companion that is no id and a misspelt
+        // setting are errors, not silently ignored.
+        for bad in [
+            format!("{model}[companions.{named}]\neffort = \"hgih\"\n"),
+            format!("{model}[companions.nova]\nmodel = \"its-own\"\n"),
+            format!("{model}[companions.{named}]\nmodle = \"its-own\"\n"),
+        ] {
+            assert!(Config::parse(&bad).is_err(), "{bad}");
+        }
     }
 
     #[cfg(unix)]

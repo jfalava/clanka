@@ -51,6 +51,8 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 pub const PORT: u16 = 7333;
 
 type Open = Box<dyn Fn(&Path) -> Result<Companion> + Send + Sync>;
+/// The name of the model a companion re-reads its memories on, if it has one.
+type ModelName = Box<dyn Fn(Uuid) -> Option<String> + Send + Sync>;
 type Handles = Mutex<HashMap<Uuid, Arc<Mutex<Companion>>>>;
 
 /// What the server reads from: the companions set up here, each opened the
@@ -69,15 +71,16 @@ pub struct Console {
 
 /// The part of a run that repairs. Its routes use the handles the reads use,
 /// which have no model; re-reading memories opens a second one on the
-/// `[model]`, so a read never waits behind a call to it.
+/// companion's model, so a read never waits behind a call to it.
 pub struct Doctor {
-    /// The `[model]` in config.toml, by name, and a companion opened on it.
-    model: Option<(String, Open)>,
+    /// With a model in config.toml: the one each companion runs on, by name,
+    /// and a companion opened on it.
+    model: Option<(ModelName, Open)>,
     rereaders: Handles,
 }
 
 impl Doctor {
-    pub fn new(model: Option<(String, Open)>) -> Self {
+    pub fn new(model: Option<(ModelName, Open)>) -> Self {
         Self {
             model,
             rereaders: Mutex::new(HashMap::new()),
@@ -235,7 +238,8 @@ impl Console {
             .doctor
             .as_ref()
             .ok_or_else(|| Failure::Missing("this clanka web only reads".into()))?;
-        let Some((_, open)) = &doctor.model else {
+        let model = doctor.model.as_ref();
+        let Some((_, open)) = model.filter(|(name, _)| name(id).is_some()) else {
             return Err(Failure::Refused(format!(
                 "no companion model configured to re-read the memories; add a [model] section \
                  to {} and start `clanka web --doctor` again",
@@ -389,7 +393,8 @@ struct Overview {
     sections: Vec<SectionHistory>,
     /// Whether this run was started with `--doctor`, so the page can repair.
     can_repair: bool,
-    /// The `[model]` that re-reads memories on such a run, if there is one.
+    /// The model that re-reads this companion's memories on such a run, if
+    /// there is one.
     model: Option<String>,
 }
 
@@ -530,7 +535,7 @@ async fn overview(State(console): Shared, Route(id): Route<Uuid>) -> Answer<Over
         let mut overview = console.read(id, overview_of)?;
         if let Some(doctor) = &console.doctor {
             overview.can_repair = true;
-            overview.model = doctor.model.as_ref().map(|(name, _)| name.clone());
+            overview.model = doctor.model.as_ref().and_then(|(name, _)| name(id));
         }
         Ok(overview)
     })
@@ -984,7 +989,8 @@ pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool, tailnet: bool
     // The embedding model loads with the first companion opened, not before
     // the page is up, and once for all of them.
     let embedder: Arc<Mutex<Option<SharedEmbedder>>> = Arc::default();
-    let opener = |model: Option<setup::ModelConfig>| -> Result<Open> {
+    // With a config, each companion opens on the model it sets for it.
+    let opener = |config: Option<Arc<Config>>| -> Result<Open> {
         let paths = Paths::get()?;
         let embedder = embedder.clone();
         Ok(Box::new(move |soul: &Path| {
@@ -995,16 +1001,25 @@ pub fn serve(paths: Paths, port: u16, browser: bool, doctor: bool, tailnet: bool
                     None => loaded.insert(SharedEmbedder::load(&paths)?).clone(),
                 }
             };
+            let model = match &config {
+                Some(config) => config.model_of(soul)?,
+                None => None,
+            };
             setup::open(&paths, soul, embedder, model.as_ref())
         }))
     };
-    let model = if doctor {
-        Config::load(&paths)?.model
+    let config = if doctor {
+        Some(Arc::new(Config::load(&paths)?))
+            .filter(|config| config.model.is_some() || !config.companions.is_empty())
     } else {
         None
     };
-    let rereader = match model {
-        Some(model) => Some((model.model.clone(), opener(Some(model))?)),
+    let rereader = match config {
+        Some(config) => {
+            let named = config.clone();
+            let name: ModelName = Box::new(move |id| named.model_for(id).map(|m| m.model));
+            Some((name, opener(Some(config))?))
+        }
         None => None,
     };
     let mut console = Console::new(paths, token.clone(), opener(None)?)

@@ -150,7 +150,9 @@ enum Command {
     /// Talk with a companion in the terminal, on its [model].
     ///
     /// Needs a [model] section in ~/.config/clanka/config.toml (base_url, model and
-    /// api_key_env, which names the environment variable holding the key). Type a message
+    /// api_key_env, which names the environment variable holding the key). A
+    /// [companions.<id>] section there puts one companion on a model, an effort or an
+    /// endpoint of its own. Type a message
     /// and press Enter; each reply is remembered in the background. Send /sleep to end the
     /// conversation and turn it into memories, or send the soul's doctor_token to freeze
     /// the memory and quit without recording anything. Send /triage to see the companion's
@@ -610,14 +612,35 @@ enum HermesCommand {
     /// platform (`hermes -p <profile>
     /// config set platform_toolsets.telegram '[clanka, image_gen]'`) is kept. A gateway
     /// already serving the profile re-reads its config on its own.
+    ///
+    /// A new profile runs on the root's model. --provider, --model and --effort put this
+    /// companion on its own, for its replies and its memory alike. Hermes passes a
+    /// plugin's model call none of the profile's effort, so --effort also sets it for the
+    /// plugin's memory task (`auxiliary.clanka_memory.reasoning_effort`). Without the
+    /// flags the profile keeps what it has, so running the command again never moves it;
+    /// only a memory task with no effort takes the one the replies have.
     #[command(after_long_help = "Example:\n  \
         clanka hermes profile nova ~/.config/clanka/souls/<id>.md\n  \
+        clanka hermes profile nova ~/.config/clanka/souls/<id>.md \\\n      \
+        --provider anthropic --model claude-haiku-5-5 --effort low\n  \
         hermes -p nova chat")]
     Profile {
         /// The Hermes profile to make or refresh (lower case, one word).
         profile: String,
         #[arg(help = SOUL_HELP)]
         soul: PathBuf,
+        /// The model this companion runs on, as its provider names it; the one the
+        /// profile has when unset.
+        #[arg(long)]
+        model: Option<String>,
+        /// The Hermes provider that model is asked at (`model.provider`), when it is not
+        /// the profile's.
+        #[arg(long)]
+        provider: Option<String>,
+        /// How hard the model thinks, before a reply (`agent.reasoning_effort`) and when
+        /// it writes memory; the profile's when unset. A model takes the levels it knows.
+        #[arg(long, value_enum)]
+        effort: Option<clanka::setup::Effort>,
     },
     /// Make the Nightshade profile: an agent that interviews you about the companion you
     /// want, writes its soul.md, lints it and wires it in with `clanka hermes profile`.
@@ -645,8 +668,10 @@ enum HermesCommand {
     /// hermes/install.sh and `clanka upgrade` replace the plugin under
     /// ~/.hermes/plugins/clanka and run this, because each profile runs a copy of its own and a running gateway keeps the build
     /// it loaded. A profile with a soul in its clanka settings gets what `clanka hermes
-    /// profile` does with that soul; one whose SOUL.md is Nightshade's gets what `clanka
-    /// hermes nightshade` does, on the model it has; any other profile is left alone. A
+    /// profile` does with that soul, on the model and the effort it has, and its memory
+    /// task takes the replies' effort when it has none of its own; one whose SOUL.md
+    /// is Nightshade's gets what `clanka hermes nightshade` does, on the model it has; any
+    /// other profile is left alone. A
     /// profile that fails is named, the rest are still done, and the command fails. The
     /// restart is `systemctl --user restart` of the running hermes-gateway and hermes-serve
     /// units where systemd runs them, which interrupts live sessions without asking, and
@@ -963,10 +988,22 @@ fn run(command: Command) -> Result<bool> {
         } => web::serve(paths, port, !no_open, doctor, tailnet),
         Command::Tics { replies, json } => tics(&replies, json),
         Command::Hermes {
-            command: HermesCommand::Profile { profile, soul },
+            command:
+                HermesCommand::Profile {
+                    profile,
+                    soul,
+                    model,
+                    provider,
+                    effort,
+                },
         } => {
             status::phase(&format!("Setting up the {profile} profile"));
-            hermes::profile(&profile, &soul)
+            let runs = hermes::Runs {
+                provider: provider.as_deref(),
+                model: model.as_deref(),
+                effort,
+            };
+            hermes::profile(&profile, &soul, runs)
         }
         Command::Hermes {
             command: HermesCommand::Nightshade { profile, model },
@@ -984,7 +1021,7 @@ fn run(command: Command) -> Result<bool> {
             session_tokens,
         } => {
             let config = Config::load(&paths)?;
-            if config.model.is_none() {
+            if config.model_of(&soul)?.is_none() {
                 bail!(
                     "no companion model configured; add a [model] section to {}",
                     paths.config_file().display()
@@ -1006,7 +1043,7 @@ fn run(command: Command) -> Result<bool> {
             session_tokens,
         } => {
             let config = Config::load(&paths)?;
-            match &config.model {
+            match &config.model_of(&soul)? {
                 // stdout is the MCP channel; notes go to stderr.
                 Some(m) => eprintln!(
                     "clanka: memory is written by {} at {}. Set your MCP host to chat with the \
@@ -1072,9 +1109,9 @@ fn open_pair(
     session_tokens: Option<usize>,
 ) -> Result<(clanka_core::Companion, Option<clanka_core::Companion>)> {
     let embedder = SharedEmbedder::load(paths)?;
-    let model = setup::llm(config.model.as_ref());
-    let mut chat = setup::open_to_talk(paths, soul, embedder.clone(), model)?;
-    let mut writer = match &config.model {
+    let model = config.model_of(soul)?;
+    let mut chat = setup::open_to_talk(paths, soul, embedder.clone(), setup::llm(model.as_ref()))?;
+    let mut writer = match &model {
         Some(m) => Some(setup::open(paths, soul, embedder, Some(m))?),
         None => None,
     };

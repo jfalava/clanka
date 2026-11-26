@@ -53,6 +53,73 @@ the file.
 
 - Default: `CLANKA_MODEL_API_KEY`
 
+### `effort`
+
+How hard the model thinks before it answers: `none`, `minimal`, `low`,
+`medium`, `high`, `xhigh` or `max`. It is sent as `reasoning_effort` with
+every request, replies and memory writing alike. A model takes the levels it
+knows, and an endpoint may refuse one it doesn't.
+
+- Default: unset, which sends no effort and leaves it to the endpoint
+
+## `[companions.<id>]`
+
+What one companion sets instead of `[model]`'s. `<id>` is the `id` in its
+`soul.md`, which is also the file's name.
+
+```toml
+[model]
+base_url = "https://api.example.com/v1"
+model = "some-model"
+effort = "low"
+
+# Another model on the same endpoint.
+[companions.0198c1de-5f3a-7c41-9b1e-2f6a8d4e7c10]
+model = "another-model"
+effort = "high"
+
+# An endpoint of its own.
+[companions.0198c1de-6a02-7d55-8c3f-91b7e2a4d6f0]
+base_url = "https://api.other.example/v1"
+model = "their-model"
+api_key_env = "OTHER_API_KEY"
+```
+
+Every key is optional, and a companion keeps `[model]`'s for the ones it
+leaves out. An id that is no UUID is an error.
+
+Without a `[model]` section, a companion needs a `base_url`, a `model` and an
+`api_key_env` of its own, and a companion with no section has no model.
+
+A companion on Hermes runs on its profile's model instead: see
+[`clanka hermes profile`](/cli/hermes/#profile).
+
+### `base_url`
+
+An endpoint of this companion's own, up to and including `/v1`. It needs
+`api_key_env` beside it, or the file is refused: `[model]`'s key is never
+sent to another endpoint.
+
+- Default: `[model]`'s `base_url`
+
+### `model`
+
+The model this companion talks and remembers with, as its endpoint knows it.
+
+- Default: `[model]`'s `model`
+
+### `api_key_env`
+
+The environment variable that holds the key this companion's requests carry.
+
+- Default: `[model]`'s `api_key_env`
+
+### `effort`
+
+How hard that model thinks, with the levels of [`[model]`'s `effort`](#effort).
+
+- Default: `[model]`'s `effort`
+
 ## `[embedding]`
 
 The local model that turns text into vectors for recall.

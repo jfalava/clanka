@@ -15,7 +15,12 @@ A general plugin on Hermes's public plugin API only:
 - ``post_llm_call``: records the reply, text written before a tool call
   included, then reflects on the exchange on a background thread. Reflection
   runs on ``ctx.llm``, the user's active model, so the companion's memory is
-  written by the same model it chats with.
+  written by the same model it chats with. The calls go through the
+  ``clanka_memory`` auxiliary task, which names no model of its own: Hermes
+  gives a plugin's call no reasoning effort otherwise, and a task has one
+  (``auxiliary.clanka_memory.reasoning_effort``, which ``clanka hermes
+  profile --effort`` sets with the profile's, and which ``clanka hermes
+  refresh`` copies from the profile's when the task has none).
 - Tools ``recall_memory``, ``go_to_sleep`` and, in a dream, ``wake_up``. The
   night (or the dream) ends as the reply is recorded, so the next message
   starts a new conversation at once; sleep or waking consolidates it behind,
@@ -78,6 +83,14 @@ logger = logging.getLogger(__name__)
 
 # Most one memory-writing reply may run to.
 MAX_TOKENS = 2048
+# The auxiliary task memory is written through: its config block holds the
+# effort the model writes memory at. `clanka hermes profile` writes that key,
+# so crates/cli/src/hermes.rs names this task too.
+MEMORY_TASK = "clanka_memory"
+# Longest one memory-writing request may take, in seconds: the limit clanka's
+# own client gives a request (crates/cli/src/llm.rs). A model thinking at a
+# high effort over a whole night needs more than Hermes's 30.
+MEMORY_TIMEOUT = 180
 # Added after the context of a turn whose reply ends the night or the dream
 # (``zz``, or a dream that filled its session), last, so the chat shows a tool
 # call for it. Sleep or waking comes after the reply whether it calls it or
@@ -312,6 +325,7 @@ class _Plugin:
             temperature=temperature,
             max_tokens=MAX_TOKENS,
             purpose="clanka.memory",
+            task=MEMORY_TASK,
         )
         # Hermes reports a provider's cache reads and writes to a plugin only
         # on some routes; on Anthropic they are missing and the cached prefix
@@ -672,6 +686,14 @@ def register(ctx):
     from . import _clanka
 
     plugin = _Plugin(ctx)
+    # No provider or model: the task follows the chat's, as memory always has.
+    ctx.register_auxiliary_task(
+        MEMORY_TASK,
+        display_name="clanka memory",
+        description="Writes the companion's memory. It follows the chat model; set its "
+        "reasoning effort with `clanka hermes profile --effort`.",
+        defaults={"timeout": MEMORY_TIMEOUT},
+    )
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
     ctx.register_hook("transform_llm_output", _dashless)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)

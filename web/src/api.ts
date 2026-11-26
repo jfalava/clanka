@@ -70,7 +70,7 @@ export const Overview = Schema.Struct({
   ),
   /** Whether `clanka web` was started with `--doctor`, so the page can repair. */
   can_repair: Schema.Boolean,
-  /** The `[model]` that re-reads memories on such a run; null when config.toml has none. */
+  /** The model that re-reads this companion's memories on such a run; null when config.toml names none for it. */
   model: Schema.NullOr(Schema.String),
 });
 export type Overview = typeof Overview.Type;

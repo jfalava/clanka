@@ -186,7 +186,7 @@ pub fn run(paths: &Paths, command: LoreCommand) -> Result<bool> {
             _ => bail!("give the entry and the line (clanka lore strike <id> <line>), or --by"),
         },
         LoreCommand::Redigest { soul, id } => {
-            let Some(model) = &config.model else {
+            let Some(model) = &config.model_of(&soul)? else {
                 bail!(
                     "no companion model configured to write the digest; add a [model] section to {}",
                     paths.config_file().display()

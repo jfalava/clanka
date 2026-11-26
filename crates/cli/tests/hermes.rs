@@ -17,8 +17,9 @@ case "$1 $2" in
 esac
 "#;
 
-/// A `hermes` whose only config is a profile's soul setting, read from the
-/// profile's `soul` file, and which notes a gateway restart in
+/// A `hermes` whose config is a profile's soul setting, read from the
+/// profile's `soul` file, and any key the profile has a file named after. It
+/// notes what a profile is set in its `sets` file and a gateway restart in
 /// `$HERMES_HOME/calls`.
 const SETTLED_HERMES: &str = r#"#!/bin/sh
 dir=$HERMES_HOME
@@ -26,7 +27,9 @@ if [ "$1" = -p ]; then dir=$HERMES_HOME/profiles/$2; shift 2; fi
 case "$1 $2" in
 "config get")
     [ "$3" = plugins.entries.clanka.settings.soul ] && [ -f "$dir/soul" ] && exec cat "$dir/soul"
+    [ -f "$dir/$3" ] && exec cat "$dir/$3"
     echo "Config key not set"; exit 1 ;;
+"config set") shift 2; echo "$*" >> "$dir/sets" ;;
 "gateway restart") echo "hermes gateway restart" >> "$HERMES_HOME/calls" ;;
 esac
 "#;
@@ -190,4 +193,59 @@ fn hermes_refresh_updates_the_profiles_clanka_made_and_restarts_what_runs_them()
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(error.contains("could not refresh gone"), "{error}");
     assert_eq!(read(&extension), "new");
+}
+
+#[test]
+fn hermes_refresh_gives_the_memory_task_the_reply_effort_unless_it_has_one() {
+    const REPLIES: &str = "agent.reasoning_effort";
+    const MEMORY: &str = "auxiliary.clanka_memory.reasoning_effort";
+    let dir = tempfile::tempdir().unwrap();
+    let home = hermes_home(dir.path());
+    stand_in(dir.path(), "hermes", SETTLED_HERMES);
+    let soul = soul(dir.path());
+    // A companion's profile whose config has these keys, as `config get` prints them.
+    let profile = |name: &str, config: &[(&str, &str)]| {
+        let profile = home.join("profiles").join(name);
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("config.yaml"), "").unwrap();
+        std::fs::write(
+            profile.join("soul"),
+            format!("{:?}\n", soul.to_str().unwrap()),
+        )
+        .unwrap();
+        for (key, value) in config {
+            std::fs::write(profile.join(key), format!("{value}\n")).unwrap();
+        }
+        profile
+    };
+    // What the refresh set the memory task's effort to.
+    let memory = |profile: &Path| -> Vec<String> {
+        let sets = std::fs::read_to_string(profile.join("sets")).unwrap();
+        (sets.lines())
+            .filter_map(|line| line.strip_prefix(MEMORY).map(|v| v.trim().to_owned()))
+            .collect()
+    };
+    // An empty effort is no choice, so the replies' is taken.
+    let thinker = profile("thinker", &[(REPLIES, "\"xhigh\""), (MEMORY, "\"\"")]);
+    // No thinking, both ways it is written: `config set` reads `none` as nothing.
+    let quick = profile("quick", &[(REPLIES, "\"none\"")]);
+    let quicker = profile("quicker", &[(REPLIES, "false")]);
+    let own = profile("own", &[(REPLIES, "\"high\""), (MEMORY, "\"low\"")]);
+    let plain = profile("plain", &[]);
+    let unset = profile("unset", &[(REPLIES, "null")]);
+
+    let output = clanka_hermes(dir.path(), &home, &["refresh", "--no-restart"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(memory(&thinker), ["xhigh"]);
+    assert_eq!(memory(&quick), ["false"]);
+    assert_eq!(memory(&quicker), ["false"]);
+    for kept in [&own, &plain, &unset] {
+        assert_eq!(memory(kept), [""; 0], "{}", kept.display());
+    }
+    // The replies' own effort is never set by a refresh.
+    let sets = std::fs::read_to_string(thinker.join("sets")).unwrap();
+    assert!(
+        !sets.lines().any(|line| line.starts_with(REPLIES)),
+        "{sets}"
+    );
 }

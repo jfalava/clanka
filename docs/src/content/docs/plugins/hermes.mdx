@@ -43,6 +43,16 @@ and memory records it as `*shows you a photo*`.
 The root's own providers, model aliases and the keys they read are copied
 into the profile, so `/model <alias>` works in its chat.
 
+A new profile runs on the root's model. To put a companion on its own, name
+it, and how hard it thinks, for its replies and its memory alike:
+
+```sh
+clanka hermes profile nova ~/.config/clanka/souls/<id>.md \
+  --provider anthropic --model claude-haiku-5-5 --effort low
+```
+
+See [`clanka hermes profile`](/cli/hermes/#profile) for the three flags.
+
 Run the command again after [changing the persona](/souls/traits/#changing-the-persona)
 to refresh the profile's `SOUL.md`. A gateway that already serves the profile
 re-reads its config on its own.

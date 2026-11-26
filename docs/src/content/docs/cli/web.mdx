@@ -79,7 +79,10 @@ Every repair but a freeze asks first:
 - **Re-read** lists the ticked memories it skips: seared ones, and ones
   that cite no turns. It needs the `[model]` in `config.toml`, with its API
   key in the environment `clanka web` was started in, and sends 20 memories
-  to the model at a time.
+  to the model at a time. A companion with a
+  [`[companions.<id>]`](/configuration/#companionsid) section is re-read on
+  what it sets: its model, its effort and its endpoint, with that
+  endpoint's key.
 
 There is no undo for a delete or a rollback, on the page or in the terminal.
 
