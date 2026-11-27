@@ -212,6 +212,16 @@ impl PyCompanion {
         })
     }
 
+    /// Notes the reply model's `go_to_sleep` call in the diagnostics log. The
+    /// plugin ends the night itself, after the reply.
+    fn go_to_sleep(&self, py: Python<'_>) {
+        py.detach(|| {
+            // `pending` before `chat`, as in wake_up: Hermes may run both calls at once.
+            let pending = lock(&self.pending);
+            turn::go_to_sleep(&lock(&self.chat), pending.as_ref());
+        });
+    }
+
     /// Whether the companion is in a dream.
     fn dreaming(&self, py: Python<'_>) -> PyResult<bool> {
         py.detach(|| Ok(lock(&self.chat).dreaming().map_err(err)?.is_some()))

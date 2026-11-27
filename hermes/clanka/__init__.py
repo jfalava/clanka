@@ -726,6 +726,10 @@ class _Plugin:
 
     def go_to_sleep(self, args, **_):
         self._sleep_requested = True
+        try:
+            self.companion().go_to_sleep()
+        except Exception:
+            logger.debug("clanka: diagnostics did not take go_to_sleep", exc_info=True)
         # Nothing a model could narrate back as its goodnight ("Sleeping now."):
         # the result names no action, only whose words the reply is.
         return json.dumps({"ok": True, "note": "Your reply is the last of this conversation, in your own words."})

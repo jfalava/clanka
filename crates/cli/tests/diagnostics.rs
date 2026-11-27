@@ -179,6 +179,43 @@ fn a_reflection_refused_before_its_model_call_is_a_failed_pass() {
     assert_eq!(passes[0]["rounds"], 0);
 }
 
+/// The reply model's `go_to_sleep` calls are in the log, with whether the
+/// user's `zz` had ended the night already or the model chose to sleep.
+#[test]
+fn a_go_to_sleep_call_is_noted_with_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("diagnostics.jsonl");
+    let mut c = open_noting(dir.path(), Dummy, Log::to(file.clone()));
+    let call = |c: &mut clanka_core::Companion, said: &str| {
+        let Begin::Open { pending, .. } = turn::begin(c, said, 4000, false).unwrap() else {
+            panic!("the turn did not open");
+        };
+        turn::go_to_sleep(c, Some(&pending));
+        turn::end(c, pending, "Night.").unwrap();
+    };
+    call(&mut c, "I'm off to bed.");
+    call(&mut c, "zz");
+    call(&mut c, "~~ A lighthouse with no door.");
+    call(&mut c, "zz");
+    turn::go_to_sleep(&c, None);
+
+    let calls: Vec<Value> = lines(&file)
+        .into_iter()
+        .filter(|line| line["event"] == "go_to_sleep")
+        .map(|line| json!(["ending", "dream", "unopened"].map(|flag| line[flag].clone())))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            json!([false, false, false]),
+            json!([true, false, false]),
+            json!([false, true, false]),
+            json!([true, true, false]),
+            json!([false, false, true]),
+        ]
+    );
+}
+
 /// The reply model's `wake_up` calls are in the log, refused or not. On the
 /// reply a dream ends with anyway, the model is told it wakes and quotes that
 /// line: the answer is that it wakes, not that it is still there.

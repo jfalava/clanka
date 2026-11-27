@@ -291,6 +291,16 @@ pub fn wake_up_without_turn(c: &Companion, because: &str) {
     });
 }
 
+/// Notes the reply model's `go_to_sleep` call in the turn `pending` holds, if
+/// one is open. The front end ends the night after the reply.
+pub fn go_to_sleep(c: &Companion, pending: Option<&Pending>) {
+    c.diagnose(&Event::GoToSleep {
+        ending: pending.is_some_and(|p| p.sleep || p.wake),
+        dream: pending.is_some_and(|p| p.dream),
+        unopened: pending.is_none(),
+    });
+}
+
 /// Checks for the doctor token, assembles the turn's memory and records the
 /// user's message. `first` is true on the host conversation's first turn, when
 /// the model has seen nothing yet and gets the whole context; a clanka session

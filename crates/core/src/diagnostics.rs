@@ -210,6 +210,18 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<&'static str>,
     },
+    /// The reply model called `go_to_sleep` (the Hermes plugin's tool). The
+    /// night or the dream ends after the reply.
+    GoToSleep {
+        /// The reply ended the night or the dream already: the user said
+        /// `zz`, or the dream filled its session, and the model was asked to
+        /// call it. Without it the model chose to sleep on its own.
+        ending: bool,
+        dream: bool,
+        /// No turn was open: the model called it before its turn began or
+        /// after it ended.
+        unopened: bool,
+    },
     /// An open dream ended with nothing kept, because it never woke.
     DreamDropped {
         /// `lost` when another handle found it (the front end that dreamt it
