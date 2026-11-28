@@ -11,6 +11,10 @@ import "@fontsource/google-sans-code/400.css";
 import "@fontsource/google-sans-code/500.css";
 import "@fontsource/google-sans-code/600.css";
 import "@fontsource/google-sans-code/700.css";
+import plex400 from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url";
+import plex500 from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-500-normal.woff2?url";
+import plex600 from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2?url";
+import plex700 from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-700-normal.woff2?url";
 import "../styles/globals.css";
 import "../styles/prose.css";
 import { config } from "virtual:nimbus/config";
@@ -106,6 +110,16 @@ const llmsUrl = Astro.site
         window.__nbApplyTheme = applyTheme;
       })();
     </script>
+    {/*
+      Every navigation is a full page load and the @font-face rules use
+      font-display: swap, so without a preload the first paint uses the
+      system font and the text jumps when IBM Plex Sans arrives. These are
+      the weights above the fold: body, sidebar links, active link and
+      headings, and the logo.
+    */}
+    {[plex400, plex500, plex600, plex700].map((href) => (
+      <link rel="preload" href={href} as="font" type="font/woff2" crossorigin="anonymous" />
+    ))}
     <NimbusHead
       title={title}
       description={description}

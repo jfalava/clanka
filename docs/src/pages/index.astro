@@ -6,8 +6,6 @@ import { LinkButton } from "../components/ui/link-button";
 import { Tabs, TabItem } from "../components/ui/tabs";
 import { config } from "virtual:nimbus/config";
 import { withBase } from "../lib/urls";
-import bodyFont from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url";
-import headingFont from "@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2?url";
 
 const terminalCommand = `clanka init Nova
 $EDITOR ~/.config/clanka/souls/<id>.md
@@ -99,16 +97,6 @@ const references = [
   prevNext={{}}
   mode="custom"
   collection="docs"
-  head={[bodyFont, headingFont].map((href) => ({
-    tag: "link",
-    attrs: {
-      rel: "preload",
-      href,
-      as: "font",
-      type: "font/woff2",
-      crossorigin: "anonymous",
-    },
-  }))}
 >
   <div data-pagefind-body>
     <section class="border-b border-border">
